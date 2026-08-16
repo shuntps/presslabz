@@ -1,6 +1,12 @@
 import { useRef, useState } from 'react'
+import { ApiError } from '../lib/api.ts'
 import { useLocale } from '../lib/i18n.tsx'
-import { type MediaSummary, useMediaLibrary, useUploadMedia } from '../lib/media.ts'
+import {
+  type MediaSummary,
+  useMediaLibrary,
+  useUpdateMediaAlt,
+  useUploadMedia,
+} from '../lib/media.ts'
 
 /**
  * A native <dialog>. Modal behaviour, focus trapping and Escape all come with
@@ -40,24 +46,31 @@ export function MediaPicker({
       <div className="picker-bar">
         <p className="panel-heading">{t('media.library')}</p>
 
-        <label className="picker-upload">
-          <span>{upload.isPending ? t('media.uploading') : t('media.upload')}</span>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/avif,image/gif,image/tiff"
-            disabled={upload.isPending}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (!file) return
-              setRejected(false)
-              upload.mutate(file, {
-                onSuccess: onPick,
-                onError: () => setRejected(true),
-              })
-              event.target.value = ''
-            }}
-          />
-        </label>
+        {/* Withheld rather than disabled: a file input the browser will not
+            open is a control that does nothing when pressed, and the honest
+            reading of "you may not add to this library" is that adding is not
+            on offer. The server decides — a capability list in the browser
+            would be a second copy of the rule. */}
+        {library.data?.permissions.upload && (
+          <label className="picker-upload">
+            <span>{upload.isPending ? t('media.uploading') : t('media.upload')}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/avif,image/gif,image/tiff"
+              disabled={upload.isPending}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (!file) return
+                setRejected(false)
+                upload.mutate(file, {
+                  onSuccess: onPick,
+                  onError: () => setRejected(true),
+                })
+                event.target.value = ''
+              }}
+            />
+          </label>
+        )}
 
         <button type="button" className="quiet" onClick={onClose}>
           {t('media.close')}
@@ -70,15 +83,82 @@ export function MediaPicker({
         </p>
       )}
 
-      {library.data && library.data.length === 0 && <p className="muted">{t('media.empty')}</p>}
+      {library.data?.media.length === 0 && <p className="muted">{t('media.empty')}</p>}
 
       <div className="picker-grid">
-        {library.data?.map((item) => (
-          <button key={item.id} type="button" className="picker-item" onClick={() => onPick(item)}>
-            <img src={item.url} alt={item.alt[locale] ?? ''} loading="lazy" decoding="async" />
-          </button>
+        {library.data?.media.map((item) => (
+          <figure key={item.id} className="picker-asset">
+            <button type="button" className="picker-item" onClick={() => onPick(item)}>
+              <img src={item.url} alt={item.alt[locale] ?? ''} loading="lazy" decoding="async" />
+            </button>
+            <AltField media={item} />
+          </figure>
         ))}
       </div>
     </dialog>
+  )
+}
+
+/**
+ * Alt text is what a screen reader says instead of the image, so it belongs
+ * beside the image rather than behind a second screen.
+ *
+ * It is per language, like everything else here, and it is written by whoever
+ * uploaded the asset — an author rewriting somebody else's description is a
+ * photograph being recaptioned under its author. The server decides that and
+ * says so on the row; this only draws the answer, and a field it will refuse
+ * is disabled rather than left inviting.
+ */
+function AltField({ media }: { media: MediaSummary }) {
+  const { t, locale } = useLocale()
+  const save = useUpdateMediaAlt()
+  const stored = media.alt[locale] ?? ''
+
+  /*
+   * Keyed by language, not one buffer for the field.
+   *
+   * A single buffer survives the interface changing language, so a French
+   * description typed a moment ago is shown as the English one and saved under
+   * `en` on the next blur — the wrong text, attached to the wrong language,
+   * with nothing on screen to say so. What is being edited is one language's
+   * description, so that is what the state is about.
+   */
+  const [byLocale, setByLocale] = useState<Record<string, string>>({})
+
+  const editable = media.permissions.update
+  const current = byLocale[locale] ?? stored
+
+  return (
+    <>
+      <input
+        className="authored picker-alt"
+        value={current}
+        disabled={!editable}
+        aria-label={t('media.alt')}
+        placeholder={editable ? t('media.altPlaceholder') : t('media.altForbidden')}
+        onChange={(event) => setByLocale({ ...byLocale, [locale]: event.target.value })}
+        onBlur={() => {
+          // Written on leaving the field rather than on every keystroke: a
+          // request per character would be a request per character. Only this
+          // language goes; the server merges it into the rest.
+          const edited = byLocale[locale]
+          if (edited === undefined || edited === stored) return
+          save.mutate({ id: media.id, locale, text: edited })
+        }}
+      />
+
+      {/* The interface greys the field out, so a refusal here means the server
+          disagreed with what the client was told — which is exactly the case
+          worth showing rather than swallowing. */}
+      {save.isError && (
+        <p className="error" role="alert">
+          {t(
+            save.error instanceof ApiError && save.error.status === 403
+              ? 'error.mediaForbidden'
+              : 'error.unexpected',
+          )}
+        </p>
+      )}
+    </>
   )
 }

@@ -4,11 +4,18 @@ import { type Capability, capabilitiesFor } from './capabilities.ts'
 import { BUILTIN_CONTENT_TYPES, pageType, postType } from './content-types.builtin.ts'
 import {
   CONTENT_OPERATIONS,
+  CONTENT_STATUSES,
+  type ContentStatus,
+  canDelete,
+  canJoinTranslationGroup,
   canPerform,
   canWrite,
   createContentTypeRegistry,
   defineContentType,
+  operationsForDelete,
   operationsForWrite,
+  permissionsForCreation,
+  permissionsForDocument,
 } from './content-types.ts'
 
 const alice = 'a'
@@ -240,23 +247,63 @@ describe('operationsForWrite', () => {
     ])
   })
 
-  it('does not ask twice for a document that is already publishable', () => {
+  it('asks for publish to edit a document that is already live', () => {
+    /*
+     * The case that reads as an omission until it bites: a patch carrying no
+     * status at all still rewrites what the public is reading, so it costs the
+     * same capability that put it there.
+     */
     expect(operationsForWrite({ currentStatus: 'published', nextStatus: 'published' })).toEqual([
       'update',
+      'publish',
+    ])
+    expect(operationsForWrite({ currentStatus: 'scheduled', nextStatus: 'scheduled' })).toEqual([
+      'update',
+      'publish',
     ])
     expect(operationsForWrite({ currentStatus: 'scheduled', nextStatus: 'published' })).toEqual([
       'update',
+      'publish',
     ])
   })
 
-  it('leaves the ungated cases ungated, on purpose', () => {
-    // Both want an edit_published_posts equivalent that does not exist yet.
+  it('asks for publish to take a document off the site', () => {
+    // Unpublishing is an editorial act however cheap the transition looks.
     expect(operationsForWrite({ currentStatus: 'published', nextStatus: 'draft' })).toEqual([
       'update',
+      'publish',
     ])
+    expect(operationsForWrite({ currentStatus: 'published', nextStatus: 'archived' })).toEqual([
+      'update',
+      'publish',
+    ])
+    expect(operationsForWrite({ currentStatus: 'scheduled', nextStatus: 'draft' })).toEqual([
+      'update',
+      'publish',
+    ])
+  })
+
+  it('leaves the statuses the public never sees to update alone', () => {
     expect(operationsForWrite({ currentStatus: 'archived', nextStatus: 'draft' })).toEqual([
       'update',
     ])
+    expect(operationsForWrite({ currentStatus: 'draft', nextStatus: 'trash' })).toEqual(['update'])
+    expect(operationsForWrite({ currentStatus: 'draft', nextStatus: 'draft' })).toEqual(['update'])
+  })
+})
+
+describe('operationsForDelete', () => {
+  it('asks for publish to remove something the public can see', () => {
+    // Otherwise the rule gating the gentle verb is escaped by choosing the
+    // destructive one: deleting a live page takes it off the site too.
+    expect(operationsForDelete('published')).toEqual(['delete', 'publish'])
+    expect(operationsForDelete('scheduled')).toEqual(['delete', 'publish'])
+  })
+
+  it('asks for delete alone otherwise', () => {
+    expect(operationsForDelete('draft')).toEqual(['delete'])
+    expect(operationsForDelete('archived')).toEqual(['delete'])
+    expect(operationsForDelete('trash')).toEqual(['delete'])
   })
 })
 
@@ -326,6 +373,235 @@ describe('canWrite', () => {
       id: alice,
     }
     expect(canWrite(postType, { nextStatus: 'published' }, both)).toBe(true)
+  })
+})
+
+describe('editing what is already live', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  const own = { authorId: alice }
+
+  it('stops a contributor rewriting their own document once it is published', () => {
+    /*
+     * The sequence this closes: a contributor writes a draft, an editor
+     * publishes it, and the contributor still holds content:update:own over
+     * the row — so without this they keep rewriting a live page, and the
+     * request that does it carries no status field at all.
+     */
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'draft', nextStatus: 'draft' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(true)
+
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'published', nextStatus: 'published' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(false)
+
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'scheduled', nextStatus: 'scheduled' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(false)
+  })
+
+  it('stops a contributor taking their own published document down again', () => {
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'published', nextStatus: 'draft' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(false)
+  })
+
+  it('lets an author manage their own published document, because they may publish', () => {
+    for (const next of ['published', 'draft', 'archived'] as const) {
+      expect(
+        canWrite(postType, { currentStatus: 'published', nextStatus: next }, actor('author'), own),
+      ).toBe(true)
+    }
+  })
+
+  it('still refuses an author somebody else’s published document', () => {
+    expect(
+      canWrite(postType, { currentStatus: 'published', nextStatus: 'draft' }, actor('author'), {
+        authorId: bob,
+      }),
+    ).toBe(false)
+  })
+
+  it('keeps the :any operations working for an editor', () => {
+    expect(
+      canWrite(postType, { currentStatus: 'published', nextStatus: 'draft' }, actor('editor'), {
+        authorId: bob,
+      }),
+    ).toBe(true)
+  })
+})
+
+describe('canDelete', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  const own = { authorId: alice }
+
+  it('lets a contributor delete their own draft', () => {
+    expect(canDelete(postType, 'draft', actor('contributor'), own)).toBe(true)
+  })
+
+  it('refuses a contributor their own published document', () => {
+    expect(canDelete(postType, 'published', actor('contributor'), own)).toBe(false)
+    expect(canDelete(postType, 'scheduled', actor('contributor'), own)).toBe(false)
+  })
+
+  it('lets an author delete their own published document', () => {
+    expect(canDelete(postType, 'published', actor('author'), own)).toBe(true)
+  })
+
+  it('refuses an author somebody else’s, published or not', () => {
+    expect(canDelete(postType, 'draft', actor('author'), { authorId: bob })).toBe(false)
+    expect(canDelete(postType, 'published', actor('author'), { authorId: bob })).toBe(false)
+  })
+
+  it('needs both capabilities, not either one', () => {
+    const deleterOnly = { capabilities: new Set<Capability>(['content:delete:any']), id: alice }
+    expect(canDelete(postType, 'published', deleterOnly)).toBe(false)
+
+    const both = {
+      capabilities: new Set<Capability>(['content:delete:any', 'content:publish']),
+      id: alice,
+    }
+    expect(canDelete(postType, 'published', both)).toBe(true)
+  })
+})
+
+describe('canJoinTranslationGroup', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  const member = (status: ContentStatus, authorId: string | null = alice) => ({ authorId, status })
+
+  it('lets somebody translate a document they may write', () => {
+    expect(canJoinTranslationGroup(postType, actor('contributor'), [member('draft')])).toBe(true)
+  })
+
+  it('refuses somebody who may not write any member', () => {
+    // A group id is not a secret and must never be what grants access.
+    expect(canJoinTranslationGroup(postType, actor('contributor'), [member('draft', bob)])).toBe(
+      false,
+    )
+  })
+
+  it('refuses a contributor once their own document has been published', () => {
+    /*
+     * The gap this closes. Editing a live document costs content:publish, so a
+     * contributor whose draft an editor published may no longer touch it — but
+     * they still hold content:update:own, so a rule phrased in capabilities
+     * alone let them keep extending the group. Adding a French version of a
+     * page you may not edit is that same edit, one step removed.
+     */
+    expect(canJoinTranslationGroup(postType, actor('contributor'), [member('published')])).toBe(
+      false,
+    )
+    expect(canJoinTranslationGroup(postType, actor('contributor'), [member('scheduled')])).toBe(
+      false,
+    )
+  })
+
+  it('lets an author translate their own published document, because they may publish', () => {
+    expect(canJoinTranslationGroup(postType, actor('author'), [member('published')])).toBe(true)
+  })
+
+  it('needs only one member it may write, not all of them', () => {
+    const group = [member('draft', bob), member('draft', alice)]
+    expect(canJoinTranslationGroup(postType, actor('contributor'), group)).toBe(true)
+  })
+
+  it('refuses an empty group outright', () => {
+    // Nobody holds write permission over nothing, so a group with no members
+    // is one no path can attach to.
+    expect(canJoinTranslationGroup(postType, actor('editor'), [])).toBe(false)
+  })
+
+  it('needs create permission as well as the write', () => {
+    // A subscriber may read a published document and never add to its group.
+    expect(canJoinTranslationGroup(postType, actor('subscriber'), [member('published')])).toBe(
+      false,
+    )
+  })
+})
+
+describe('permissions handed to the interface', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  it('offers a contributor no publishable status to move their draft to', () => {
+    // What the editor greys out. Derived from canWrite rather than restated,
+    // so a control cannot be drawn open on a transition the route refuses.
+    const permissions = permissionsForDocument(postType, actor('contributor'), {
+      authorId: alice,
+      status: 'draft',
+    })
+
+    expect(permissions.update).toBe(true)
+    expect(permissions.delete).toBe(true)
+    expect(permissions.statuses).toEqual(['draft', 'archived', 'trash'])
+  })
+
+  it('offers a contributor nothing at all on a document that went live', () => {
+    const permissions = permissionsForDocument(postType, actor('contributor'), {
+      authorId: alice,
+      status: 'published',
+    })
+
+    expect(permissions.update).toBe(false)
+    expect(permissions.delete).toBe(false)
+    expect(permissions.statuses).toEqual([])
+  })
+
+  it('offers an author every status on their own published document', () => {
+    const permissions = permissionsForDocument(postType, actor('author'), {
+      authorId: alice,
+      status: 'published',
+    })
+
+    expect(permissions.update).toBe(true)
+    expect(permissions.delete).toBe(true)
+    expect(permissions.statuses).toEqual([...CONTENT_STATUSES])
+  })
+
+  it('says a subscriber may not create, and offers them nothing', () => {
+    const permissions = permissionsForCreation(postType, actor('subscriber'))
+    expect(permissions.create).toBe(false)
+    expect(permissions.statuses).toEqual([])
+  })
+
+  it('offers a contributor only the statuses a creation may land in', () => {
+    const permissions = permissionsForCreation(postType, actor('contributor'))
+    expect(permissions.create).toBe(true)
+    expect(permissions.statuses).toEqual(['draft', 'archived', 'trash'])
   })
 })
 

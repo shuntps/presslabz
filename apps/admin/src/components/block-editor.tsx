@@ -350,7 +350,7 @@ function ImageBlockBody({
   const library = useMediaLibrary()
   const [picking, setPicking] = useState(false)
 
-  const media = library.data?.find((item) => item.id === block.mediaId)
+  const media = library.data?.media.find((item) => item.id === block.mediaId)
 
   return (
     <>

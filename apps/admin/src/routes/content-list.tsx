@@ -6,6 +6,7 @@ import {
   groupTranslations,
   type TranslationGroup,
   useContentList,
+  useContentTypes,
 } from '../lib/content.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
@@ -82,6 +83,7 @@ export function ContentListPage() {
   const { type } = useParams({ from: '/content/$type' })
 
   const others = LOCALES.filter((candidate) => candidate !== locale)
+  const types = useContentTypes()
   const primary = useContentList(type, locale)
   // One request per other language. A dedicated endpoint replaces this the
   // moment the list needs to paginate; two languages do not justify one yet.
@@ -106,6 +108,9 @@ export function ContentListPage() {
   ).length
 
   const labelKey = TYPE_LABELS[type]
+  // Offering "New" to somebody the server would refuse is offering a form that
+  // cannot be saved. The answer comes from the server, like every other one.
+  const canCreate = types.data?.find((candidate) => candidate.name === type)?.permissions.create
 
   return (
     <main className="content">
@@ -113,9 +118,11 @@ export function ContentListPage() {
         <h1 className="page-title">{labelKey ? t(labelKey) : type}</h1>
         <span className="rule" />
         <span className="data count">{t('content.count', { total: rows.length, drafts })}</span>
-        <Link to="/content/$type/new" params={{ type }} className="button-link">
-          {t('content.new')}
-        </Link>
+        {canCreate && (
+          <Link to="/content/$type/new" params={{ type }} className="button-link">
+            {t('content.new')}
+          </Link>
+        )}
       </div>
 
       {rows.length === 0 ? (

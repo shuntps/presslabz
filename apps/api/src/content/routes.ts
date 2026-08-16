@@ -1,11 +1,16 @@
 import {
+  type Actor,
   type AnyContentType,
   type ContentStatus,
   type ContentTypeRegistry,
+  canDelete,
+  canJoinTranslationGroup,
   canPerform,
   canReadDocument,
   canWrite,
   isContentStatus,
+  permissionsForCreation,
+  permissionsForDocument,
 } from '@presslabz/core'
 import {
   ContentConflictError,
@@ -72,9 +77,19 @@ function stampPublication(state: ContentState, now: Date): ContentState {
   return { ...state, publishedAt: now }
 }
 
-/** Explicit field list, never the row: a new column must be opted into. */
-function serializeContent(row: ContentRow) {
+/**
+ * Explicit field list, never the row: a new column must be opted into.
+ *
+ * `permissions` rides along because the admin has to grey out a control the
+ * server would refuse, and the only alternative to sending the conclusion is
+ * shipping the policy to the client and hoping the two agree. It is derived
+ * from the same functions the routes below enforce with, so they cannot
+ * disagree — and it is presentation data: every write is decided again, in a
+ * transaction, against the locked row.
+ */
+function serializeContent(type: AnyContentType, actor: Actor, row: ContentRow) {
   return {
+    permissions: permissionsForDocument(type, actor, row),
     id: row.id,
     type: row.type,
     locale: row.locale,
@@ -155,12 +170,21 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
   { db, registry },
 ) => {
   /** What content types exist, so the admin builds its navigation from truth. */
-  app.get('/content-types', { onRequest: [app.requireAuth] }, async (_request, reply) => {
+  app.get('/content-types', { onRequest: [app.requireAuth] }, async (request, reply) => {
+    if (!request.user) return
+    const actor = actorOf(request.user)
+
     return reply.send({
       types: registry.all().map((type) => ({
         name: type.name,
         hierarchical: type.hierarchical,
         taxonomies: type.taxonomies,
+        /*
+         * What this actor could create of this type, so the editor can offer
+         * the statuses that would be accepted instead of offering all of them
+         * and letting the save fail. Same functions, same answer.
+         */
+        permissions: permissionsForCreation(type, actor),
       })),
     })
   })
@@ -196,7 +220,7 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       ...(parsed.data.offset !== undefined ? { offset: parsed.data.offset } : {}),
     })
 
-    return reply.send({ contents: rows.map(serializeContent) })
+    return reply.send({ contents: rows.map((row) => serializeContent(type, actor, row)) })
   })
 
   app.get('/content/:type/:id', { onRequest: [app.requireAuth] }, async (request, reply) => {
@@ -212,11 +236,12 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    if (!canReadDocument(type, actorOf(request.user), row)) {
+    const actor = actorOf(request.user)
+    if (!canReadDocument(type, actor, row)) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
-    return reply.send({ content: serializeContent(row) })
+    return reply.send({ content: serializeContent(type, actor, row) })
   })
 
   /** Crosses locales on purpose: this is the translation pair, by definition. */
@@ -252,7 +277,20 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       const group = await listTranslations(db, row.translationGroupId)
       const readable = group.filter((sibling) => canReadDocument(type, actor, sibling))
 
-      return reply.send({ translations: readable.map(serializeContent) })
+      return reply.send({
+        translations: readable.map((sibling) => serializeContent(type, actor, sibling)),
+        /*
+         * Whether a translation may be started here, decided by the same
+         * function POST authorizes with and against the same member set — the
+         * whole group, not the readable subset, because that is what the write
+         * would be judged against.
+         *
+         * The editor offered the link on create permission alone, so a
+         * contributor whose draft an editor published was invited to extend a
+         * group they may no longer write to, and found out on save.
+         */
+        permissions: { create: canJoinTranslationGroup(type, actor, group) },
+      })
     },
   )
 
@@ -277,12 +315,12 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
      * contributor would reach the site by choosing a status rather than by
      * holding content:publish.
      */
-    if (!canWrite(type, { nextStatus: rest.status }, actorOf(request.user))) {
+    const actor = actorOf(request.user)
+    if (!canWrite(type, { nextStatus: rest.status }, actor)) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
     try {
-      const actor = actorOf(request.user)
       const state = stampPublication(rest, new Date())
 
       /*
@@ -304,19 +342,18 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
               state,
               /*
                * Being able to edit the content is what entitles somebody to
-               * claim a translation of it. Reading it is not enough: a group
-               * id is not a secret and must never be the thing that grants
-               * access. Consulted under the group lock, so the member it
-               * authorizes against cannot vanish before the insert.
+               * claim a translation of it — the whole write decision for that
+               * member as it stands, status included, not the raw update
+               * capability. Reading it is never enough: a group id is not a
+               * secret and must never be the thing that grants access.
+               * Consulted under the group lock, so the member it authorizes
+               * against cannot vanish before the insert.
                */
-              authorizeJoin: (members) =>
-                members.some((member) =>
-                  canPerform(type, 'update', actor, { authorId: member.authorId }),
-                ),
+              authorizeJoin: (members) => canJoinTranslationGroup(type, actor, members),
             },
       )
 
-      return reply.code(201).send({ content: serializeContent(row) })
+      return reply.code(201).send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
     }
@@ -362,7 +399,7 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       )
 
       if (!row) return reply.code(404).send({ error: 'not_found' })
-      return reply.send({ content: serializeContent(row) })
+      return reply.send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
     }
@@ -380,9 +417,15 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
 
     try {
       const deleted = await deleteContent(db, params.data.id, {
+        /*
+         * Against the locked row, and against its status. Removing a published
+         * document takes it off the site exactly as unpublishing does, so it
+         * costs content:publish too — otherwise the rule that gates the gentle
+         * verb is escaped by choosing the destructive one.
+         */
         authorize: (current) =>
           current.type === type.name &&
-          canPerform(type, 'delete', actor, { authorId: current.authorId }),
+          canDelete(type, current.status, actor, { authorId: current.authorId }),
       })
 
       if (!deleted) return reply.code(404).send({ error: 'not_found' })

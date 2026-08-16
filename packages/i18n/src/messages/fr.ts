@@ -70,6 +70,7 @@ export const fr: Messages = {
   'editor.save': 'Enregistrer',
   'editor.saving': 'Enregistrement…',
   'editor.saved': 'Enregistré',
+  'editor.readOnly': 'Ce document est en ligne. Le modifier demande le droit de publier.',
   'editor.remove': 'Retirer le bloc',
   'editor.moveUp': 'Monter',
   'editor.moveDown': 'Descendre',
@@ -92,6 +93,7 @@ export const fr: Messages = {
   'error.slugTaken': 'Cet identifiant est déjà utilisé dans cette langue',
   'error.translationExists': 'Ce groupe de traduction a déjà un document dans cette langue',
   'error.cannotPublish': 'Vous n’avez pas la permission de publier',
+  'error.mediaForbidden': 'Vous ne pouvez pas modifier la description de cette image',
 
   'media.library': 'Médias',
   'media.upload': 'Téléverser',
@@ -102,6 +104,9 @@ export const fr: Messages = {
   'media.close': 'Fermer',
   'media.rejected': 'Ce fichier n’est pas une image acceptée par cette installation',
   'media.missing': 'Cette image n’est plus dans la médiathèque',
+  'media.alt': 'Texte alternatif',
+  'media.altPlaceholder': 'Décrivez l’image',
+  'media.altForbidden': 'Seule la personne qui a téléversé cette image peut la décrire',
   'nav.dashboard': 'Tableau de bord',
   'nav.compose': 'Composer',
 

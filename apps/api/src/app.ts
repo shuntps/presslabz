@@ -24,7 +24,21 @@ declare module 'fastify' {
   }
 }
 
-export async function buildApp() {
+export interface BuildAppOptions {
+  /**
+   * Overrides the configured database.
+   *
+   * It exists so a suite can stand the whole API up against a scratch database
+   * it drops afterwards, rather than writing users, sessions and media into
+   * whatever `DATABASE_URL` points at and leaving them there. Same reasoning as
+   * `startSessionSweep` taking its sweep as a function: the seam is small, and
+   * without it the only alternative is a test that mutates the environment
+   * before importing this module.
+   */
+  readonly databaseUrl?: string
+}
+
+export async function buildApp(options: BuildAppOptions = {}) {
   const isProduction = env.NODE_ENV === 'production'
 
   const app = Fastify({
@@ -32,7 +46,7 @@ export async function buildApp() {
     trustProxy: true,
   })
 
-  const { db, ping: pingDb, close: closeDb } = createDb(env.DATABASE_URL)
+  const { db, ping: pingDb, close: closeDb } = createDb(options.databaseUrl ?? env.DATABASE_URL)
   const valkey = new Valkey(env.VALKEY_URL, { lazyConnect: true, maxRetriesPerRequest: 2 })
 
   await app.register(helmet, { contentSecurityPolicy: false })

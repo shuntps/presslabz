@@ -1,18 +1,20 @@
+import { type Actor, canEditMedia, canPerformOnMedia } from '@presslabz/core'
 import {
   createMedia,
   type Database,
   deleteMedia,
-  findMediaById,
   listMedia,
+  MediaForbiddenError,
   type MediaMeta,
   type MediaRow,
+  patchMediaAlt,
   type Rendition,
   storageKeysOf,
-  updateMediaAlt,
 } from '@presslabz/db'
 import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
+import type { AuthenticatedUser } from '../auth/plugin.ts'
 import {
   isAcceptedInputType,
   MAX_UPLOAD_BYTES,
@@ -34,12 +36,32 @@ interface MediaRoutesOptions {
  * apply to a short string that always has the same shape and is never
  * published on its own.
  */
-const altSchema = z.record(z.string().refine(isLocale), z.string().max(500))
+/**
+ * A patch, by language. A string sets that language's description, `null`
+ * removes it, and a language the request does not mention is left alone.
+ *
+ * Sending the whole map is what makes two people describing the same image in
+ * two languages overwrite each other: each posts a snapshot plus their own
+ * edit, and the second write deletes the first. Naming only what changed lets
+ * the repository merge it against the row it has locked.
+ */
+const altSchema = z.record(z.string().refine(isLocale), z.string().max(500).nullable())
 
-function serializeMedia(row: MediaRow) {
+function actorOf(user: AuthenticatedUser): Actor {
+  return { capabilities: user.capabilities, id: user.id }
+}
+
+/**
+ * `permissions` says whether this actor may edit this asset, so the library can
+ * present the alt field as read-only rather than let someone type into a
+ * control the server will refuse. The route decides again, under a row lock —
+ * this is what the interface draws, never what it relies on.
+ */
+function serializeMedia(actor: Actor, row: MediaRow) {
   const meta = row.meta as MediaMeta
 
   return {
+    permissions: { update: canEditMedia(actor, row) },
     id: row.id,
     url: mediaUrl(row.storageKey),
     mimeType: row.mimeType,
@@ -62,9 +84,21 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
   app.get(
     '/media',
     { onRequest: [app.requireCapability('media:read')] },
-    async (_request, reply) => {
+    async (request, reply) => {
+      if (!request.user) return
+      const actor = actorOf(request.user)
+
       const rows = await listMedia(db)
-      return reply.send({ media: rows.map(serializeMedia) })
+      return reply.send({
+        media: rows.map((row) => serializeMedia(actor, row)),
+        /*
+         * Whether this actor may add to the library at all. Without it the
+         * picker showed its upload control to everyone, and a contributor who
+         * chose a file was answered 403 and told the file was not an image —
+         * a refusal about them, reported as a fault in what they picked.
+         */
+        permissions: { upload: canPerformOnMedia('upload', actor) },
+      })
     },
   )
 
@@ -131,28 +165,51 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
         uploadedById: request.user.id,
       })
 
-      return reply.code(201).send({ media: serializeMedia(row) })
+      return reply.code(201).send({ media: serializeMedia(actorOf(request.user), row) })
     },
   )
 
-  /** Alt text is the only thing about an asset a person edits after upload. */
-  app.patch(
-    '/media/:id',
-    { onRequest: [app.requireCapability('media:upload')] },
-    async (request, reply) => {
-      const params = z.object({ id: z.uuid() }).safeParse(request.params)
-      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+  /**
+   * Alt text is the only thing about an asset a person edits after upload.
+   *
+   * Guarded by authentication rather than by a capability, because the answer
+   * depends on the row: `media:update:own` is enough for an asset this actor
+   * uploaded and not enough for anyone else's, and a route-level guard cannot
+   * see which it is. `media:upload` used to stand here, which meant every
+   * author could rewrite every other author's alt text.
+   */
+  app.patch('/media/:id', { onRequest: [app.requireAuth] }, async (request, reply) => {
+    if (!request.user) return
 
-      const body = z.strictObject({ alt: altSchema }).safeParse(request.body)
-      if (!body.success) return reply.code(400).send({ error: 'invalid_request' })
+    const params = z.object({ id: z.uuid() }).safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
 
-      const row = await findMediaById(db, params.data.id)
-      if (!row) return reply.code(404).send({ error: 'not_found' })
+    const body = z.strictObject({ alt: altSchema }).safeParse(request.body)
+    if (!body.success) return reply.code(400).send({ error: 'invalid_request' })
 
-      const updated = await updateMediaAlt(db, row.id, body.data.alt)
-      return reply.send({ media: serializeMedia(updated ?? row) })
-    },
-  )
+    const actor = actorOf(request.user)
+
+    try {
+      /*
+       * Decided inside the transaction, against the locked row. Reading the
+       * owner out here and updating afterwards would decide about a row that
+       * can change in between: uploadedById carries ON DELETE SET NULL, so
+       * losing the uploader's account turns an asset this actor owned into one
+       * that needs media:update:any.
+       */
+      const updated = await patchMediaAlt(db, params.data.id, body.data.alt, {
+        authorize: (current) => canEditMedia(actor, current),
+      })
+
+      if (!updated) return reply.code(404).send({ error: 'not_found' })
+      return reply.send({ media: serializeMedia(actor, updated) })
+    } catch (error) {
+      if (error instanceof MediaForbiddenError) {
+        return reply.code(403).send({ error: 'forbidden', reason: 'media-forbidden' })
+      }
+      throw error
+    }
+  })
 
   app.delete(
     '/media/:id',

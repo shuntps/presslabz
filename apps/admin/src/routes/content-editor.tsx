@@ -12,7 +12,13 @@ import {
 } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
-import { type ContentSummary, useContent, useSaveContent, useTranslations } from '../lib/content.ts'
+import {
+  type ContentSummary,
+  useContent,
+  useContentTypes,
+  useSaveContent,
+  useTranslations,
+} from '../lib/content.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -70,7 +76,25 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
   const existing = useContent(type, id ?? '')
   const siblings = useTranslations(type, id ?? '')
+  const types = useContentTypes()
   const enabled = id !== null
+
+  /*
+   * What may be done here is the server's answer, not a rule restated in the
+   * browser. A document already published costs content:publish to touch at
+   * all, and whether this actor holds it over *this* row depends on who wrote
+   * it — a question a capability list alone cannot settle. So the editor
+   * renders the conclusion the API sent and never recomputes it.
+   *
+   * Absent while the answer is still loading, and absent is "not yet", which
+   * closes the controls rather than opening them.
+   */
+  const onDocument = enabled ? existing.data?.permissions : undefined
+  const onType = types.data?.find((candidate) => candidate.name === type)?.permissions
+
+  const writable = enabled ? (onDocument?.update ?? false) : (onType?.create ?? false)
+  const allowedStatuses: readonly ContentStatus[] =
+    (enabled ? onDocument?.statuses : onType?.statuses) ?? []
 
   const [draft, setDraft] = useState<Draft | null>(mode === 'new' ? draftFrom(undefined) : null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -126,7 +150,14 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
   }
 
   return (
-    <div className="editor">
+    /*
+     * A fieldset rather than a `disabled` prop threaded through every control:
+     * disabling one closes every input, textarea, select and button inside it,
+     * including the ones the block editor renders. A rule enforced by the
+     * platform cannot be forgotten by the next component added here — which is
+     * exactly what a per-control flag would eventually be.
+     */
+    <fieldset className="editor" disabled={!writable}>
       <div className="galley">
         <div className="measure">
           <textarea
@@ -184,6 +215,15 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
       <aside className="inspector">
         <p className="panel-heading">{t('editor.document')}</p>
 
+        {/* Said once, plainly, rather than left for the author to infer from a
+            row of grey controls. The fieldset already refuses the input; this
+            is what tells them why. */}
+        {enabled && existing.data && !writable && (
+          <p className="notice" role="status">
+            {t('editor.readOnly')}
+          </p>
+        )}
+
         <label>
           <span>{t('editor.slug')}</span>
           <input
@@ -199,8 +239,12 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
             value={draft.status}
             onChange={(event) => patch({ status: event.target.value as ContentStatus })}
           >
+            {/* Every status is listed and the ones this actor may not choose
+                are disabled, rather than removed. A list that silently drops
+                "Published" reads as a product without publishing; a greyed
+                entry reads as a permission they do not have. */}
             {CONTENT_STATUSES.map((status) => (
-              <option key={status} value={status}>
+              <option key={status} value={status} disabled={!allowedStatuses.includes(status)}>
                 {t(STATUS_LABELS[status])}
               </option>
             ))}
@@ -255,7 +299,22 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         )}
 
         {enabled && existing.data && (
-          <TranslationPanel type={type} current={existing.data} siblings={siblings.data ?? []} />
+          <TranslationPanel
+            type={type}
+            current={existing.data}
+            siblings={siblings.data?.translations ?? []}
+            /*
+             * Not `onType.create`: joining a group also needs the right to
+             * write one of its members as it stands, which is a fact about
+             * this group and not about the type. The server answers it on the
+             * translations endpoint with the same function POST enforces, so
+             * the link appears exactly when the save would be accepted.
+             *
+             * A link is not a form control, so the fieldset does not close it.
+             * It is withheld instead.
+             */
+            canCreate={siblings.data?.permissions.create ?? false}
+          />
         )}
 
         {save.isError && (
@@ -270,7 +329,7 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
         {save.isSuccess && !save.isPending && <p className="muted saved">{t('editor.saved')}</p>}
       </aside>
-    </div>
+    </fieldset>
   )
 }
 
@@ -283,10 +342,12 @@ function TranslationPanel({
   type,
   current,
   siblings,
+  canCreate,
 }: {
   type: string
   current: ContentSummary
   siblings: ContentSummary[]
+  canCreate: boolean
 }) {
   const { t } = useLocale()
   /*
@@ -296,7 +357,7 @@ function TranslationPanel({
    * offer produces a 409 for a rule the interface already knew.
    */
   const present = new Set<string>([current.locale, ...siblings.map((row) => row.locale)])
-  const missing = LOCALES.filter((option) => !present.has(option))
+  const missing = canCreate ? LOCALES.filter((option) => !present.has(option)) : []
 
   return (
     <div className="translations">

@@ -72,6 +72,7 @@ export const en = {
   'editor.save': 'Save',
   'editor.saving': 'Saving…',
   'editor.saved': 'Saved',
+  'editor.readOnly': 'This document is live. Editing it needs permission to publish.',
   'editor.remove': 'Remove block',
   'editor.moveUp': 'Move up',
   'editor.moveDown': 'Move down',
@@ -94,6 +95,7 @@ export const en = {
   'error.slugTaken': 'That slug is already used in this language',
   'error.translationExists': 'That translation group already has a document in this language',
   'error.cannotPublish': 'You do not have permission to publish',
+  'error.mediaForbidden': 'You cannot change the description of that image',
 
   'media.library': 'Media',
   'media.upload': 'Upload',
@@ -104,6 +106,9 @@ export const en = {
   'media.close': 'Close',
   'media.rejected': 'That file is not an image this installation accepts',
   'media.missing': 'This image is no longer in the library',
+  'media.alt': 'Alt text',
+  'media.altPlaceholder': 'Describe the image',
+  'media.altForbidden': 'Only the person who uploaded this can describe it',
   'nav.dashboard': 'Dashboard',
   'nav.compose': 'Compose',
 

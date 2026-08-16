@@ -1,4 +1,6 @@
+export * from './access.ts'
 export * from './capabilities.ts'
 export * from './content-types.builtin.ts'
 export * from './content-types.ts'
+export * from './media.ts'
 export * from './slug.ts'
