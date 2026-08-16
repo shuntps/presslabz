@@ -1,4 +1,5 @@
 import { defineContentType } from '@presslabz/core'
+import { hasIntegrationEnv } from '@presslabz/db/testing'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
@@ -20,16 +21,11 @@ import {
  * constraint that holds when the check loses a race, a rollback that takes
  * the revision with it. None of that survives a fake.
  *
- * CI provides DATABASE_URL as a service; locally it comes from .env.
+ * hasIntegrationEnv skips when a person runs these without Docker up, and
+ * throws when CI does — a suite that quietly vanishes from a green build is
+ * worse than one that fails.
  */
-if (!process.env.DATABASE_URL) {
-  try {
-    process.loadEnvFile(new URL('../../../../.env', import.meta.url).pathname)
-  } catch {
-    // No .env either — the suite skips below rather than failing.
-  }
-}
-
+const ready = hasIntegrationEnv()
 const url = process.env.DATABASE_URL
 
 /** Its own type name, so nothing here can see or disturb real documents. */
@@ -47,7 +43,7 @@ function state(overrides: Partial<ContentState> = {}): ContentState {
   }
 }
 
-describe.skipIf(!url)('contents repository', () => {
+describe.skipIf(!ready)('contents repository', () => {
   let handle: ReturnType<typeof createDb>
   let db: Database
 

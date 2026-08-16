@@ -1,3 +1,4 @@
+import { hasIntegrationEnv } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -8,15 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  * told to, so a route suite and a shell session can agree the API works while
  * the admin cannot call it at all.
  */
-if (!process.env.DATABASE_URL) {
-  try {
-    process.loadEnvFile(new URL('../../../.env', import.meta.url).pathname)
-  } catch {
-    // Skipped below rather than failed.
-  }
-}
-
-const ready = Boolean(process.env.DATABASE_URL && process.env.VALKEY_URL)
+const ready = hasIntegrationEnv()
 
 describe.skipIf(!ready)('app configuration', () => {
   let app: FastifyInstance

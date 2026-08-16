@@ -6,6 +6,7 @@ import {
   deleteContent,
   findUserByEmail,
 } from '@presslabz/db'
+import { hasIntegrationEnv } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
@@ -17,15 +18,7 @@ import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
  * actually lands on. A mocked repository would let every one of these pass
  * while the bug stayed.
  */
-if (!process.env.DATABASE_URL) {
-  try {
-    process.loadEnvFile(new URL('../../../../.env', import.meta.url).pathname)
-  } catch {
-    // Skipped below rather than failed.
-  }
-}
-
-const ready = Boolean(process.env.DATABASE_URL && process.env.VALKEY_URL)
+const ready = hasIntegrationEnv()
 
 /**
  * Cleanup deletes exactly the ids this file created, through the repository.
