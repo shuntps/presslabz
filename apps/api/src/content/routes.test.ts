@@ -70,6 +70,7 @@ describe.skipIf(!ready)('content routes', () => {
     handle = createDb(process.env.DATABASE_URL as string, { maxConnections: 5 })
     db = handle.db
 
+    await signIn('subscriber', 'rt-subscriber@presslabz.test')
     await signIn('contributor', 'rt-contributor@presslabz.test')
     await signIn('author', 'rt-author@presslabz.test')
     await signIn('editor', 'rt-editor@presslabz.test')
@@ -246,6 +247,105 @@ describe.skipIf(!ready)('content routes', () => {
 
       const editorList = await app.inject({ url: '/content/post?locale=fr', cookies: as('editor') })
       expect(editorList.json().contents.map((row: { id: string }) => row.id)).toContain(hiddenId)
+    })
+  })
+
+  describe('a translation is only as readable as it is on its own', () => {
+    it('does not hand a subscriber a draft it could not open directly', async () => {
+      // The disclosure this endpoint used to make: content:read belongs to
+      // every role, so checking it once and returning the whole group gave
+      // away every unpublished sibling, blocks included.
+      const anchor = await post('editor', {
+        ...draft('anchor'),
+        status: 'published',
+        publishedAt: '2026-01-01T00:00:00Z',
+      })
+      const anchorId = anchor.json().content.id
+      const groupId = anchor.json().content.translationGroupId
+
+      const hidden = await post('editor', {
+        locale: 'en',
+        slug: uniqueSlug('hidden'),
+        title: 'Unpublished translation',
+        translationGroupId: groupId,
+      })
+      const hiddenId = hidden.json().content.id
+
+      const asEditor = await app.inject({
+        url: `/content/post/${anchorId}/translations`,
+        cookies: as('editor'),
+      })
+      expect(asEditor.json().translations.map((r: { id: string }) => r.id)).toContain(hiddenId)
+
+      const asSubscriber = await app.inject({
+        url: `/content/post/${anchorId}/translations`,
+        cookies: as('subscriber'),
+      })
+      expect(asSubscriber.statusCode).toBe(200)
+      const visible = asSubscriber.json().translations
+      expect(visible.map((r: { id: string }) => r.id)).not.toContain(hiddenId)
+      // Omitted, not reported: a count of what was withheld is the same leak.
+      expect(JSON.stringify(asSubscriber.json())).not.toContain('Unpublished translation')
+    })
+
+    it('refuses the anchor a subscriber could not open directly', async () => {
+      // Reaching a document sideways must not be easier than opening it.
+      const created = await post('editor', draft('sideways'))
+      const id = created.json().content.id
+
+      expect(
+        (await app.inject({ url: `/content/post/${id}`, cookies: as('subscriber') })).statusCode,
+      ).toBe(403)
+      expect(
+        (await app.inject({ url: `/content/post/${id}/translations`, cookies: as('subscriber') }))
+          .statusCode,
+      ).toBe(403)
+    })
+  })
+
+  describe('joining a group is authorized, not merely addressed', () => {
+    it('refuses an actor who cannot edit any member', async () => {
+      // A group id is not a secret and must never be what grants access.
+      const editors = await post('editor', draft('editors-group'))
+      const groupId = editors.json().content.translationGroupId
+
+      const response = await post('contributor', {
+        locale: 'en',
+        slug: uniqueSlug('intruder'),
+        title: 'Intruder',
+        translationGroupId: groupId,
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(response.json().reason).toBe('group-forbidden')
+    })
+
+    it('lets a contributor translate their own document', async () => {
+      const own = await post('contributor', draft('own-group'))
+      const groupId = own.json().content.translationGroupId
+
+      const response = await post('contributor', {
+        locale: 'en',
+        slug: uniqueSlug('own-translation'),
+        title: 'Own translation',
+        translationGroupId: groupId,
+      })
+
+      expect(response.statusCode).toBe(201)
+    })
+
+    it('answers 422 for a group that does not exist', async () => {
+      // Well-formed instructions that cannot be carried out, rather than a
+      // conflict with the state of anything that is there.
+      const response = await post('editor', {
+        locale: 'fr',
+        slug: uniqueSlug('nowhere'),
+        title: 'Nowhere',
+        translationGroupId: '00000000-0000-4000-8000-0000000000ff',
+      })
+
+      expect(response.statusCode).toBe(422)
+      expect(response.json().reason).toBe('group-not-found')
     })
   })
 

@@ -86,6 +86,9 @@ export const fr: Messages = {
   'block.divider': 'Séparateur',
   'block.image': 'Image',
 
+  'error.groupForbidden': 'Vous ne pouvez pas ajouter de traduction à ce document',
+  'error.groupNotFound': 'Ce groupe de traduction n’existe plus',
+  'error.groupTypeMismatch': 'Ce groupe de traduction contient un autre type de document',
   'error.slugTaken': 'Cet identifiant est déjà utilisé dans cette langue',
   'error.translationExists': 'Ce groupe de traduction a déjà un document dans cette langue',
   'error.cannotPublish': 'Vous n’avez pas la permission de publier',

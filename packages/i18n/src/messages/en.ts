@@ -88,6 +88,9 @@ export const en = {
   'block.divider': 'Divider',
   'block.image': 'Image',
 
+  'error.groupForbidden': 'You cannot add a translation to that document',
+  'error.groupNotFound': 'That translation group no longer exists',
+  'error.groupTypeMismatch': 'That translation group holds a different kind of document',
   'error.slugTaken': 'That slug is already used in this language',
   'error.translationExists': 'That translation group already has a document in this language',
   'error.cannotPublish': 'You do not have permission to publish',

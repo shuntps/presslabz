@@ -242,6 +242,30 @@ export function canPerform(
   return actor.id !== null && resource?.authorId != null && actor.id === resource.authorId
 }
 
+/**
+ * Whether an actor may read one document. The single read decision, so the two
+ * routes that make it cannot answer differently.
+ *
+ * They did. Reading a document directly checked the status and the authorship;
+ * reading its translations checked only the `read` capability, which every
+ * role holds — so a subscriber who could open a published article received its
+ * unpublished translation in full, blocks included. The rule was not wrong in
+ * one place and right in the other, it was written twice.
+ */
+export function canReadDocument(
+  type: AnyContentType,
+  actor: { readonly capabilities: ReadonlySet<Capability>; readonly id: string | null },
+  resource: { readonly authorId: string | null; readonly status: ContentStatus },
+): boolean {
+  if (!canPerform(type, 'read', actor)) return false
+
+  // Published is public to anyone who may read at all. Anything else is
+  // visible only to somebody who could edit it.
+  if ((PUBLIC_CONTENT_STATUSES as readonly ContentStatus[]).includes(resource.status)) return true
+
+  return canPerform(type, 'update', actor, { authorId: resource.authorId })
+}
+
 export interface WriteIntent {
   /** The status the document will carry once the write lands. */
   readonly nextStatus: ContentStatus

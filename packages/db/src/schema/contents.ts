@@ -3,12 +3,14 @@ import { CONTENT_STATUSES } from '@presslabz/core'
 import { type SQL, sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
+  foreignKey,
   index,
   jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
@@ -22,6 +24,38 @@ import { users } from './users.ts'
  * production.
  */
 export const contentStatus = pgEnum('content_status', CONTENT_STATUSES)
+
+/**
+ * A translation group, and the one content type its members may have.
+ *
+ * It exists to make that rule structural. While the group was only a uuid
+ * column, "every member shares a type" was an application check with nothing
+ * behind it: a client could invent a group id, two concurrent creates would
+ * both find no siblings to lock, and the group ended up holding a post and a
+ * page. Reproduced, not theorised.
+ *
+ * The row is also the serialization point for every membership change. Joining
+ * locks it before reading the members it authorizes against; deleting the last
+ * member locks it before removing anything. One lock order, so a join cannot
+ * authorize against a member that is disappearing underneath it.
+ */
+export const translationGroups = pgTable(
+  'translation_groups',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    /** Every member of this group is of this type. Enforced by the FK below. */
+    type: text().notNull(),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    /*
+     * Redundant for uniqueness — id is already the primary key — and required
+     * anyway: Postgres will only let a composite foreign key reference columns
+     * carrying a unique constraint or index.
+     */
+    unique('translation_groups_id_type_uq').on(t.id, t.type),
+  ],
+)
 
 /**
  * One row per translation, not one row per document.
@@ -42,7 +76,12 @@ export const contents = pgTable(
     /** Registered in code via defineContentType(), not a row in a table. */
     type: text().notNull(),
     locale: text().notNull(),
-    translationGroupId: uuid().notNull().defaultRandom(),
+    /*
+     * No default. A content row cannot invent the group it belongs to: the
+     * group is opened first, server-side, and its id supplied here. A default
+     * is what let a client hand over an id nothing had created yet.
+     */
+    translationGroupId: uuid().notNull(),
     slug: text().notNull(),
     status: contentStatus().notNull().default('draft'),
     title: text().notNull(),
@@ -75,6 +114,19 @@ export const contents = pgTable(
      * is what actually makes it impossible, and it keeps holding for any code
      * path written later that forgets to look.
      */
+    /*
+     * The structural half of "a group has exactly one type". The application
+     * still checks it under the group lock, because a constraint gives a
+     * useful guarantee and a poor error message — but the guarantee is here.
+     *
+     * restrict, never cascade: deleting a group must not take content with it.
+     * The repository empties a group before it removes it.
+     */
+    foreignKey({
+      name: 'contents_translation_group_fk',
+      columns: [t.translationGroupId, t.type],
+      foreignColumns: [translationGroups.id, translationGroups.type],
+    }).onDelete('restrict'),
     uniqueIndex('contents_group_locale_uq').on(t.translationGroupId, t.locale),
     index('contents_translation_group_idx').on(t.translationGroupId),
     index('contents_listing_idx').on(t.type, t.locale, t.status, t.publishedAt),
