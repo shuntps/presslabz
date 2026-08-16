@@ -1,6 +1,6 @@
 import type { Blocks } from '@presslabz/blocks'
-import type { AnyContentType, ContentStatus } from '@presslabz/core'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { type AnyContentType, type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contentRevisions, contents } from '../schema/contents.ts'
 
@@ -140,6 +140,16 @@ export interface ListContentsQuery {
   /** Required. Every listing is one language's listing. */
   readonly locale: string
   readonly statuses?: readonly ContentStatus[]
+  /**
+   * Restricts the listing to what one actor is allowed to see: anything
+   * published, plus anything they wrote. Omit only for an actor who may
+   * already read every draft.
+   *
+   * This is a filter, not a nicety. `content:read` is held by every role
+   * including subscriber, so a listing that ignores authorship hands every
+   * unpublished document to anyone who can log in.
+   */
+  readonly visibleTo?: { readonly authorId: string | null }
   readonly limit?: number
   readonly offset?: number
 }
@@ -148,6 +158,14 @@ export async function listContents(db: Database, query: ListContentsQuery): Prom
   const filters = [eq(contents.type, query.type), eq(contents.locale, query.locale)]
   if (query.statuses && query.statuses.length > 0) {
     filters.push(inArray(contents.status, [...query.statuses]))
+  }
+
+  if (query.visibleTo) {
+    const published = inArray(contents.status, [...PUBLIC_CONTENT_STATUSES])
+    const authorId = query.visibleTo.authorId
+    // An anonymous actor authored nothing, so they get the published set only.
+    const visible = authorId === null ? published : or(published, eq(contents.authorId, authorId))
+    if (visible) filters.push(visible)
   }
 
   return db
@@ -271,6 +289,17 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
 
 export interface UpdateContentOptions {
   /**
+   * Adjusts the merged state before it is validated, with the locked row in
+   * hand. It exists for values that only a transition can decide — stamping a
+   * publication date is the one — which cannot be computed outside because
+   * outside does not know the status being left.
+   *
+   * Whatever it returns still goes through the type's rules, so it can be
+   * wrong without being dangerous.
+   */
+  readonly derive?: (current: ContentRow, merged: ContentState) => ContentState
+
+  /**
    * Consulted inside the transaction, against the locked row and the state
    * the write would produce.
    *
@@ -317,7 +346,8 @@ export async function updateContent(
       const current = locked[0]
       if (!current) return null
 
-      const merged = { ...toState(current), ...definedEntries(patch) }
+      const rawMerge = { ...toState(current), ...definedEntries(patch) } as ContentState
+      const merged = options.derive ? options.derive(current, rawMerge) : rawMerge
       // AnyContentType erases the schema's output type; the shape is the one
       // toState produces, which stateSchema is built from.
       const next = type.stateSchema.parse(merged) as ContentState
@@ -354,7 +384,38 @@ export async function updateContent(
   }
 }
 
-export async function deleteContent(db: Database, id: string): Promise<boolean> {
-  const rows = await db.delete(contents).where(eq(contents.id, id)).returning({ id: contents.id })
-  return rows.length > 0
+export interface DeleteContentOptions {
+  /** Consulted inside the transaction, against the locked row. */
+  readonly authorize?: (current: ContentRow) => boolean
+}
+
+/**
+ * Locked and authorized the same way an update is. Reading the row, deciding,
+ * and then deleting by id would decide about a row that may have changed
+ * author in between — a smaller window than the publish one, but there is no
+ * reason for delete to be the careless sibling.
+ */
+export async function deleteContent(
+  db: Database,
+  id: string,
+  options: DeleteContentOptions = {},
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const locked = await tx
+      .select()
+      .from(contents)
+      .where(eq(contents.id, id))
+      .limit(1)
+      .for('update')
+
+    const current = locked[0]
+    if (!current) return false
+
+    if (options.authorize && !options.authorize(current)) {
+      throw new ContentForbiddenError()
+    }
+
+    await tx.delete(contents).where(eq(contents.id, id))
+    return true
+  })
 }

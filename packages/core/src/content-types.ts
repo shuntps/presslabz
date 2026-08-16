@@ -150,7 +150,19 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
     excerpt: z.string().max(1000).optional(),
     status: z.enum(CONTENT_STATUSES).default('draft'),
     blocks: blocksSchema.default([]),
-    meta,
+    /*
+     * prefault rather than default. `.default({})` short-circuits validation
+     * and hands the value straight back, so a type whose metadata has a
+     * required field would quietly store `{}` and only fail much later, when
+     * something read the field that was never there. `.prefault({})` runs the
+     * fallback through the schema, so a metadata shape that genuinely needs
+     * input says so, naming the field, on the request that omitted it.
+     *
+     * The cast is needed because TMeta is generic here and `{}` cannot be
+     * proven to satisfy an unknown shape; prefault is exactly what checks it
+     * at runtime.
+     */
+    meta: meta.prefault({} as z.input<TMeta>),
     /**
      * A schedule is a promise about a moment, so it needs one. Accepting
      * `scheduled` without a date is how a document ends up in a state that

@@ -2,12 +2,14 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
+import { createBuiltinRegistry } from '@presslabz/core'
 import { createDb } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
 import Fastify from 'fastify'
 import { Valkey } from 'iovalkey'
 import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
+import { contentRoutes } from './content/routes.ts'
 import { env } from './env.ts'
 import { userRoutes } from './users/routes.ts'
 
@@ -43,6 +45,9 @@ export async function buildApp() {
   await app.register(authPlugin, { db, isProduction })
   await app.register(authRoutes, { db, isProduction })
   await app.register(userRoutes, { db })
+  // Declared in code, so the registry is built once at boot and passed in
+  // rather than reached for from a module.
+  await app.register(contentRoutes, { db, registry: createBuiltinRegistry() })
 
   app.addHook('onClose', async () => {
     await closeDb()

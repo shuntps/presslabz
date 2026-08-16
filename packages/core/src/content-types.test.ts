@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { type Capability, capabilitiesFor } from './capabilities.ts'
 import { BUILTIN_CONTENT_TYPES, pageType, postType } from './content-types.builtin.ts'
 import {
@@ -59,6 +60,28 @@ describe('defineContentType', () => {
     const bad = document({ meta: { featuredMediaId: 'not-a-uuid' } })
     expect(postType.createSchema.safeParse(good).success).toBe(true)
     expect(postType.createSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('lets meta be omitted when the type asks nothing of it', () => {
+    const { meta: _dropped, ...withoutMeta } = document()
+    const parsed = postType.createSchema.safeParse(withoutMeta)
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.meta).toEqual({})
+  })
+
+  it('still demands meta the type actually requires, and names the field', () => {
+    // `.default({})` would have short-circuited validation and stored an empty
+    // object here, failing much later when something read the missing field.
+    const strict = defineContentType({
+      name: 'release',
+      meta: z.object({ version: z.string() }),
+    })
+
+    const { meta: _dropped, ...withoutMeta } = document()
+    const parsed = strict.createSchema.safeParse(withoutMeta)
+    expect(parsed.success).toBe(false)
+    expect(parsed.success ? '' : parsed.error.issues[0]?.path.join('.')).toContain('version')
+    expect(strict.createSchema.safeParse(document({ meta: { version: '1.0' } })).success).toBe(true)
   })
 
   it('offers a parent only where nesting means something', () => {
