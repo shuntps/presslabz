@@ -97,6 +97,20 @@ Dark and light mode are a core feature, not a theme option. Three states: explic
 
 Define the complete light palette on bare `:root`, then redefine only what changes under `@media (prefers-color-scheme: dark)` and again under `:root[data-theme="dark"]`. No color may have its only definition inside a media query or `[data-theme]` block. A hardcoded hex value in a component is a defect.
 
+An explicit choice must also narrow `color-scheme` — `light` or `dark` rather than the `light dark` on `:root`. Custom properties only repaint what the stylesheet controls; scrollbars, form controls and date pickers follow `color-scheme`, so omitting it produces a dark page with white inputs.
+
+### Persistence
+
+The preference lives in a **cookie**, applied by a small blocking script inlined in `<head>`, on both the public site and the admin.
+
+The deciding question is not cookie versus `localStorage`, it is whether the HTML is per-request or shared. Both PressLabz surfaces serve shared HTML — the public site is CDN-cached, which is the entire point of tag-based invalidation, and the admin is a Vite SPA with a static shell. Rendering `data-theme` into that HTML server-side would bake the first visitor's theme into the shared cache entry and serve it to everyone after them. Cloudflare in particular does not cache on `Vary` by default, and putting a cookie in the cache key is an Enterprise feature, so the failure would be silent.
+
+The rule that follows: **the theme cookie must never influence cacheable HTML.** The client script reads it before first paint; the server reads it only on routes that are not shared-cached — preview, admin API, and syncing with `users.theme_preference` at sign-in so the choice follows the user across devices.
+
+A cookie is chosen over `localStorage` because the server can read it at all, because it survives private browsing with storage disabled, and because it distinguishes an explicit "follow the system" from never having chosen. It is deliberately not `httpOnly` — the pre-paint script must read it, and a display preference is not a credential.
+
+`THEME_INIT_SCRIPT` is a static string literal. Building it by interpolating the cookie name would be a code-construction sink, which CodeQL correctly flags: harmless while the name is hardcoded, an injection point as soon as it becomes configurable. Tests assert the literal and the constants cannot drift apart.
+
 ## Hook API
 
 Typed through a declaration map, so payload types are known at compile time:

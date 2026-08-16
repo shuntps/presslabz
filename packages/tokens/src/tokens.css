@@ -92,8 +92,19 @@
   }
 }
 
+/*
+ * An explicit choice must also narrow color-scheme, not just the custom
+ * properties. Without this the palette flips but scrollbars, form controls
+ * and date pickers keep following the operating system — a dark page with
+ * white inputs.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 /* Explicit choice. Repeated so the toggle wins in both directions. */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --pl-color-bg: #131316;
   --pl-color-bg-subtle: #1a1a1f;
   --pl-color-bg-raised: #1f1f25;
