@@ -1,4 +1,5 @@
 import type { Blocks } from '@presslabz/blocks'
+import { CONTENT_STATUSES } from '@presslabz/core'
 import { type SQL, sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
@@ -14,13 +15,13 @@ import {
 import { timestamps, tsvector } from './shared.ts'
 import { users } from './users.ts'
 
-export const contentStatus = pgEnum('content_status', [
-  'draft',
-  'scheduled',
-  'published',
-  'archived',
-  'trash',
-])
+/**
+ * The list lives in packages/core, which is where the domain decides what a
+ * status means. Restating it here would let the database and the validation
+ * drift, and the drift would only show up as a constraint violation in
+ * production.
+ */
+export const contentStatus = pgEnum('content_status', CONTENT_STATUSES)
 
 /**
  * One row per translation, not one row per document.

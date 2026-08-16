@@ -1,0 +1,177 @@
+import { describe, expect, it } from 'vitest'
+import { capabilitiesFor } from './capabilities.ts'
+import { BUILTIN_CONTENT_TYPES, pageType, postType } from './content-types.builtin.ts'
+import {
+  CONTENT_OPERATIONS,
+  canPerform,
+  createContentTypeRegistry,
+  defineContentType,
+} from './content-types.ts'
+
+const alice = 'a'
+const bob = 'b'
+const blockId = '00000000-0000-4000-8000-000000000001'
+
+function document(overrides: Record<string, unknown> = {}) {
+  return {
+    locale: 'fr',
+    slug: 'le-futur-du-cms',
+    title: 'Le futur du CMS',
+    meta: {},
+    ...overrides,
+  }
+}
+
+describe('defineContentType', () => {
+  it('refuses a name that could not sit in a URL or the type column', () => {
+    expect(() => defineContentType({ name: 'Post' })).toThrow()
+    expect(() => defineContentType({ name: 'my post' })).toThrow()
+    expect(() => defineContentType({ name: '2post' })).toThrow()
+    expect(() => defineContentType({ name: '' })).toThrow()
+  })
+
+  it('accepts a whole document', () => {
+    expect(postType.createSchema.safeParse(document()).success).toBe(true)
+  })
+
+  it('refuses a locale the installation does not serve', () => {
+    expect(postType.createSchema.safeParse(document({ locale: 'de' })).success).toBe(false)
+  })
+
+  it('refuses a schedule with no date to keep', () => {
+    // Otherwise the document sits in a state nothing will ever move it out of.
+    expect(postType.createSchema.safeParse(document({ status: 'scheduled' })).success).toBe(false)
+    const scheduled = document({ status: 'scheduled', publishedAt: '2026-09-01T09:00:00Z' })
+    expect(postType.createSchema.safeParse(scheduled).success).toBe(true)
+  })
+
+  it('validates blocks through the block vocabulary rather than beside it', () => {
+    const good = document({ blocks: [{ id: blockId, type: 'divider' }] })
+    const bad = document({ blocks: [{ id: blockId, type: 'html', html: '<script>x</script>' }] })
+    expect(postType.createSchema.safeParse(good).success).toBe(true)
+    expect(postType.createSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('types meta instead of accepting whatever a caller sends', () => {
+    const good = document({ meta: { seo: { description: 'A description' } } })
+    const bad = document({ meta: { featuredMediaId: 'not-a-uuid' } })
+    expect(postType.createSchema.safeParse(good).success).toBe(true)
+    expect(postType.createSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('offers a parent only where nesting means something', () => {
+    const withParent = { parentId: '00000000-0000-4000-8000-0000000000ff' }
+    const page = pageType.createSchema.safeParse(document(withParent))
+    const post = postType.createSchema.safeParse(document(withParent))
+    expect(page.success).toBe(true)
+    // A post has no parent, so the key is not part of its shape and is dropped.
+    expect(post.success).toBe(true)
+    expect(post.success && 'parentId' in post.data).toBe(false)
+  })
+
+  it('will not let an update move a document between languages', () => {
+    // Each document is one translation. Changing its locale would silently
+    // change which unique (type, locale, slug) row it collides with.
+    const parsed = postType.updateSchema.safeParse({ title: 'Titre', locale: 'en' })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && 'locale' in parsed.data).toBe(false)
+  })
+
+  it('lets an update carry one field alone', () => {
+    expect(postType.updateSchema.safeParse({ title: 'Un titre' }).success).toBe(true)
+  })
+
+  /**
+   * The assertion here is that this file compiles. Reading `.title` and
+   * `.meta.seo` off the parsed value only typechecks if the declaration
+   * handed back real types rather than `unknown` — which is the half of
+   * "one call yields validation and types" that a stray z.ZodType annotation
+   * silently deletes while every runtime test keeps passing.
+   */
+  it('hands the caller types, not just validation', () => {
+    const parsed = postType.createSchema.parse(
+      document({ meta: { seo: { title: 'SEO' } }, excerpt: 'An excerpt' }),
+    )
+
+    expect(parsed.title).toBe('Le futur du CMS')
+    expect(parsed.status).toBe('draft')
+    expect(parsed.blocks).toEqual([])
+    expect(parsed.meta.seo?.title).toBe('SEO')
+    expect(parsed.excerpt?.startsWith('An')).toBe(true)
+  })
+})
+
+describe('canPerform', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  it('lets an author edit their own document but not another', () => {
+    expect(canPerform(postType, 'update', actor('author'), { authorId: alice })).toBe(true)
+    expect(canPerform(postType, 'update', actor('author'), { authorId: bob })).toBe(false)
+  })
+
+  it('lets an editor edit anyone', () => {
+    expect(canPerform(postType, 'update', actor('editor'), { authorId: bob })).toBe(true)
+    expect(canPerform(postType, 'delete', actor('editor'), { authorId: bob })).toBe(true)
+  })
+
+  it('refuses a subscriber outright', () => {
+    expect(canPerform(postType, 'update', actor('subscriber'), { authorId: alice })).toBe(false)
+    expect(canPerform(postType, 'create', actor('subscriber'))).toBe(false)
+  })
+
+  it('refuses an orphaned document to an "own only" role', () => {
+    // authorId null means the author was deleted; nobody owns it any more.
+    expect(canPerform(postType, 'delete', actor('author'), { authorId: null })).toBe(false)
+    expect(canPerform(postType, 'delete', actor('editor'), { authorId: null })).toBe(true)
+  })
+
+  it('refuses an anonymous actor even when the owner is also null', () => {
+    expect(canPerform(postType, 'update', actor('author', null), { authorId: null })).toBe(false)
+  })
+
+  it('keeps publishing separate from editing', () => {
+    expect(canPerform(postType, 'publish', actor('contributor'))).toBe(false)
+    expect(canPerform(postType, 'publish', actor('author'))).toBe(true)
+  })
+
+  it('honours a per-type override rather than the default', () => {
+    const locked = defineContentType({
+      name: 'setting-page',
+      access: { update: { any: 'settings:manage' } },
+    })
+    expect(canPerform(locked, 'update', actor('editor'), { authorId: alice })).toBe(false)
+    expect(canPerform(locked, 'update', actor('administrator'), { authorId: bob })).toBe(true)
+  })
+
+  it('answers for every declared operation', () => {
+    for (const operation of CONTENT_OPERATIONS) {
+      expect(
+        typeof canPerform(postType, operation, actor('administrator'), { authorId: bob }),
+        operation,
+      ).toBe('boolean')
+    }
+  })
+})
+
+describe('createContentTypeRegistry', () => {
+  it('refuses two types with the same name', () => {
+    expect(() => createContentTypeRegistry([postType, postType])).toThrow(/twice/)
+  })
+
+  it('throws on a name the caller claimed to have routed on', () => {
+    const registry = createContentTypeRegistry(BUILTIN_CONTENT_TYPES)
+    expect(registry.get('nope')).toBeUndefined()
+    expect(() => registry.require('nope')).toThrow(/Unknown content type/)
+    expect(registry.require('post')).toBe(postType)
+  })
+
+  it('is built per caller rather than shared, so registrations cannot leak', () => {
+    const one = createContentTypeRegistry([postType])
+    const two = createContentTypeRegistry([postType, pageType])
+    expect(one.names()).toEqual(['post'])
+    expect(two.names()).toEqual(['post', 'page'])
+  })
+})

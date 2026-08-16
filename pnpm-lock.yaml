@@ -208,6 +208,16 @@ importers:
         version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12))
 
   packages/core:
+    dependencies:
+      '@presslabz/blocks':
+        specifier: workspace:*
+        version: link:../blocks
+      '@presslabz/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -224,6 +234,9 @@ importers:
       '@presslabz/blocks':
         specifier: workspace:*
         version: link:../blocks
+      '@presslabz/core':
+        specifier: workspace:*
+        version: link:../core
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(postgres@3.4.9)

@@ -83,19 +83,3 @@ export function capabilitiesFor(role: Role): ReadonlySet<Capability> {
 export function roleHasCapability(role: Role, capability: Capability): boolean {
   return ROLE_CAPABILITIES[role].includes(capability)
 }
-
-/**
- * Resolves an "own or any" pair for a specific resource. Callers ask the
- * question they actually mean — "may this user edit *this* document" — rather
- * than reimplementing the ownership comparison at every call site.
- */
-export function canActOnResource(
-  role: Role,
-  action: 'update' | 'delete',
-  actorId: string | null,
-  ownerId: string | null,
-): boolean {
-  if (roleHasCapability(role, `content:${action}:any` as Capability)) return true
-  if (!roleHasCapability(role, `content:${action}:own` as Capability)) return false
-  return actorId !== null && actorId === ownerId
-}
