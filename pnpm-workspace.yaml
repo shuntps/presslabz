@@ -63,5 +63,11 @@ catalog:
   # Cache and sessions
   iovalkey: 0.4.0
 
+  # Media. sharp re-encodes every upload, which is also what guarantees
+  # nothing executable survives the trip into the bucket.
+  sharp: 0.35.3
+  '@aws-sdk/client-s3': 3.1111.0
+  '@fastify/multipart': 10.1.1
+
   # Validation
   zod: 4.4.3

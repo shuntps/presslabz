@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phase 1 landed.** You can sign in to the admin, in English or French, in light or dark. Sessions, the capability model and user preferences are verified end to end. There is no content model and no public rendering yet — those are phases 2 and 3. Everything below is settled, not proposed.
+**Phase 2 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme. The content model, the block vocabulary, the media pipeline and the translation grouping are verified end to end against a real database and a real object store. There is no public rendering yet; that is phase 3. Everything below is settled, not proposed.
 
 PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
 
@@ -142,6 +142,16 @@ Dark mode is one axis of the same idea, not a special case. A page adapts to the
 **The specificity rule.** Adaptive blocks must outrank the theme rules, and those set the bar at (0,2,0) — both `:root:not([data-theme="light"])` and `:root[data-theme="dark"]` weigh that much. A bare `:root` is (0,1,0) and loses to them, so an adaptive override written that way works in light mode and silently stops in all three dark states. They are therefore written `:root:root`, which matches the same element at (0,2,0) whichever state is active. A test asserts the selector.
 
 **Never take zoom away.** No `maximum-scale`, no `user-scalable=no`. Nothing may size text in `vw` alone.
+
+## Media
+
+Every upload is decoded and re-encoded through `sharp`. That is the whole security model, and it is deliberately not a check on the filename or the declared content type — both are strings the client chose. What lands in the bucket is bytes sharp produced, under a key the server generated, with a content type the server set, so a polyglot file, an SVG carrying script and a payload hidden in EXIF all stop at the same place: either sharp refuses to decode it, or it emits an image and nothing else. **SVG is not accepted at all** — it is a document format with script in it, and no re-encoding leaves it both safe and an SVG.
+
+Two renditions are stored, AVIF and WebP, and the original is discarded: it is the largest file and the only one that could still be a polyglot. `rotate()` runs before the resize so the EXIF orientation is applied and then dropped, because the pixels and the tag that corrects them are separate things and only one survives a re-encode.
+
+Reads are **public**, not signed. A signed URL expires, and a page cached at the edge would outlive the links inside it; the bucket therefore carries a public-read policy for `GetObject` while writes stay credentialed. `MEDIA_BASE_URL` separates where readers fetch from and where the API writes to, because in production those are a CDN and a bucket rather than one host.
+
+A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text does not mean rewriting every document that uses it. Alt text is a per-locale JSONB map on the media row rather than one row per language — the objections that rule out per-field translation for documents do not apply to a short string that never publishes on its own. The caption belongs to one *use* of an image, so it lives on the block.
 
 ## Authentication and permissions
 

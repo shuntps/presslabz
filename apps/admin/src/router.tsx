@@ -1,3 +1,4 @@
+import { isLocale } from '@presslabz/i18n'
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { Shell } from './components/shell.tsx'
 import { ContentEditorPage } from './routes/content-editor.tsx'
@@ -38,6 +39,15 @@ const contentListRoute = createRoute({
 const contentNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/content/$type/new',
+  /*
+   * A translation is created by starting a new document that already knows
+   * which language it is in and which group it joins. Both arrive in the URL,
+   * so the link is shareable and the back button behaves.
+   */
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(isLocale(search.locale) ? { locale: search.locale } : {}),
+    ...(typeof search.group === 'string' ? { group: search.group } : {}),
+  }),
   component: () => <ContentEditorPage mode="new" />,
 })
 

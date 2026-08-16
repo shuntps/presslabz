@@ -1,16 +1,18 @@
 import type { Blocks } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
-import type { MessageKey } from '@presslabz/i18n'
-import { useNavigate, useParams } from '@tanstack/react-router'
+import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   BLOCK_LABELS,
   BlockEditor,
   CREATABLE_BLOCKS,
   emptyBlock,
+  imageBlock,
 } from '../components/block-editor.tsx'
+import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
-import { type ContentSummary, useContent, useSaveContent } from '../lib/content.ts'
+import { type ContentSummary, useContent, useSaveContent, useTranslations } from '../lib/content.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -53,14 +55,26 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
   const { t, locale } = useLocale()
   const navigate = useNavigate()
   const params = useParams({ strict: false }) as { type: string; id?: string }
+  const search = useSearch({ strict: false }) as { locale?: Locale; group?: string }
   const type = params.type
   const id = mode === 'edit' ? (params.id ?? null) : null
 
+  /*
+   * The document's language is not the interface's. Writing an English post
+   * from a French admin is an ordinary thing to want, and tying the two would
+   * have made a translation impossible to start without switching languages
+   * first. It is fixed once the document exists, because the server refuses to
+   * move one between languages.
+   */
+  const [documentLocale, setDocumentLocale] = useState<Locale>(search.locale ?? locale)
+
   const existing = useContent(type, id ?? '')
+  const siblings = useTranslations(type, id ?? '')
   const enabled = id !== null
 
   const [draft, setDraft] = useState<Draft | null>(mode === 'new' ? draftFrom(undefined) : null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [pickingImage, setPickingImage] = useState(false)
 
   const save = useSaveContent(type, id)
 
@@ -90,7 +104,8 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
     if (!draft) return
     save.mutate(
       {
-        locale,
+        locale: documentLocale,
+        ...(search.group === undefined ? {} : { translationGroupId: search.group }),
         slug: draft.slug,
         title: draft.title,
         status: draft.status,
@@ -148,6 +163,22 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
             {t(BLOCK_LABELS[blockType])}
           </button>
         ))}
+
+        {/* An image block must name a media id, so it cannot be created empty:
+            the palette opens the picker and the block arrives pointing at
+            something. */}
+        <button type="button" className="quiet palette-item" onClick={() => setPickingImage(true)}>
+          {t(BLOCK_LABELS.image)}
+        </button>
+
+        <MediaPicker
+          open={pickingImage}
+          onClose={() => setPickingImage(false)}
+          onPick={(picked) => {
+            patch({ blocks: [...draft.blocks, imageBlock(picked.id)] })
+            setPickingImage(false)
+          }}
+        />
       </aside>
 
       <aside className="inspector">
@@ -200,16 +231,32 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
           />
         </label>
 
-        <dl className="facts inspector-facts">
-          <dt>{t('editor.language')}</dt>
-          <dd className="data">{existing.data?.locale ?? locale}</dd>
-          {existing.data && (
-            <>
-              <dt>{t('editor.group')}</dt>
-              <dd className="data group-id">{existing.data.translationGroupId}</dd>
-            </>
-          )}
-        </dl>
+        {enabled ? (
+          <dl className="facts inspector-facts">
+            <dt>{t('editor.language')}</dt>
+            <dd className="data">{existing.data?.locale}</dd>
+            <dt>{t('editor.group')}</dt>
+            <dd className="data group-id">{existing.data?.translationGroupId}</dd>
+          </dl>
+        ) : (
+          <label>
+            <span>{t('editor.language')}</span>
+            <select
+              value={documentLocale}
+              onChange={(event) => setDocumentLocale(event.target.value as Locale)}
+            >
+              {LOCALES.map((option) => (
+                <option key={option} value={option}>
+                  {LOCALE_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {enabled && existing.data && (
+          <TranslationPanel type={type} current={existing.data} siblings={siblings.data ?? []} />
+        )}
 
         {save.isError && (
           <p className="error" role="alert">
@@ -223,6 +270,63 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
         {save.isSuccess && !save.isPending && <p className="muted saved">{t('editor.saved')}</p>}
       </aside>
+    </div>
+  )
+}
+
+/**
+ * The pair is the unit of work, so the editor says what the other languages
+ * are doing and offers to start the one that is missing. In WordPress this is
+ * a plugin's job and the association is a hope; here the group is a column.
+ */
+function TranslationPanel({
+  type,
+  current,
+  siblings,
+}: {
+  type: string
+  current: ContentSummary
+  siblings: ContentSummary[]
+}) {
+  const { t } = useLocale()
+  /*
+   * The document's own language is seeded from the document, not waited for
+   * from the siblings request. Otherwise the panel spends its first moment
+   * offering to write a French version of a French document, and taking that
+   * offer produces a 409 for a rule the interface already knew.
+   */
+  const present = new Set<string>([current.locale, ...siblings.map((row) => row.locale)])
+  const missing = LOCALES.filter((option) => !present.has(option))
+
+  return (
+    <div className="translations">
+      <p className="panel-heading">{t('editor.translations')}</p>
+
+      {siblings
+        .filter((row) => row.id !== current.id)
+        .map((row) => (
+          <Link
+            key={row.id}
+            to="/content/$type/$id"
+            params={{ type, id: row.id }}
+            className="translation-link"
+          >
+            <span className="data">{row.locale}</span>
+            <span className="authored">{row.title}</span>
+          </Link>
+        ))}
+
+      {missing.map((option) => (
+        <Link
+          key={option}
+          to="/content/$type/new"
+          params={{ type }}
+          search={{ locale: option, group: current.translationGroupId }}
+          className="quiet translation-new"
+        >
+          {t('editor.createTranslation', { language: LOCALE_LABELS[option] })}
+        </Link>
+      ))}
     </div>
   )
 }

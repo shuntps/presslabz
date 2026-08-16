@@ -26,9 +26,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     ...init,
     credentials: 'include',
     headers: {
-      // Only when there is one to describe. Announcing a JSON body and then
-      // sending nothing is what made sign-out answer 400.
-      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      /*
+       * Named only for a body this function serialized. Announcing JSON and
+       * then sending nothing is what made sign-out answer 400; announcing it
+       * over a FormData would be worse, because the browser has to set that
+       * header itself — it carries the multipart boundary, and a hand-written
+       * one is always wrong.
+       */
+      ...(typeof init.body === 'string' ? { 'content-type': 'application/json' } : {}),
       ...init.headers,
     },
   })

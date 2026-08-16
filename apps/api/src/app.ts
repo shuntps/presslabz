@@ -1,6 +1,7 @@
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
+import multipart from '@fastify/multipart'
 import rateLimit from '@fastify/rate-limit'
 import { createBuiltinRegistry } from '@presslabz/core'
 import { createDb } from '@presslabz/db'
@@ -11,6 +12,8 @@ import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
 import { contentRoutes } from './content/routes.ts'
 import { env } from './env.ts'
+import { mediaRoutes } from './media/routes.ts'
+import { ensureBucket } from './media/storage.ts'
 import { userRoutes } from './users/routes.ts'
 
 declare module 'fastify' {
@@ -86,6 +89,17 @@ export async function buildApp() {
   // Declared in code, so the registry is built once at boot and passed in
   // rather than reached for from a module.
   await app.register(contentRoutes, { db, registry: createBuiltinRegistry() })
+  await app.register(multipart)
+  await app.register(mediaRoutes, { db })
+
+  /*
+   * A fresh clone plus `pnpm services:up` should leave a working installation.
+   * Without this the first upload fails on a bucket nobody was told to create,
+   * which is a fine error to read and a poor one to hit.
+   */
+  await ensureBucket().catch((error) => {
+    app.log.warn({ error }, 'media bucket is not reachable; uploads will fail')
+  })
 
   app.addHook('onClose', async () => {
     await closeDb()

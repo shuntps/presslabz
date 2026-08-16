@@ -18,6 +18,20 @@ const schema = z
     VALKEY_URL: z.string().min(1, 'VALKEY_URL is required'),
     /** Exact origin allowed to send credentialed requests. Never a wildcard. */
     ADMIN_ORIGIN: z.string().url().default('http://localhost:5173'),
+    /* Object storage. MinIO locally, any S3-compatible service in production. */
+    S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
+    S3_REGION: z.string().default('us-east-1'),
+    S3_BUCKET: z.string().min(1).default('presslabz-media'),
+    S3_ACCESS_KEY_ID: z.string().min(1).default('presslabz'),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).default('presslabz-dev-secret'),
+    /**
+     * Where a reader fetches media from. Separate from the endpoint the API
+     * writes to, because in production those are rarely the same host: uploads
+     * go to the bucket and reads come off a CDN in front of it. Defaults to
+     * path-style against the endpoint, which is what MinIO serves locally.
+     */
+    MEDIA_BASE_URL: z.string().url().optional(),
+
     DEFAULT_LOCALE: z.string().default('en').refine(isLocale),
     SUPPORTED_LOCALES: localeList,
   })

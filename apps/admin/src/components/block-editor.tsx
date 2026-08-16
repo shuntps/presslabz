@@ -1,7 +1,10 @@
 import type { Block, Blocks, BlockType, InlineContent } from '@presslabz/blocks'
 import { inlineToPlainText } from '@presslabz/blocks'
 import type { MessageKey } from '@presslabz/i18n'
+import { useState } from 'react'
 import { useLocale } from '../lib/i18n.tsx'
+import { useMediaLibrary } from '../lib/media.ts'
+import { MediaPicker } from './media-picker.tsx'
 
 /**
  * The galley: the reader's own writing, on the only lit surface in the
@@ -27,8 +30,9 @@ export const BLOCK_LABELS: Record<BlockType, MessageKey> = {
 }
 
 /**
- * What the palette offers. Image is absent because there is nothing to pick
- * from yet — a control that can only fail is worse than one that is not there.
+ * What the palette offers. Image is here but handled apart from the rest: a
+ * block that must name a media id cannot be created empty, so the palette
+ * opens the picker and the block arrives already pointing at something.
  */
 export const CREATABLE_BLOCKS = [
   'paragraph',
@@ -38,6 +42,10 @@ export const CREATABLE_BLOCKS = [
   'code',
   'divider',
 ] as const satisfies readonly BlockType[]
+
+export function imageBlock(mediaId: string): Block {
+  return { id: crypto.randomUUID(), type: 'image', mediaId }
+}
 
 const text = (value: string): InlineContent => (value === '' ? [] : [{ type: 'text', text: value }])
 
@@ -282,9 +290,7 @@ function BlockBody({
       )
 
     case 'image':
-      // Reachable only for a document written by something else; the palette
-      // does not offer it until there is a media library to pick from.
-      return <p className="muted data">{block.mediaId}</p>
+      return <ImageBlockBody block={block} onChange={onChange} onFocus={onFocus} />
 
     case 'divider':
       return <hr />
@@ -323,5 +329,66 @@ function Growing({
         node.style.height = `${node.scrollHeight}px`
       }}
     />
+  )
+}
+
+/**
+ * The block stores a reference, never a URL, so the caption belongs to this
+ * use of the image while the file and its alt text stay with the media row.
+ * Moving a file or fixing its alt does not mean rewriting every document.
+ */
+function ImageBlockBody({
+  block,
+  onChange,
+  onFocus,
+}: {
+  block: Extract<Block, { type: 'image' }>
+  onChange: (block: Block) => void
+  onFocus: () => void
+}) {
+  const { t, locale } = useLocale()
+  const library = useMediaLibrary()
+  const [picking, setPicking] = useState(false)
+
+  const media = library.data?.find((item) => item.id === block.mediaId)
+
+  return (
+    <>
+      <figure className="blk-image">
+        {media ? (
+          <img src={media.url} alt={media.alt[locale] ?? ''} loading="lazy" decoding="async" />
+        ) : (
+          <p className="muted data">{library.isPending ? '' : t('media.missing')}</p>
+        )}
+
+        <Growing
+          className="authored blk-caption"
+          value={inlineToPlainText(block.caption ?? [])}
+          placeholder={t('editor.attribution')}
+          onFocus={onFocus}
+          onChange={(value) =>
+            onChange({ ...block, ...(value === '' ? { caption: [] } : { caption: text(value) }) })
+          }
+        />
+
+        <button type="button" className="quiet tiny" onClick={() => setPicking(true)}>
+          {t('media.replace')}
+        </button>
+      </figure>
+
+      {/*
+        Outside the figure, not inside it. A <figure> holding a hidden library
+        of every other image on the site is not what the element means, and it
+        makes "the image in this block" impossible to name in a selector.
+      */}
+      <MediaPicker
+        open={picking}
+        onClose={() => setPicking(false)}
+        onPick={(picked) => {
+          onChange({ ...block, mediaId: picked.id })
+          setPicking(false)
+        }}
+      />
+    </>
   )
 }

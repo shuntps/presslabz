@@ -151,3 +151,21 @@ export function useSaveContent(type: string, id: string | null) {
     },
   })
 }
+
+/**
+ * Crosses locales on purpose, like the endpoint behind it. Everything the
+ * editor says about a document's siblings comes from here rather than from a
+ * listing that quietly dropped its locale filter.
+ */
+export function useTranslations(type: string, id: string) {
+  return useQuery({
+    queryKey: ['content', type, 'translations', id],
+    queryFn: async () =>
+      (
+        await apiFetch<{ translations: ContentSummary[] }>(
+          `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/translations`,
+        )
+      ).translations,
+    enabled: id !== '',
+  })
+}

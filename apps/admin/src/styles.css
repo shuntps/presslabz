@@ -1111,3 +1111,172 @@ button.tiny {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+.translations {
+  display: grid;
+  gap: var(--pl-space-1);
+  padding-top: var(--pl-space-3);
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.translation-link {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: var(--pl-space-2);
+  align-items: baseline;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-1) 0;
+  color: var(--pl-color-text-muted);
+  text-decoration: none;
+  font-size: var(--pl-text-sm);
+}
+
+.translation-link:hover {
+  color: var(--pl-color-text);
+}
+
+.translation-link .data {
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-faint);
+}
+
+/* Starting the missing one is an offer, not the main action on this screen. */
+.translation-new {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-1) var(--pl-space-2);
+  border: var(--pl-border-width) dashed var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  color: var(--pl-color-text-muted);
+  text-decoration: none;
+  font-size: var(--pl-text-sm);
+}
+
+.translation-new:hover {
+  border-style: solid;
+  border-color: var(--pl-color-rubric);
+  color: var(--pl-color-text);
+}
+
+/* ── Media ──────────────────────────────────────────────────────────────── */
+
+.blk-image {
+  display: grid;
+  gap: var(--pl-space-2);
+  justify-items: start;
+  margin: 0;
+}
+
+.blk-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--pl-radius-sm);
+}
+
+.blk-caption {
+  font-size: var(--pl-text-sm);
+  color: var(--pl-color-text-muted);
+}
+
+/*
+ * A native dialog. Modal behaviour, focus trapping and Escape come with the
+ * element; a hand-rolled overlay is a component to maintain and a keyboard
+ * trap to get wrong.
+ */
+.picker {
+  width: min(48rem, 92vw);
+  max-height: 80dvh;
+  padding: var(--pl-space-4) var(--pl-space-6) var(--pl-space-6);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-md);
+  background: var(--pl-color-bg-raised);
+  color: var(--pl-color-text);
+  overflow: auto;
+}
+
+.picker::backdrop {
+  background: var(--pl-color-scrim);
+}
+
+.picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-3);
+  align-items: center;
+  margin-bottom: var(--pl-space-4);
+}
+
+.picker-bar .panel-heading {
+  width: auto;
+  margin: 0;
+  margin-right: auto;
+}
+
+/* The input itself is replaced: a file control cannot be styled, and the
+   label is the accessible way to click it. */
+.picker-upload {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-accent);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-accent);
+  color: var(--pl-color-accent-text);
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  gap: 0;
+}
+
+.picker-upload span {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  font-family: var(--pl-font-machine);
+  font-size: var(--pl-text-sm);
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+}
+
+.picker-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.picker-upload:has(input:focus-visible) {
+  outline: var(--pl-focus-ring-width) solid var(--pl-color-focus-ring);
+  outline-offset: 2px;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--pl-space-3);
+}
+
+.picker-item {
+  padding: 0;
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+}
+
+.picker-item:hover {
+  border-color: var(--pl-color-rubric);
+}
+
+.picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

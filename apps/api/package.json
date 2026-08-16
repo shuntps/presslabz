@@ -12,9 +12,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
     "@fastify/cookie": "catalog:",
     "@fastify/cors": "catalog:",
     "@fastify/helmet": "catalog:",
+    "@fastify/multipart": "catalog:",
     "@fastify/rate-limit": "catalog:",
     "@node-rs/argon2": "catalog:",
     "@presslabz/core": "workspace:*",
@@ -24,10 +26,12 @@
     "fastify": "catalog:",
     "fastify-plugin": "catalog:",
     "iovalkey": "catalog:",
+    "sharp": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "sharp": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

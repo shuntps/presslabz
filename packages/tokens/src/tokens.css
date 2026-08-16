@@ -81,6 +81,13 @@
   --pl-color-success: #1c6b55;
 
   /*
+   * What a modal dims behind it. Ink rather than black: a neutral black over a
+   * cool grey room reads as a smudge, while the room's own darkest value reads
+   * as the lights going down.
+   */
+  --pl-color-scrim: rgb(20 22 29 / 0.45);
+
+  /*
    * Typography.
    *
    * Body sizes are fixed and only the display sizes are fluid. A heading may
@@ -196,6 +203,8 @@
     --pl-color-warning: #d9a441;
     --pl-color-success: #57c5a2;
 
+    --pl-color-scrim: rgb(0 0 0 / 0.6);
+
     --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
     --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
   }
@@ -233,6 +242,8 @@
   --pl-color-danger: #ff7a6e;
   --pl-color-warning: #d9a441;
   --pl-color-success: #57c5a2;
+
+  --pl-color-scrim: rgb(0 0 0 / 0.6);
 
   --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
   --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
