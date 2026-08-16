@@ -45,6 +45,15 @@ catalog:
   vite: 8.2.1
   '@vitejs/plugin-react': 6.0.5
   '@tanstack/react-query': 5.101.4
+  '@tanstack/react-router': 1.170.29
+
+  # Admin tests. jsdom rather than a real browser in CI: it catches the state
+  # and rendering faults, and a browser download on every build does not pay
+  # for the layout checks that stay a development-time tool.
+  jsdom: 30.0.1
+  '@testing-library/react': 16.3.2
+  '@testing-library/dom': 10.4.1
+  '@testing-library/user-event': 14.6.4
 
   # Database
   drizzle-orm: 0.45.2

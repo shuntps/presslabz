@@ -1,3 +1,9 @@
+/**
+ * @vitest-environment node
+ *
+ * This one reads a file off disk; jsdom would give it an http import.meta.url
+ * and nothing to read.
+ */
 import { readFileSync } from 'node:fs'
 import { BREAKPOINTS } from '@presslabz/tokens/breakpoints'
 import { describe, expect, it } from 'vitest'
