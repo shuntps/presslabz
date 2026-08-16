@@ -1,4 +1,11 @@
 import {
+  canEditMedia,
+  canPerformOnMedia,
+  capabilitiesFor,
+  MEDIA_OPERATIONS,
+  type Role,
+} from '@presslabz/core'
+import {
   createDb,
   createMedia,
   createSession,
@@ -103,6 +110,7 @@ describe.skipIf(!ready)('media routes', () => {
     handle = createDb(scratch.url, { maxConnections: 5 })
     db = handle.db
 
+    await signIn('subscriber', 'mt-subscriber@presslabz.test')
     await signIn('administrator', 'mt-admin@presslabz.test')
     await signIn('author', 'mt-author@presslabz.test')
     await signIn('editor', 'mt-editor@presslabz.test')
@@ -310,6 +318,123 @@ describe.skipIf(!ready)('media routes', () => {
         payload,
       })
       expect(response.statusCode).toBe(403)
+    })
+  })
+
+  describe('what the declaration says is what the routes do', () => {
+    /*
+     * The guards used to name capabilities in string literals while the
+     * permissions the interface is sent were computed from MEDIA_ACCESS. Two
+     * expressions of one rule, agreeing right up until the declaration moved:
+     * an `own` variant added to an operation, or a capability renamed, would
+     * change what the listing reports and leave what the route accepts exactly
+     * where it was.
+     *
+     * These tests do not assert what the answer is. They assert that the two
+     * places that answer it agree — which holds for whatever MEDIA_ACCESS is
+     * edited to say, and fails the moment one of them stops following it.
+     */
+    const ROLES = ['subscriber', 'contributor', 'author', 'editor', 'administrator'] as const
+
+    const actorFor = (who: (typeof ROLES)[number]) => ({
+      capabilities: capabilitiesFor(who as Role),
+      id: ids[who] as string,
+    })
+
+    /**
+     * What each operation answers when it is allowed.
+     *
+     * Named rather than inferred from "not 403", because "not refused" is not
+     * "accepted": a 400 from a malformed request, a 401 from a session this
+     * suite forgot to send, or a 500 from a broken handler would all read as
+     * success and quietly turn a permission test into a test of nothing.
+     */
+    const ACCEPTED = { read: 200, upload: 201, update: 200, delete: 204 } as const
+    const REFUSED = 403
+
+    it('accepts exactly the operations the declaration allows, for every role', async () => {
+      const attempt = {
+        read: (who: string) => library(who),
+        upload: async (who: string) =>
+          upload(await samplePng(), 'permission.png', 'image/png', who),
+        delete: async (who: string) => {
+          const row = await assetOwnedBy(null)
+          return app.inject({ method: 'DELETE', url: `/media/${row.id}`, cookies: as(who) })
+        },
+      }
+
+      for (const who of ROLES) {
+        for (const operation of MEDIA_OPERATIONS) {
+          // `update` depends on the row, so a route guard cannot answer it; it
+          // has its own comparison below.
+          if (operation === 'update') continue
+
+          const allowed = canPerformOnMedia(operation, actorFor(who))
+          const response = await attempt[operation](who)
+
+          expect(response.statusCode, `${who} / ${operation}`).toBe(
+            allowed ? ACCEPTED[operation] : REFUSED,
+          )
+        }
+      }
+    })
+
+    it('reports the upload permission it is about to enforce, for every role', async () => {
+      // Serialized conclusion against accepted operation, compared to each
+      // other rather than both to a third source: this cannot pass while the
+      // interface is told one thing and the route does another.
+      for (const who of ROLES) {
+        const listing = await library(who)
+        const mayRead = canPerformOnMedia('read', actorFor(who))
+        expect(listing.statusCode, `${who} / read`).toBe(mayRead ? ACCEPTED.read : REFUSED)
+        // Nothing is reported to somebody who may not read the library.
+        if (!mayRead) continue
+
+        const reported: boolean = listing.json().permissions.upload
+        const attempted = await upload(await samplePng(), 'reported.png', 'image/png', who)
+
+        expect(attempted.statusCode, `${who} / upload reported as ${reported}`).toBe(
+          reported ? ACCEPTED.upload : REFUSED,
+        )
+      }
+    })
+
+    it('reports the describe permission it is about to enforce, row by row', async () => {
+      const rows = [
+        await assetOwnedBy(ids.author as string),
+        await assetOwnedBy(ids.other as string),
+        // Owned by nobody, which is what an uploader's deleted account leaves.
+        await assetOwnedBy(null),
+      ]
+
+      for (const who of ROLES) {
+        const listing = await library(who)
+        const mayRead = canPerformOnMedia('read', actorFor(who))
+        expect(listing.statusCode, `${who} / read`).toBe(mayRead ? ACCEPTED.read : REFUSED)
+        if (!mayRead) continue
+
+        const reported: Record<string, boolean> = Object.fromEntries(
+          listing
+            .json()
+            .media.map((item: { id: string; permissions: { update: boolean } }) => [
+              item.id,
+              item.permissions.update,
+            ]),
+        )
+
+        for (const row of rows) {
+          const attempted = await describeAs(who, row.id, { en: 'A description' })
+
+          expect(attempted.statusCode, `${who} / update ${row.id}`).toBe(
+            reported[row.id] ? ACCEPTED.update : REFUSED,
+          )
+          // And the same answer the declaration gives, so neither side is
+          // simply wrong in the same direction.
+          expect(reported[row.id], `${who} / declared for ${row.id}`).toBe(
+            canEditMedia(actorFor(who), row),
+          )
+        }
+      }
     })
   })
 

@@ -46,10 +46,12 @@ export function MediaPicker({
       <div className="picker-bar">
         <p className="panel-heading">{t('media.library')}</p>
 
-        {/* Withheld rather than disabled: a file input the browser will not
-            open is a control that does nothing when pressed, and the honest
-            reading of "you may not add to this library" is that adding is not
-            on offer. The server decides — a capability list in the browser
+        {/* Withheld rather than disabled. The enclosing fieldset would grey it
+            out perfectly well — a disabled fieldset does disable a file input
+            inside it — but that is the wrong signal: it says "not right now",
+            when uploading is a permission this actor does not hold at all, and
+            it is a separate permission from anything the editor's fieldset is
+            about. The server decides; a capability list read in the browser
             would be a second copy of the rule. */}
         {library.data?.permissions.upload && (
           <label className="picker-upload">
