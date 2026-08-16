@@ -3,6 +3,13 @@ packages:
   - packages/*
   - themes/*
 
+# drizzle-kit still pulls the deprecated @esbuild-kit/esm-loader, which pins
+# esbuild 0.18 — vulnerable to GHSA dev-server request forgery. drizzle-kit
+# also depends on esbuild ^0.25.4 and tsx directly, so the old loader is
+# legacy baggage. Remove this override once drizzle-kit drops it.
+overrides:
+  esbuild@<0.25.0: '>=0.25.0'
+
 # Build scripts are denied by default; each one is an arbitrary-code-execution
 # point at install time. esbuild is allowed because it downloads its platform
 # binary in postinstall and cannot work without it.
