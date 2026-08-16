@@ -51,8 +51,12 @@ describe('renewal', () => {
     expect(shouldRenew(nearlyExpired, now)).toBe(true)
   })
 
-  it('extends one that has already lapsed', () => {
-    expect(shouldRenew(new Date(now.getTime() - 1), now)).toBe(true)
+  it('refuses to extend one that has already lapsed', () => {
+    // Unreachable through the auth plugin, which only asks after
+    // findValidSession has excluded expired rows — but a predicate that says
+    // "renew it" about a dead session is wrong wherever it is asked next.
+    expect(shouldRenew(new Date(now.getTime() - 1), now)).toBe(false)
+    expect(shouldRenew(now, now)).toBe(false)
   })
 
   it('issues a 30 day expiry', () => {

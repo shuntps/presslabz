@@ -8,6 +8,7 @@ import { createDb } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
 import Fastify from 'fastify'
 import { Valkey } from 'iovalkey'
+import { startSessionSweep } from './auth/cleanup.ts'
 import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
 import { contentRoutes } from './content/routes.ts'
@@ -101,7 +102,10 @@ export async function buildApp() {
     app.log.warn({ error }, 'media bucket is not reachable; uploads will fail')
   })
 
+  const sweeper = startSessionSweep(db, app.log)
+
   app.addHook('onClose', async () => {
+    sweeper.stop()
     await closeDb()
     valkey.disconnect()
   })

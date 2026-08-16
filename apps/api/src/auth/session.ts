@@ -26,8 +26,18 @@ export function sessionExpiry(from: Date = new Date()): Date {
   return new Date(from.getTime() + SESSION_TTL_MS)
 }
 
+/**
+ * Whether an active session is close enough to expiry to be extended on use.
+ *
+ * An expired session is not renewable, and saying otherwise was a footgun
+ * rather than a live bug: the only caller runs after findValidSession, which
+ * already excludes expired rows. But a predicate that answers "yes, renew it"
+ * about a session that is over is wrong on its own terms, and the next caller
+ * would have no reason to suspect it.
+ */
 export function shouldRenew(expiresAt: Date, now: Date = new Date()): boolean {
-  return expiresAt.getTime() - now.getTime() < RENEW_BELOW_MS
+  const remaining = expiresAt.getTime() - now.getTime()
+  return remaining > 0 && remaining < RENEW_BELOW_MS
 }
 
 export function sessionCookieOptions(isProduction: boolean) {

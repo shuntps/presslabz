@@ -1,4 +1,4 @@
-import { countUsers, createDb, createUser, findUserByEmail } from '@presslabz/db'
+import { createDb, createInitialAdministrator, findUserByEmail } from '@presslabz/db'
 import { hashPassword } from './auth/password.ts'
 import { env } from './env.ts'
 
@@ -21,23 +21,35 @@ if (password.length < 12) {
 const { db, close } = createDb(env.DATABASE_URL, { maxConnections: 1 })
 
 try {
-  const existing = await countUsers(db)
-  if (existing > 0) {
+  /*
+   * The password is hashed before the lock is taken. Argon2id at the OWASP
+   * baseline is deliberately slow, and holding a database lock across it would
+   * make two concurrent runs wait on work neither of them needs.
+   */
+  const passwordHash = await hashPassword(password)
+
+  const { created, existing } = await createInitialAdministrator(db, {
+    email,
+    displayName,
+    role: 'administrator',
+    passwordHash,
+  })
+
+  if (created) {
+    console.warn(`Created administrator ${created.email} (${created.id})`)
+  } else {
+    /*
+     * Refusing here is what stops the seed variables reintroducing an account
+     * on a live installation: they may stay in the environment after install,
+     * and running this again must never be a way back in.
+     */
     const known = await findUserByEmail(db, email)
     console.warn(
       known
         ? `A user with ${email} already exists. Nothing to do.`
         : `${existing} user(s) already exist. Refusing to seed an administrator.`,
     )
-    process.exitCode = existing > 0 && !known ? 1 : 0
-  } else {
-    const user = await createUser(db, {
-      email,
-      displayName,
-      role: 'administrator',
-      passwordHash: await hashPassword(password),
-    })
-    console.warn(`Created administrator ${user.email} (${user.id})`)
+    process.exitCode = known ? 0 : 1
   }
 } finally {
   await close()

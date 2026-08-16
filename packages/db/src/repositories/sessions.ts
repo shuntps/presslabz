@@ -55,6 +55,22 @@ export async function deleteSessionsForUser(db: Database, userId: string): Promi
   await db.delete(sessions).where(eq(sessions.userId, userId))
 }
 
-export async function deleteExpiredSessions(db: Database): Promise<void> {
-  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()))
+/**
+ * Removes every session whose lifetime is over.
+ *
+ * Retention is exactly the session's own TTL: a row is kept until it expires
+ * and swept afterwards, because an expired session grants nothing and its only
+ * remaining use would be telling an attacker who was signed in and when.
+ * `sessions_expires_idx` is what makes the sweep a range scan rather than a
+ * table scan.
+ *
+ * Returns how many went, so a caller can say whether it did anything.
+ */
+export async function deleteExpiredSessions(db: Database, now: Date = new Date()): Promise<number> {
+  const removed = await db
+    .delete(sessions)
+    .where(lt(sessions.expiresAt, now))
+    .returning({ id: sessions.id })
+
+  return removed.length
 }
