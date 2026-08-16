@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@presslabz/blocks": "workspace:*",
     "drizzle-orm": "catalog:",
     "postgres": "catalog:"
   },

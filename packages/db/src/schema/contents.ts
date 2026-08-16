@@ -1,3 +1,4 @@
+import type { Blocks } from '@presslabz/blocks'
 import { type SQL, sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
@@ -29,8 +30,9 @@ export const contentStatus = pgEnum('content_status', [
  * a French draft sit behind a published English original, and what a
  * per-locale-fields model cannot express.
  *
- * `blocks` is typed loosely here on purpose — packages/blocks owns the Block
- * schema from phase 2 and this package will import it rather than restate it.
+ * `blocks` is typed from packages/blocks, which owns the Block vocabulary.
+ * The column stays plain jsonb in Postgres; what the import buys is that a
+ * row this package writes cannot disagree with what the renderer accepts.
  */
 export const contents = pgTable(
   'contents',
@@ -44,7 +46,7 @@ export const contents = pgTable(
     status: contentStatus().notNull().default('draft'),
     title: text().notNull(),
     excerpt: text(),
-    blocks: jsonb().$type<unknown[]>().notNull().default([]),
+    blocks: jsonb().$type<Blocks>().notNull().default([]),
     /** Replaces wp_postmeta. Queried through the GIN index below. */
     meta: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
@@ -79,7 +81,7 @@ export const contentRevisions = pgTable(
       .notNull()
       .references(() => contents.id, { onDelete: 'cascade' }),
     title: text().notNull(),
-    blocks: jsonb().$type<unknown[]>().notNull(),
+    blocks: jsonb().$type<Blocks>().notNull(),
     meta: jsonb().$type<Record<string, unknown>>().notNull(),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamps.createdAt,
