@@ -3,6 +3,7 @@ import {
   type ContentStatus,
   type ContentTypeRegistry,
   canPerform,
+  canReadDocument,
   canWrite,
   isContentStatus,
 } from '@presslabz/core'
@@ -99,9 +100,18 @@ function serializeContent(row: ContentRow) {
  */
 async function replyForWriteError(error: unknown, reply: FastifyReply): Promise<FastifyReply> {
   if (error instanceof ContentForbiddenError) {
-    return reply.code(403).send({ error: 'forbidden' })
+    return reply.code(403).send({ error: 'forbidden', reason: error.reason })
   }
   if (error instanceof ContentConflictError) {
+    /*
+     * A group that does not exist is not a conflict with the state of this
+     * collection: the request is well formed and its instructions cannot be
+     * followed, which is what 422 is for. The other three are genuine
+     * conflicts with what is already there.
+     */
+    if (error.reason === 'group-not-found') {
+      return reply.code(422).send({ error: 'unprocessable', reason: error.reason })
+    }
     return reply.code(409).send({ error: 'conflict', reason: error.reason })
   }
   if (error instanceof z.ZodError) {
@@ -202,11 +212,7 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    const actor = actorOf(request.user)
-    const mayReadDraft =
-      canPerform(type, 'update', actor, { authorId: row.authorId }) || row.status === 'published'
-
-    if (!canPerform(type, 'read', actor) || !mayReadDraft) {
+    if (!canReadDocument(type, actorOf(request.user), row)) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
@@ -229,12 +235,24 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       if (!row || row.type !== type.name) {
         return reply.code(404).send({ error: 'not_found' })
       }
-      if (!canPerform(type, 'read', actorOf(request.user))) {
+
+      const actor = actorOf(request.user)
+
+      // The anchor is judged first, by the same rule as reading it directly.
+      // Reaching a document sideways must not be easier than opening it.
+      if (!canReadDocument(type, actor, row)) {
         return reply.code(403).send({ error: 'forbidden' })
       }
 
+      /*
+       * Then every sibling on its own. One that fails is dropped from the
+       * list, not reported: saying how many were withheld, or that any were,
+       * is the disclosure this endpoint was making in the first place.
+       */
       const group = await listTranslations(db, row.translationGroupId)
-      return reply.send({ translations: group.map(serializeContent) })
+      const readable = group.filter((sibling) => canReadDocument(type, actor, sibling))
+
+      return reply.send({ translations: readable.map(serializeContent) })
     },
   )
 
@@ -264,13 +282,40 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     }
 
     try {
-      const row = await createContent(db, {
-        type: type.name,
-        locale,
-        ...(translationGroupId !== undefined ? { translationGroupId } : {}),
-        authorId: request.user.id,
-        state: stampPublication(rest, new Date()),
-      })
+      const actor = actorOf(request.user)
+      const state = stampPublication(rest, new Date())
+
+      /*
+       * Opening a group and joining one are separate calls because they are
+       * separate operations: the second is a claim about existing content and
+       * has to be authorized against it. The repository will not accept a
+       * group id without an authorizer, so this cannot drift back into one
+       * shape where the callback is optional.
+       */
+      const row = await createContent(
+        db,
+        translationGroupId === undefined
+          ? { type: type.name, locale, authorId: request.user.id, state }
+          : {
+              type: type.name,
+              locale,
+              translationGroupId,
+              authorId: request.user.id,
+              state,
+              /*
+               * Being able to edit the content is what entitles somebody to
+               * claim a translation of it. Reading it is not enough: a group
+               * id is not a secret and must never be the thing that grants
+               * access. Consulted under the group lock, so the member it
+               * authorizes against cannot vanish before the insert.
+               */
+              authorizeJoin: (members) =>
+                members.some((member) =>
+                  canPerform(type, 'update', actor, { authorId: member.authorId }),
+                ),
+            },
+      )
+
       return reply.code(201).send({ content: serializeContent(row) })
     } catch (error) {
       return replyForWriteError(error, reply)

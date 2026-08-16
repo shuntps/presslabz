@@ -335,12 +335,23 @@ function TranslationPanel({
  * The server already decided what went wrong and said so in a code. Repeating
  * the decision here would let the two drift; this only chooses the sentence.
  */
+const REASON_MESSAGES: Record<string, MessageKey> = {
+  'slug-taken': 'error.slugTaken',
+  'translation-exists': 'error.translationExists',
+  'group-not-found': 'error.groupNotFound',
+  'group-type-mismatch': 'error.groupTypeMismatch',
+  'group-forbidden': 'error.groupForbidden',
+}
+
 function messageFor(error: unknown, t: (key: MessageKey) => string): string {
   if (!(error instanceof ApiError)) return t('error.unexpected')
 
+  // The reason first: the server names exactly what went wrong, and the status
+  // alone cannot tell a refused publication from a refused translation group —
+  // both are 403.
+  const named = error.reason === undefined ? undefined : REASON_MESSAGES[error.reason]
+  if (named) return t(named)
+
   if (error.status === 403) return t('error.cannotPublish')
-  if (error.status === 409) {
-    return error.reason === 'slug-taken' ? t('error.slugTaken') : t('error.translationExists')
-  }
   return t('error.unexpected')
 }

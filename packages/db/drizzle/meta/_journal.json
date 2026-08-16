@@ -15,6 +15,13 @@
       "when": 1786891841857,
       "tag": "0001_tiny_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786902816793,
+      "tag": "0002_amazing_avengers",
+      "breakpoints": true
     }
   ]
 }
