@@ -12,17 +12,23 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@presslabz/blocks": "workspace:*",
     "@presslabz/core": "workspace:*",
     "@presslabz/i18n": "workspace:*",
     "@presslabz/tokens": "workspace:*",
     "@tanstack/react-query": "catalog:",
+    "@tanstack/react-router": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "jsdom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

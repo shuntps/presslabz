@@ -1,7 +1,30 @@
+@import "./fonts.css";
+
 /*
  * The only place colour is defined in PressLabz. The admin interface and
  * every theme consume these variables; a theme author overrides values here
  * rather than reimplementing theming.
+ *
+ * The direction is "Atelier": a composing room rather than a blank page.
+ * Two rules carry it, and everything below is in service of them.
+ *
+ * 1. The typeface says what kind of thing you are looking at. The reader's
+ *    own writing is always --pl-font-content. The interface around it is
+ *    always --pl-font-machine. Machine-generated values are always
+ *    --pl-font-data. The roles are the token names for exactly this reason:
+ *    a face chosen for its looks drifts, a face assigned to a role cannot.
+ *
+ * 2. --pl-color-bg-raised is the working surface: where the reader's own
+ *    material is written, entered or listed. The page ground is a working
+ *    grey, so the lit surface means something. Apparatus — bars, rails,
+ *    inspectors, status strips — takes --pl-color-bg-subtle and never the
+ *    lit surface, or the distinction is spent and the editor stops reading
+ *    as a sheet of paper.
+ *
+ * Colour is for marking, never for filling. Filled controls take
+ * --pl-color-accent, which is ink. --pl-color-rubric is the rubricator's red,
+ * the mark a scribe put in the margin beside what mattered; it carries
+ * identity, focus and state and is never a background you click.
  *
  * Three theme states:
  *   - no data-theme attribute  -> follow the operating system
@@ -11,41 +34,89 @@
  * Rule: the complete light palette is defined on bare :root. The dark blocks
  * only redefine what changes. No colour may have its sole definition inside a
  * media query or an attribute selector, or one of the three states loses it.
+ *
+ * The same rule governs the adaptive blocks at the bottom of this file. A
+ * viewport width, a pointer type, a contrast setting and a motion preference
+ * are all things the reader brings with them rather than things a page picks;
+ * every one of them therefore has a default here on :root, and the media
+ * blocks only adjust it.
  */
 
 :root {
   color-scheme: light dark;
 
-  /* Neutral ramp */
-  --pl-color-bg: #ffffff;
-  --pl-color-bg-subtle: #f7f7f8;
+  /*
+   * iOS inflates text in landscape unless this is set, which silently defeats
+   * any type scale — the page is suddenly not the one that was designed.
+   */
+  -webkit-text-size-adjust: 100%;
+
+  /* The room: a cool working grey, with the lit surface held back for content. */
+  --pl-color-bg: #e9eaee;
+  --pl-color-bg-subtle: #dfe1e7;
   --pl-color-bg-raised: #ffffff;
-  --pl-color-border: #e3e3e7;
-  --pl-color-border-strong: #c9c9d0;
-  --pl-color-text: #17171a;
-  --pl-color-text-muted: #5f5f6b;
-  --pl-color-text-faint: #8a8a96;
+  --pl-color-border: #c7cad4;
+  --pl-color-border-strong: #a6aab8;
+  --pl-color-text: #14161d;
+  --pl-color-text-muted: #565b6b;
+  --pl-color-text-faint: #8a8fa0;
 
-  /* Accent */
-  --pl-color-accent: #2f5bd7;
-  --pl-color-accent-hover: #2748b0;
+  /* Ink. Every filled control, so no control has to spend colour to matter. */
+  --pl-color-accent: #14161d;
+  --pl-color-accent-hover: #2b2f3b;
   --pl-color-accent-text: #ffffff;
-  --pl-color-focus-ring: #2f5bd7;
 
-  /* Status */
-  --pl-color-danger: #c02626;
-  --pl-color-warning: #9a6400;
-  --pl-color-success: #1f7a40;
+  /* The rubric. Focus follows it, so the caret is the one red thing moving. */
+  --pl-color-rubric: #b8332a;
+  --pl-color-focus-ring: #b8332a;
 
-  /* Typography */
-  --pl-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --pl-font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  /*
+   * Status. Danger deliberately shares the rubric value rather than
+   * introducing a second red: both mean "this is the thing to look at", and
+   * two reds a shade apart read as a mistake. Success is verdigris, the
+   * patina on press metal.
+   */
+  --pl-color-danger: #b8332a;
+  --pl-color-warning: #8a5a12;
+  --pl-color-success: #1c6b55;
+
+  /*
+   * What a modal dims behind it. Ink rather than black: a neutral black over a
+   * cool grey room reads as a smudge, while the room's own darkest value reads
+   * as the lights going down.
+   */
+  --pl-color-scrim: rgb(20 22 29 / 0.45);
+
+  /*
+   * Typography.
+   *
+   * Body sizes are fixed and only the display sizes are fluid. A heading may
+   * shrink on a phone without costing anyone anything; body text may not,
+   * because 1rem is the size the reader asked their browser for and shrinking
+   * it below that overrides a decision that was theirs to make.
+   *
+   * Every fluid value keeps a rem term inside the clamp. A size expressed
+   * purely in vw does not respond to zoom, which fails WCAG 1.4.4 — the text
+   * stays exactly as small no matter how far the reader zooms in.
+   */
+  --pl-font-machine: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --pl-font-content: "Source Serif 4", ui-serif, Georgia, serif;
+  --pl-font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /*
+   * Archivo's width axis is what makes a title read as signage rather than as
+   * a bigger label. Held in tokens so every page title in the product is set
+   * the same way, and so a theme can restate it once.
+   */
+  --pl-display-width: 112%;
+  --pl-display-tracking: -0.03em;
+
   --pl-text-xs: 0.75rem;
   --pl-text-sm: 0.875rem;
   --pl-text-base: 1rem;
-  --pl-text-lg: 1.125rem;
-  --pl-text-xl: 1.375rem;
-  --pl-text-2xl: 1.75rem;
+  --pl-text-lg: clamp(1.0625rem, 1rem + 0.2vw, 1.125rem);
+  --pl-text-xl: clamp(1.1875rem, 1.1rem + 0.45vw, 1.375rem);
+  --pl-text-2xl: clamp(1.375rem, 1.2rem + 0.9vw, 1.75rem);
   --pl-line-tight: 1.25;
   --pl-line-normal: 1.55;
 
@@ -58,10 +129,53 @@
   --pl-space-8: 2rem;
   --pl-space-12: 3rem;
 
-  /* Radii and elevation */
-  --pl-radius-sm: 4px;
-  --pl-radius-md: 8px;
-  --pl-radius-lg: 12px;
+  /*
+   * Layout scale. The fixed grid above sizes the inside of a component, where
+   * a phone and a desktop want the same thing; these scale with the viewport
+   * and size the space around and between components, where they do not. A
+   * 32px page gutter costs a 360px phone 18% of its width.
+   */
+  --pl-gutter: clamp(var(--pl-space-4), 3vw, var(--pl-space-8));
+  --pl-section: clamp(var(--pl-space-6), 5vw, var(--pl-space-12));
+
+  /* Reading measure. ch, so it tracks the font actually in use. */
+  --pl-measure: 68ch;
+  --pl-layout-max: 60rem;
+
+  /*
+   * Minimum hit area for anything interactive, adapted to the pointer below.
+   * The default is the fine-pointer size; a mouse does not need 44px.
+   */
+  --pl-tap-target: 2.25rem;
+
+  /*
+   * The parts of the viewport a phone's own chrome sits on — the notch, the
+   * home indicator, the rounded corners. Zero everywhere else. Requires
+   * `viewport-fit=cover` in the viewport meta tag or these all report 0.
+   */
+  --pl-safe-top: env(safe-area-inset-top, 0px);
+  --pl-safe-right: env(safe-area-inset-right, 0px);
+  --pl-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --pl-safe-left: env(safe-area-inset-left, 0px);
+
+  /* Motion. Zeroed under prefers-reduced-motion at the bottom of this file. */
+  --pl-motion-fast: 120ms;
+  --pl-motion-normal: 220ms;
+  --pl-motion-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Line weights, thickened under prefers-contrast. */
+  --pl-border-width: 1px;
+  --pl-focus-ring-width: 2px;
+
+  /*
+   * Radii stay tight. Containment in this direction is done with hairlines
+   * and a step in background, not with rounded boxes and elevation — pick
+   * one device and use it everywhere. The shadows below are kept for theme
+   * authors who want elevation; the admin does not use them.
+   */
+  --pl-radius-sm: 3px;
+  --pl-radius-md: 5px;
+  --pl-radius-lg: 8px;
   --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
   --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.08);
 }
@@ -69,23 +183,27 @@
 /* System preference, unless the user explicitly chose light. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --pl-color-bg: #131316;
-    --pl-color-bg-subtle: #1a1a1f;
-    --pl-color-bg-raised: #1f1f25;
-    --pl-color-border: #2e2e36;
-    --pl-color-border-strong: #45454f;
-    --pl-color-text: #f2f2f5;
-    --pl-color-text-muted: #a6a6b3;
-    --pl-color-text-faint: #77778a;
+    --pl-color-bg: #101219;
+    --pl-color-bg-subtle: #171a22;
+    --pl-color-bg-raised: #212630;
+    --pl-color-border: #2e3341;
+    --pl-color-border-strong: #454b5d;
+    --pl-color-text: #e9ebf2;
+    --pl-color-text-muted: #979db0;
+    --pl-color-text-faint: #6b7185;
 
-    --pl-color-accent: #7ea0ff;
-    --pl-color-accent-hover: #9ab5ff;
-    --pl-color-accent-text: #10121a;
-    --pl-color-focus-ring: #7ea0ff;
+    --pl-color-accent: #e9ebf2;
+    --pl-color-accent-hover: #ffffff;
+    --pl-color-accent-text: #101219;
 
-    --pl-color-danger: #ff8080;
-    --pl-color-warning: #e0a94a;
-    --pl-color-success: #6ed49a;
+    --pl-color-rubric: #ff7a6e;
+    --pl-color-focus-ring: #ff7a6e;
+
+    --pl-color-danger: #ff7a6e;
+    --pl-color-warning: #d9a441;
+    --pl-color-success: #57c5a2;
+
+    --pl-color-scrim: rgb(0 0 0 / 0.6);
 
     --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
     --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
@@ -105,33 +223,147 @@
 /* Explicit choice. Repeated so the toggle wins in both directions. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --pl-color-bg: #131316;
-  --pl-color-bg-subtle: #1a1a1f;
-  --pl-color-bg-raised: #1f1f25;
-  --pl-color-border: #2e2e36;
-  --pl-color-border-strong: #45454f;
-  --pl-color-text: #f2f2f5;
-  --pl-color-text-muted: #a6a6b3;
-  --pl-color-text-faint: #77778a;
+  --pl-color-bg: #101219;
+  --pl-color-bg-subtle: #171a22;
+  --pl-color-bg-raised: #212630;
+  --pl-color-border: #2e3341;
+  --pl-color-border-strong: #454b5d;
+  --pl-color-text: #e9ebf2;
+  --pl-color-text-muted: #979db0;
+  --pl-color-text-faint: #6b7185;
 
-  --pl-color-accent: #7ea0ff;
-  --pl-color-accent-hover: #9ab5ff;
-  --pl-color-accent-text: #10121a;
-  --pl-color-focus-ring: #7ea0ff;
+  --pl-color-accent: #e9ebf2;
+  --pl-color-accent-hover: #ffffff;
+  --pl-color-accent-text: #101219;
 
-  --pl-color-danger: #ff8080;
-  --pl-color-warning: #e0a94a;
-  --pl-color-success: #6ed49a;
+  --pl-color-rubric: #ff7a6e;
+  --pl-color-focus-ring: #ff7a6e;
+
+  --pl-color-danger: #ff7a6e;
+  --pl-color-warning: #d9a441;
+  --pl-color-success: #57c5a2;
+
+  --pl-color-scrim: rgb(0 0 0 / 0.6);
 
   --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
   --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
+}
+
+/*
+ * Adaptation to the reader, below. Everything here has a default on :root;
+ * these blocks only move it.
+ *
+ * They also all have to outrank the theme rules above, and those set the bar
+ * at (0,2,0): both `:root:not([data-theme="light"])` and
+ * `:root[data-theme="dark"]` weigh that much. A bare `:root` is (0,1,0) and
+ * loses to either of them, so an adaptive block written that way would apply
+ * in light mode and vanish in dark — a bug that passes every test which does
+ * not set the theme first.
+ *
+ * Hence `:root:root`. Repeating the pseudo-class costs nothing, matches the
+ * same element whichever of the three theme states is active — including the
+ * default one, where there is no attribute to hang a selector on — and weighs
+ * (0,2,0). At equal weight the later rule wins, and these are last in the file.
+ */
+
+/*
+ * `pointer` is the primary input, not any input. A laptop with a touchscreen
+ * reports `fine`, and that is the answer we want: the trackpad is what it is
+ * being driven with, so its controls should not all inflate on the chance that
+ * someone reaches for the screen.
+ */
+@media (pointer: coarse) {
+  :root:root {
+    --pl-tap-target: 2.75rem;
+  }
+}
+
+/*
+ * Rather than restate the palette per theme per contrast level, each value
+ * here points at a token that is already defined in all three theme states.
+ * `--pl-color-text-muted: var(--pl-color-text)` is correct in light and dark
+ * without either being mentioned.
+ */
+@media (prefers-contrast: more) {
+  :root:root {
+    --pl-color-text-muted: var(--pl-color-text);
+    --pl-color-text-faint: var(--pl-color-text);
+    --pl-color-border: var(--pl-color-border-strong);
+    --pl-border-width: 2px;
+    --pl-focus-ring-width: 3px;
+  }
+}
+
+/*
+ * Windows high contrast replaces every colour with the user's own, so custom
+ * properties stop mattering and shadows disappear. What survives is borders
+ * and system colour keywords, so the focus ring has to become one of those or
+ * keyboard users lose the caret entirely.
+ */
+@media (forced-colors: active) {
+  :root:root {
+    --pl-color-focus-ring: Highlight;
+    --pl-shadow-sm: none;
+    --pl-shadow-md: none;
+  }
+}
+
+/*
+ * Reduced motion is a medical setting for some people, not a taste. The token
+ * covers deliberate animation; the blanket rule catches everything a theme or
+ * a dependency adds without asking. Near-zero rather than zero, so animations
+ * still fire their completion events and nothing waiting on one hangs.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root:root {
+    --pl-motion-fast: 0ms;
+    --pl-motion-normal: 0ms;
+  }
+
+  /* biome-ignore-start lint/complexity/noImportantStyles: overriding author
+     styles this file has never seen is the entire job of this rule. A theme or
+     a dependency that animates does not know the preference exists, and the
+     declaration it wrote is more specific than anything reachable from here. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* biome-ignore-end lint/complexity/noImportantStyles: end of the guard. */
 }
 
 body {
   margin: 0;
   background: var(--pl-color-bg);
   color: var(--pl-color-text);
-  font-family: var(--pl-font-sans);
+  font-family: var(--pl-font-machine);
   font-size: var(--pl-text-base);
   line-height: var(--pl-line-normal);
+
+  /*
+   * A URL, an email address or a capability name is one unbreakable word to
+   * the line breaker, and one of them is all it takes to push a phone layout
+   * into horizontal scrolling. This is the cheapest place to stop that.
+   */
+  overflow-wrap: break-word;
+}
+
+/*
+ * Media defaults to its intrinsic width, which on a phone is usually wider
+ * than the screen. Every theme would otherwise have to remember this, and the
+ * one that forgets produces a page that scrolls sideways.
+ */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+img,
+video {
+  height: auto;
 }

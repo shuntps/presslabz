@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phase 1 landed.** You can sign in to the admin, in English or French, in light or dark. Sessions, the capability model and user preferences are verified end to end. There is no content model and no public rendering yet — those are phases 2 and 3. Everything below is settled, not proposed.
+**Phase 2 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme. The content model, the block vocabulary, the media pipeline and the translation grouping are verified end to end against a real database and a real object store. There is no public rendering yet; that is phase 3. Everything below is settled, not proposed.
 
 PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
 
@@ -110,6 +110,48 @@ The rule that follows: **the theme cookie must never influence cacheable HTML.**
 A cookie is chosen over `localStorage` because the server can read it at all, because it survives private browsing with storage disabled, and because it distinguishes an explicit "follow the system" from never having chosen. It is deliberately not `httpOnly` — the pre-paint script must read it, and a display preference is not a credential.
 
 `THEME_INIT_SCRIPT` is a static string literal. Building it by interpolating the cookie name would be a code-construction sink, which CodeQL correctly flags: harmless while the name is hardcoded, an injection point as soon as it becomes configurable. Tests assert the literal and the constants cannot drift apart.
+
+### Visual direction — Atelier
+
+A CMS is a machine for setting text, so the interface says which is which by typeface. This is the design, not a decoration on top of it, and two rules carry all of it.
+
+**The typeface names the role.** `--pl-font-content` is the reader's own writing — a post title in a list, a draft in the editor, a display name they chose. `--pl-font-machine` is everything the interface says on its own behalf. `--pl-font-data` is anything the system generated that they may need to copy exactly: slugs, capability names, locale codes, dates. There is no fourth case, and the tokens are named for the roles rather than the typefaces so a face picked for its looks cannot quietly drift into the wrong job. The faces themselves are Archivo, Source Serif 4 and JetBrains Mono — all OFL, all **self-hosted** in `packages/tokens/src/fonts`, 292 KB of woff2 for the three. A self-hosted CMS that fetches its type from a CDN on every admin page load has handed away the thing it was built to keep.
+
+**The lit surface is the working surface.** `--pl-color-bg-raised` is where the reader's material is written, entered or listed. The page ground is a working grey and apparatus — bars, rails, inspectors — takes `--pl-color-bg-subtle`. Spending the lit surface on a toolbar costs the editor its one strong signal that the draft is a sheet of paper.
+
+Two consequences worth stating because they look like omissions otherwise. **Colour is for marking, never for filling**: filled controls take `--pl-color-accent`, which is ink, so a primary action is obvious by being the only solid thing on screen rather than by being blue. `--pl-color-rubric` is the rubricator's red — the mark a scribe put in the margin beside what mattered — and it carries identity, focus and state; `--pl-color-danger` deliberately shares its value rather than introducing a second red a shade away. And **containment is a hairline plus a step in background**, never a shadow: `--pl-shadow-*` exists for theme authors, the admin does not use it, and when the block editor needs a floating toolbar it will be the only thing in the product that lifts.
+
+Both palettes were measured against WCAG AA across every text-on-surface pair. The tightest are rubric on the page ground at 4.93:1 and rubric on a bar at 4.53:1 — check those two before moving any red.
+
+## Responsive and adaptive
+
+Dark mode is one axis of the same idea, not a special case. A page adapts to the viewport it is given, the pointer driving it, and the accessibility settings the reader already chose — and `packages/tokens` is where all of that is decided, so the admin and every theme get it once.
+
+**Mobile-first, enforced.** Every rule outside a media query has to be correct at 320px; queries may only add. There is no `max-width` query anywhere in the project and there should never be one — mixing the two directions produces rules that contradict each other at the boundary. Tests assert the absence.
+
+**Breakpoints are declared once, in `packages/tokens/src/breakpoints.ts`.** They cannot be tokens like everything else, because CSS does not resolve `var()` inside a media query condition — `@media (min-width: var(--pl-bp-md))` is silently ignored. So the values are literals in the stylesheets and the tests assert that every `min-width` in one of them is a registered breakpoint. They are in `rem`: a px breakpoint ignores the reader's browser font size and serves a desktop layout into what is, for them, a very narrow reading area.
+
+**Container queries for components, media queries for the page.** A component's threshold is the width at which its own box stops working — a fact about the component, not about any device. That number stays local to it and is deliberately exempt from the breakpoint registry. This is also what makes a component survive being dropped into the editor's side panels in phase 2, where its width has nothing to do with the viewport's.
+
+**Two spacing scales.** The 4px grid (`--pl-space-*`) sizes the inside of a component, where a phone and a desktop want the same thing. `--pl-gutter` and `--pl-section` scale with the viewport and size the space around and between components, where they do not — a fixed 32px page gutter costs a 360px phone 18% of its width.
+
+**Fluid type, fixed body.** Display sizes use `clamp()`; `--pl-text-base` and below do not. 1rem is the size the reader asked their browser for, and shrinking it overrides a decision that was theirs. Every fluid value keeps a `rem` term inside the `clamp`, because a size expressed purely in `vw` does not respond to zoom — that fails WCAG 1.4.4.
+
+**Adaptation beyond width.** `--pl-tap-target` follows `pointer: coarse` (36px under a mouse, 44px under a finger); `prefers-contrast: more` collapses muted text onto the text colour and thickens borders; `prefers-reduced-motion` zeroes the motion tokens and a blanket rule neutralises animation a theme or dependency added without asking; `forced-colors` hands the focus ring to the system `Highlight`. Safe-area insets keep content out from under a phone's notch and home indicator, which requires `viewport-fit=cover` in the viewport meta or `env()` reports zero.
+
+**The specificity rule.** Adaptive blocks must outrank the theme rules, and those set the bar at (0,2,0) — both `:root:not([data-theme="light"])` and `:root[data-theme="dark"]` weigh that much. A bare `:root` is (0,1,0) and loses to them, so an adaptive override written that way works in light mode and silently stops in all three dark states. They are therefore written `:root:root`, which matches the same element at (0,2,0) whichever state is active. A test asserts the selector.
+
+**Never take zoom away.** No `maximum-scale`, no `user-scalable=no`. Nothing may size text in `vw` alone.
+
+## Media
+
+Every upload is decoded and re-encoded through `sharp`. That is the whole security model, and it is deliberately not a check on the filename or the declared content type — both are strings the client chose. What lands in the bucket is bytes sharp produced, under a key the server generated, with a content type the server set, so a polyglot file, an SVG carrying script and a payload hidden in EXIF all stop at the same place: either sharp refuses to decode it, or it emits an image and nothing else. **SVG is not accepted at all** — it is a document format with script in it, and no re-encoding leaves it both safe and an SVG.
+
+Two renditions are stored, AVIF and WebP, and the original is discarded: it is the largest file and the only one that could still be a polyglot. `rotate()` runs before the resize so the EXIF orientation is applied and then dropped, because the pixels and the tag that corrects them are separate things and only one survives a re-encode.
+
+Reads are **public**, not signed. A signed URL expires, and a page cached at the edge would outlive the links inside it; the bucket therefore carries a public-read policy for `GetObject` while writes stay credentialed. `MEDIA_BASE_URL` separates where readers fetch from and where the API writes to, because in production those are a CDN and a bucket rather than one host.
+
+A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text does not mean rewriting every document that uses it. Alt text is a per-locale JSONB map on the media row rather than one row per language — the objections that rule out per-field translation for documents do not apply to a short string that never publishes on its own. The caption belongs to one *use* of an image, so it lives on the block.
 
 ## Authentication and permissions
 

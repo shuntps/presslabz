@@ -4,7 +4,12 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover lets the page paint under a phone's notch and home
+         indicator, which is what makes env(safe-area-inset-*) report anything
+         other than 0. The tokens use those insets to keep content out from
+         under the hardware. No maximum-scale or user-scalable here: pinch zoom
+         is how a lot of people read, and taking it away fails WCAG 1.4.4. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>PressLabz</title>
   </head>
   <body>

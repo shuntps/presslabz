@@ -42,4 +42,5 @@ Thumbs.db
 
 # Local AI assistant config — architecture docs live in docs/ARCHITECTURE.md
 CLAUDE.md
+AGENTS.md
 .claude/

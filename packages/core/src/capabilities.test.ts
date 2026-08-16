@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAPABILITIES,
-  canActOnResource,
   capabilitiesFor,
   isCapability,
   isRole,
@@ -51,35 +50,6 @@ describe('role bundles', () => {
         expect(CAPABILITIES, `${role} grants unknown ${capability}`).toContain(capability)
       }
     }
-  })
-})
-
-describe('canActOnResource', () => {
-  const alice = 'a'
-  const bob = 'b'
-
-  it('lets an author edit their own document but not another', () => {
-    expect(canActOnResource('author', 'update', alice, alice)).toBe(true)
-    expect(canActOnResource('author', 'update', alice, bob)).toBe(false)
-  })
-
-  it('lets an editor edit anyone', () => {
-    expect(canActOnResource('editor', 'update', alice, bob)).toBe(true)
-    expect(canActOnResource('editor', 'delete', alice, bob)).toBe(true)
-  })
-
-  it('refuses a subscriber outright', () => {
-    expect(canActOnResource('subscriber', 'update', alice, alice)).toBe(false)
-  })
-
-  it('refuses an orphaned document to an "own only" role', () => {
-    // ownerId null means the author was deleted; nobody "owns" it any more.
-    expect(canActOnResource('author', 'delete', alice, null)).toBe(false)
-    expect(canActOnResource('editor', 'delete', alice, null)).toBe(true)
-  })
-
-  it('refuses an anonymous actor even when the owner is also null', () => {
-    expect(canActOnResource('author', 'update', null, null)).toBe(false)
   })
 })
 

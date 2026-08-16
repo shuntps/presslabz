@@ -1,6 +1,23 @@
 /*
- * Every value here comes from @presslabz/tokens. A literal colour in this
- * file would be a defect: it would not follow the theme.
+ * Atelier, applied. Every value here comes from @presslabz/tokens — a literal
+ * colour would be a defect, it would not follow the theme, and a hardcoded
+ * breakpoint would be one too. styles.test.ts asserts both.
+ *
+ * Three rules hold this together, and they are worth more than any single
+ * declaration below:
+ *
+ *   - The typeface says what kind of thing you are looking at. Chrome is
+ *     --pl-font-machine, the reader's own writing is --pl-font-content,
+ *     machine-generated values are --pl-font-data. There is no fourth case.
+ *   - --pl-color-bg-raised is the working surface. Bars and switchers are
+ *     apparatus and take --pl-color-bg-subtle.
+ *   - Containment is a hairline and a step in background. No shadows, and
+ *     radii stay at --pl-radius-sm. Elevation is not a decoration here; when
+ *     the block editor needs a floating toolbar it will be the only thing in
+ *     the product that lifts, and it will mean something.
+ *
+ * Mobile-first throughout: every rule outside a media query is correct at
+ * 320px and the queries may only add.
  */
 
 *,
@@ -10,46 +27,130 @@
 }
 
 :focus-visible {
-  outline: 2px solid var(--pl-color-focus-ring);
+  outline: var(--pl-focus-ring-width) solid var(--pl-color-focus-ring);
   outline-offset: 2px;
 }
+
+/* ── Type roles ─────────────────────────────────────────────────────────── */
+
+/*
+ * The width axis, used only here. A title set wide and tight reads as
+ * signage; the same face at normal width is the interface talking.
+ */
+.page-title,
+.wordmark {
+  font-family: var(--pl-font-machine);
+  font-weight: 700;
+  font-stretch: var(--pl-display-width);
+  letter-spacing: var(--pl-display-tracking);
+  line-height: var(--pl-line-tight);
+  margin: 0;
+}
+
+.page-title {
+  font-size: var(--pl-text-2xl);
+}
+
+.wordmark {
+  font-size: var(--pl-text-lg);
+}
+
+/* The one mark of identity. Nothing else in the chrome is allowed colour. */
+.wordmark i {
+  font-style: normal;
+  color: var(--pl-color-rubric);
+}
+
+/* The reader's own writing, or a value they authored themselves. */
+.authored {
+  font-family: var(--pl-font-content);
+  font-weight: 400;
+}
+
+/* Anything the machine produced and the reader may need to copy exactly. */
+.data {
+  font-family: var(--pl-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The printer's rule: a hairline running from the title to the edge. It is
+ * the only horizontal division in the admin, so a page has structure without
+ * needing boxes to provide it.
+ */
+.title-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pl-space-4);
+  margin-bottom: var(--pl-space-6);
+}
+
+.title-row .rule {
+  flex: 1;
+  height: var(--pl-border-width);
+  background: var(--pl-color-border-strong);
+  margin-bottom: 0.45em;
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
 
 button,
 input,
 select {
   font: inherit;
   color: inherit;
+  /* 36px under a mouse, 44px under a finger — see --pl-tap-target. */
+  min-height: var(--pl-tap-target);
 }
 
 button {
+  /* inline-flex rather than the default, so min-height centres the label. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--pl-space-2) var(--pl-space-3);
-  border: 1px solid var(--pl-color-border-strong);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
   border-radius: var(--pl-radius-sm);
-  background: var(--pl-color-bg-raised);
+  background: transparent;
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--pl-color-accent);
+  border-color: var(--pl-color-text);
 }
 
 button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
+/*
+ * Filled controls take ink, not colour. A primary action does not have to be
+ * blue to be obvious — being the only solid thing on the screen is enough,
+ * and it leaves red free to mean something.
+ */
+button.primary,
 button[aria-pressed="true"] {
   background: var(--pl-color-accent);
   border-color: var(--pl-color-accent);
   color: var(--pl-color-accent-text);
 }
 
+button.primary:hover:not(:disabled),
+button[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pl-color-accent-hover);
+  border-color: var(--pl-color-accent-hover);
+}
+
 input,
 select {
   width: 100%;
   padding: var(--pl-space-2) var(--pl-space-3);
-  border: 1px solid var(--pl-color-border-strong);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
   border-radius: var(--pl-radius-sm);
+  /* Recessed into the working surface rather than raised off it. */
   background: var(--pl-color-bg);
 }
 
@@ -59,33 +160,67 @@ label {
 }
 
 label > span {
-  font-size: var(--pl-text-sm);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--pl-color-text-muted);
 }
+
+/* ── Sign-in ────────────────────────────────────────────────────────────── */
 
 .centered {
   min-height: 100dvh;
   display: grid;
-  place-content: center;
+  /*
+   * `safe` matters on a landscape phone and whenever the on-screen keyboard
+   * takes half the viewport. Plain centring on content taller than its
+   * container overflows in both directions, and the top — where the heading
+   * and the first field are — ends up above the scroll origin, unreachable.
+   */
+  align-content: safe center;
+  justify-items: center;
   gap: var(--pl-space-6);
-  padding: var(--pl-space-6);
+  padding-block: calc(var(--pl-gutter) + var(--pl-safe-top))
+    calc(var(--pl-gutter) + var(--pl-safe-bottom));
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
 }
 
 .card {
   display: grid;
   gap: var(--pl-space-4);
-  min-width: min(22rem, 90vw);
-  padding: var(--pl-space-8);
-  border: 1px solid var(--pl-color-border);
-  border-radius: var(--pl-radius-lg);
+  /*
+   * min() rather than a min-width: the card takes the width it wants until
+   * the screen is narrower, and then it takes the screen. A min-width would
+   * keep asking for its full size on a 320px phone and overflow instead.
+   */
+  width: min(22rem, 100%);
+  padding: var(--pl-space-6);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
   background: var(--pl-color-bg-raised);
-  box-shadow: var(--pl-shadow-md);
 }
 
-.card h1 {
-  margin: 0;
+@media (min-width: 40rem) {
+  .card {
+    padding: var(--pl-space-8);
+  }
+}
+
+/*
+ * The one screen where the wordmark is allowed to be large, and the only
+ * screen in the product with no content face on it — before you sign in,
+ * there is nothing of yours here to set.
+ */
+.card .wordmark {
   font-size: var(--pl-text-2xl);
-  line-height: var(--pl-line-tight);
+}
+
+.tagline {
+  margin: calc(var(--pl-space-2) * -1) 0 var(--pl-space-2);
+  font-size: var(--pl-text-sm);
+  color: var(--pl-color-text-muted);
 }
 
 .error {
@@ -98,6 +233,8 @@ label > span {
   color: var(--pl-color-text-muted);
 }
 
+/* ── Switchers ──────────────────────────────────────────────────────────── */
+
 .switchers {
   display: flex;
   flex-wrap: wrap;
@@ -107,62 +244,330 @@ label > span {
 
 .switcher {
   display: flex;
+  /* Three theme buttons plus their legend do not fit across a 320px screen.
+     Centring only shows once they wrap, and keeps the overflow row under the
+     rest of the group instead of adrift against the left edge. */
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: var(--pl-space-2);
   margin: 0;
   padding: 0;
   border: 0;
+  /* A fieldset defaults to min-content, which refuses to shrink below its
+     widest child and pushes the page sideways. */
+  min-width: 0;
 }
 
+/*
+ * The switchers name themselves. A control showing "Français" beside one
+ * showing Light / Dark / System does not need the words LANGUAGE and THEME
+ * printed next to it, and in a bar that is apparatus those two labels were
+ * most of its width. The text stays for anyone who is not looking at it.
+ */
 .switcher legend,
 .switcher > span {
-  float: left;
-  padding: 0 var(--pl-space-2) 0 0;
-  font-size: var(--pl-text-sm);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * One control with three segments, not three controls. A display preference
+ * should not carry the same weight as the actions around it, and three
+ * separate boxes were shouting louder than anything on the page.
+ */
+.switcher.segmented {
+  gap: 0;
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  overflow: hidden;
+}
+
+.switcher.segmented button {
+  border: 0;
+  border-radius: 0;
+  font-weight: 500;
+}
+
+.switcher.segmented button + button {
+  border-left: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.switcher.segmented button:hover:not(:disabled) {
+  background: var(--pl-color-bg);
+}
+
+.switcher.segmented button[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pl-color-accent-hover);
+}
+
+/*
+ * An exit, not an action. It sits in the same bar as a theme toggle and had
+ * exactly the same weight, which said the two were comparable decisions.
+ */
+button.quiet {
+  border-color: transparent;
+  font-weight: 500;
   color: var(--pl-color-text-muted);
+}
+
+button.quiet:hover:not(:disabled) {
+  border-color: var(--pl-color-border-strong);
+  color: var(--pl-color-text);
 }
 
 .switcher select {
   width: auto;
 }
 
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+
+/*
+ * One column on a phone, rail plus frame from `sm` up. The rail is words, so
+ * it collapses to a horizontal strip rather than to a hamburger: the labels
+ * are short enough to sit in a row, and a menu that has to be opened hides
+ * the one thing this navigation is for.
+ */
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /*
+   * Explicit rows. A grid taller than its content stretches auto rows to fill
+   * the difference, which quietly made the navigation strip a fifth of a phone
+   * screen tall — nothing in the markup said so, and no amount of trimming the
+   * links would have fixed it.
+   */
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+@media (min-width: 48rem) {
+  .shell {
+    grid-template-columns: 12rem minmax(0, 1fr);
+    /* Side by side now, so the second row would only be dead space. */
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+.rail {
+  display: flex;
+  /*
+   * One line that scrolls, rather than a wrapping block. Wrapping made the
+   * strip grow to a fifth of a phone screen before a single document was
+   * visible, and a navigation that pushes the content off the fold is not
+   * navigation. Scrolls only when it has to; three links do not.
+   */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  gap: var(--pl-space-3);
+  padding-block: calc(var(--pl-space-2) + var(--pl-safe-top)) var(--pl-space-2);
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left)) var(--pl-gutter);
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+  background: var(--pl-color-bg-subtle);
+}
+
+.rail > * {
+  flex: 0 0 auto;
+}
+
+/* A heading over three links in a row labels nothing. It earns its place in
+   the vertical rail, where the list is long enough to have sections. */
+.rail-group {
+  display: none;
+}
+
+@media (min-width: 48rem) {
+  .rail-group {
+    display: block;
+  }
+
+  .rail {
+    display: block;
+    overflow-x: visible;
+    border-bottom: 0;
+    border-right: var(--pl-border-width) solid var(--pl-color-border);
+    padding-block: calc(var(--pl-space-4) + var(--pl-safe-top)) var(--pl-space-8);
+    padding-inline: 0;
+  }
+}
+
+.rail .wordmark {
+  text-decoration: none;
+  color: inherit;
+  margin-right: var(--pl-space-2);
+}
+
+@media (min-width: 48rem) {
+  .rail .wordmark {
+    display: block;
+    margin: 0 0 var(--pl-space-6);
+    padding-inline: var(--pl-gutter);
+  }
+}
+
+.rail-group {
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+  margin: 0;
+}
+
+@media (min-width: 48rem) {
+  .rail-group {
+    margin: var(--pl-space-6) 0 var(--pl-space-2);
+    padding-inline: var(--pl-gutter);
+  }
+}
+
+.rail-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--pl-tap-target);
+  padding-inline: var(--pl-space-2);
+  color: var(--pl-color-text-muted);
+  text-decoration: none;
+  font-size: var(--pl-text-sm);
+}
+
+@media (min-width: 48rem) {
+  .rail-link {
+    min-height: 0;
+    padding: var(--pl-space-1) var(--pl-gutter);
+  }
+}
+
+.rail-link:hover {
+  color: var(--pl-color-text);
+}
+
+/*
+ * The active item is marked, not highlighted. A filled background would be a
+ * second thing competing with the working surface for attention; a rule in
+ * the margin is the same device the content list uses for state.
+ */
+/* TanStack Router stamps data-status on the matching Link; it adds no class. */
+.rail-link[data-status="active"] {
+  color: var(--pl-color-text);
+  font-weight: 600;
+}
+
+@media (min-width: 48rem) {
+  .rail-link[data-status="active"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.15rem;
+    bottom: 0.15rem;
+    width: 2px;
+    background: var(--pl-color-rubric);
+  }
+}
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--pl-space-4);
+  gap: var(--pl-space-2) var(--pl-space-4);
   align-items: center;
-  justify-content: space-between;
-  padding: var(--pl-space-3) var(--pl-space-6);
-  border-bottom: 1px solid var(--pl-color-border);
+  justify-content: flex-end;
+  padding-block: var(--pl-space-3);
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+  /* Apparatus, so the recessed step — never the working surface. Opaque
+     regardless, or the content scrolls visibly underneath it. */
   background: var(--pl-color-bg-subtle);
 }
 
 .bar-end {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--pl-space-4);
+  gap: var(--pl-space-2) var(--pl-space-4);
   align-items: center;
 }
 
 .content {
-  padding: var(--pl-space-8) var(--pl-space-6);
-  max-width: 60rem;
+  /*
+   * A container rather than a media query for what is inside it. The panels
+   * of the block editor in phase 2 will hold these same components at widths
+   * that have nothing to do with the viewport's, and a component that reads
+   * its own box is the only kind that survives being put in one.
+   */
+  container: content / inline-size;
+  width: 100%;
+  max-width: var(--pl-layout-max);
+  margin-inline: auto;
+  padding-block: var(--pl-section) calc(var(--pl-section) + var(--pl-safe-bottom));
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
 }
 
+.content p {
+  max-width: var(--pl-measure);
+}
+
+/* The working surface: it holds the reader's own values. */
+.panel {
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-raised);
+  padding: var(--pl-space-4) var(--pl-space-6);
+  margin-bottom: var(--pl-section);
+}
+
+/*
+ * One column by default. `max-content` on the term column, which is what a
+ * definition list wants on a wide screen, cannot shrink — a long term and an
+ * unbreakable value in the same row overflow the page instead of wrapping.
+ */
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--pl-space-2) var(--pl-space-6);
-  margin: var(--pl-space-6) 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pl-space-1);
+  margin: 0;
 }
 
 .facts dt {
-  color: var(--pl-color-text-muted);
-  font-size: var(--pl-text-sm);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+  padding-top: var(--pl-space-2);
 }
 
 .facts dd {
-  margin: 0;
+  margin: 0 0 var(--pl-space-4);
+  min-width: 0;
+}
+
+@container content (min-width: 30rem) {
+  .facts {
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--pl-space-3) var(--pl-space-6);
+  }
+
+  .facts dd {
+    margin: 0;
+    padding-top: var(--pl-space-2);
+  }
 }
 
 .caps {
@@ -172,14 +577,706 @@ label > span {
   margin: 0;
   padding: 0;
   list-style: none;
+  min-width: 0;
 }
 
 .caps code {
   display: inline-block;
+  max-width: 100%;
   padding: 2px var(--pl-space-2);
-  border: 1px solid var(--pl-color-border);
+  border: var(--pl-border-width) solid var(--pl-color-border);
   border-radius: var(--pl-radius-sm);
   background: var(--pl-color-bg-subtle);
-  font-family: var(--pl-font-mono);
+  font-family: var(--pl-font-data);
   font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-muted);
+  /* `content:read` has no break opportunity a line breaker will take. */
+  overflow-wrap: anywhere;
+}
+
+/* ── The content list ───────────────────────────────────────────────────── */
+
+.count {
+  color: var(--pl-color-text-faint);
+  font-size: var(--pl-text-xs);
+  margin-bottom: 0.25em;
+}
+
+/* The working surface: it holds the reader's own documents. */
+.list {
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-raised);
+}
+
+/*
+ * The language and date columns disappear on a phone rather than being
+ * squeezed: the title and its state are what the list is scanned for, and a
+ * date compressed to three characters is not information.
+ */
+.list-head,
+.row {
+  display: grid;
+  grid-template-columns: 0.75rem minmax(0, 1fr) 5.5rem;
+  gap: var(--pl-space-3);
+  align-items: center;
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.list-head > :nth-child(3),
+.list-head > :nth-child(4),
+.row > :nth-child(3),
+.row > :nth-child(4) {
+  display: none;
+}
+
+@container content (min-width: 34rem) {
+  .list-head,
+  .row {
+    grid-template-columns: 0.75rem minmax(0, 1fr) 4.5rem 5rem 5.5rem;
+  }
+
+  .list-head > :nth-child(3),
+  .list-head > :nth-child(4),
+  .row > :nth-child(3),
+  .row > :nth-child(4) {
+    display: block;
+  }
+}
+
+.list-head {
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:hover {
+  background: var(--pl-color-bg-subtle);
+}
+
+.cell-title {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cell-title .authored {
+  font-size: var(--pl-text-base);
+  line-height: var(--pl-line-tight);
+}
+
+.cell-title .slug {
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.row .data {
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-muted);
+  white-space: nowrap;
+}
+
+.state {
+  font-size: var(--pl-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--pl-color-text-faint);
+}
+
+.state.published {
+  color: var(--pl-color-success);
+}
+
+.state.scheduled {
+  color: var(--pl-color-rubric);
+}
+
+/*
+ * The marginal rubric. State is carried by a mark you scan rather than by a
+ * word you read, but never by the mark alone — the word is in the next
+ * column, because colour is not information a reader is guaranteed to get.
+ */
+.mark {
+  width: 3px;
+  height: 1.4rem;
+  border-radius: 1px;
+  justify-self: center;
+}
+
+.mark.live {
+  background: var(--pl-color-success);
+}
+
+.mark.pending {
+  background: linear-gradient(var(--pl-color-rubric) 52%, var(--pl-color-border) 52%);
+}
+
+.mark.idle {
+  background: var(--pl-color-border-strong);
+  opacity: 0.45;
+}
+
+/*
+ * A translation pair, drawn as one bracketed unit because it is one piece of
+ * work. In a WordPress list table these are two unrelated posts a plugin
+ * hopes it has associated; here the bracket is the model showing through.
+ */
+.pair {
+  position: relative;
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.pair:last-child {
+  border-bottom: 0;
+}
+
+.pair::before {
+  content: "";
+  position: absolute;
+  left: var(--pl-space-2);
+  top: 1.1rem;
+  bottom: 1.1rem;
+  width: 4px;
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-right: 0;
+  border-radius: 2px 0 0 2px;
+}
+
+.pair .row {
+  padding-left: var(--pl-space-6);
+}
+
+.pair .row:last-child {
+  border-bottom: 0;
+}
+
+.row.secondary .authored {
+  color: var(--pl-color-text-muted);
+}
+
+.gap-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-2);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+  background: var(--pl-color-bg-subtle);
+  font-size: var(--pl-text-sm);
+  color: var(--pl-color-text-muted);
+}
+
+.gap-note b {
+  font-weight: 400;
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pl-color-rubric);
+}
+
+/* ── The editor ─────────────────────────────────────────────────────────── */
+
+/*
+ * Where the typographic rule pays for itself. The draft is the only content
+ * face on the screen and the galley is the only lit surface, so the thing
+ * being written is visibly a different kind of object from everything
+ * arranged around it. The palette and the inspector are not allowed to
+ * compete, because they are not allowed to speak in the same voice.
+ */
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+}
+
+@media (min-width: 64rem) {
+  .editor {
+    grid-template-columns: 9rem minmax(0, 1fr) 15rem;
+    grid-template-areas: "palette galley inspector";
+  }
+
+  .palette {
+    grid-area: palette;
+    border-right: var(--pl-border-width) solid var(--pl-color-border);
+    border-bottom: 0;
+  }
+
+  .galley {
+    grid-area: galley;
+  }
+
+  .inspector {
+    grid-area: inspector;
+    border-left: var(--pl-border-width) solid var(--pl-color-border);
+    border-top: 0;
+  }
+}
+
+.galley {
+  background: var(--pl-color-bg-raised);
+  /* The left gutter is where block controls live, so they never sit on top of
+     the text the way a floating toolbar does. */
+  padding: var(--pl-section) var(--pl-gutter) var(--pl-space-12)
+    calc(var(--pl-gutter) + var(--pl-space-12));
+}
+
+.galley .measure {
+  max-width: var(--pl-measure);
+  margin-inline: auto;
+}
+
+.galley-title {
+  font-size: var(--pl-text-2xl);
+  font-weight: 600;
+  line-height: var(--pl-line-tight);
+  margin-bottom: var(--pl-space-4);
+}
+
+.galley-empty {
+  font-size: var(--pl-text-sm);
+}
+
+/* A textarea that reads as prose: no box, no scrollbar, no resize handle. */
+.growing {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  resize: none;
+  overflow: hidden;
+  min-height: 0;
+  line-height: var(--pl-line-normal);
+}
+
+.growing:focus-visible {
+  outline-offset: 4px;
+}
+
+.blk {
+  position: relative;
+  margin-bottom: var(--pl-space-4);
+}
+
+/* The block's name, in the gutter, on hover or while it is selected. */
+.blk::before {
+  content: attr(data-label);
+  position: absolute;
+  /* Clear of the selection rule, which sits one step out from the text. */
+  right: calc(100% + var(--pl-space-6));
+  top: 0.35rem;
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.blk:hover::before,
+.blk.selected::before {
+  opacity: 1;
+}
+
+.blk.selected::before {
+  color: var(--pl-color-rubric);
+}
+
+.blk.selected::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--pl-space-4) * -1);
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--pl-color-rubric);
+}
+
+.blk-controls {
+  position: absolute;
+  right: calc(100% + var(--pl-space-6));
+  top: 1.5rem;
+  display: grid;
+  gap: 1px;
+  opacity: 0;
+}
+
+.blk:hover .blk-controls,
+.blk:focus-within .blk-controls {
+  opacity: 1;
+}
+
+button.tiny {
+  min-height: 1.35rem;
+  padding: 0 var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+  font-weight: 400;
+}
+
+.blk-h2 {
+  font-size: var(--pl-text-xl);
+  font-weight: 600;
+}
+.blk-h3 {
+  font-size: var(--pl-text-lg);
+  font-weight: 600;
+}
+.blk-h4 {
+  font-size: var(--pl-text-base);
+  font-weight: 600;
+}
+
+.blk-heading {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  gap: var(--pl-space-2);
+  align-items: start;
+}
+
+.blk-level {
+  min-height: 1.6rem;
+  padding: 0 var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+}
+
+.blk-quote {
+  border-left: 2px solid var(--pl-color-rubric);
+  padding-left: var(--pl-space-3);
+}
+
+.blk-quote .growing {
+  font-style: italic;
+  color: var(--pl-color-text-muted);
+}
+
+.blk-attribution,
+.blk-lang {
+  width: auto;
+  min-height: 1.6rem;
+  margin-top: var(--pl-space-1);
+  padding: 0 var(--pl-space-2);
+  font-size: var(--pl-text-xs);
+  background: none;
+  border-color: var(--pl-color-border);
+}
+
+.blk-list {
+  display: grid;
+  gap: var(--pl-space-1);
+  justify-items: start;
+}
+
+.blk-list .growing {
+  border-left: var(--pl-border-width) solid var(--pl-color-border);
+  padding-left: var(--pl-space-3);
+}
+
+.blk-ordered {
+  display: flex;
+  align-items: center;
+  gap: var(--pl-space-2);
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-muted);
+}
+
+.blk-ordered input {
+  width: auto;
+  min-height: 0;
+}
+
+.blk-ordered span {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+}
+
+.blk-code .growing {
+  font-size: var(--pl-text-sm);
+  background: var(--pl-color-bg);
+  padding: var(--pl-space-3);
+  border-radius: var(--pl-radius-sm);
+}
+
+/* ── Apparatus around the galley ────────────────────────────────────────── */
+
+.palette,
+.inspector {
+  background: var(--pl-color-bg-subtle);
+  padding: var(--pl-space-4) var(--pl-gutter);
+}
+
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-1);
+  align-content: start;
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+@media (min-width: 64rem) {
+  .palette {
+    display: grid;
+    justify-items: stretch;
+  }
+}
+
+.palette-item {
+  justify-content: flex-start;
+  font-size: var(--pl-text-sm);
+}
+
+.panel-heading {
+  width: 100%;
+  margin: 0 0 var(--pl-space-2);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+}
+
+.inspector {
+  display: grid;
+  gap: var(--pl-space-3);
+  align-content: start;
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.inspector .growing,
+.inspector textarea {
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  overflow: auto;
+  resize: vertical;
+}
+
+.inspector-facts {
+  gap: var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+}
+
+.group-id {
+  overflow-wrap: anywhere;
+  color: var(--pl-color-text-faint);
+}
+
+.saved {
+  margin: 0;
+  font-size: var(--pl-text-xs);
+}
+
+/* A link that has to look like the action it performs. */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-accent);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-accent);
+  color: var(--pl-color-accent-text);
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.button-link:hover {
+  background: var(--pl-color-accent-hover);
+  border-color: var(--pl-color-accent-hover);
+}
+
+.title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.title-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.translations {
+  display: grid;
+  gap: var(--pl-space-1);
+  padding-top: var(--pl-space-3);
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.translation-link {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: var(--pl-space-2);
+  align-items: baseline;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-1) 0;
+  color: var(--pl-color-text-muted);
+  text-decoration: none;
+  font-size: var(--pl-text-sm);
+}
+
+.translation-link:hover {
+  color: var(--pl-color-text);
+}
+
+.translation-link .data {
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-faint);
+}
+
+/* Starting the missing one is an offer, not the main action on this screen. */
+.translation-new {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-1) var(--pl-space-2);
+  border: var(--pl-border-width) dashed var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  color: var(--pl-color-text-muted);
+  text-decoration: none;
+  font-size: var(--pl-text-sm);
+}
+
+.translation-new:hover {
+  border-style: solid;
+  border-color: var(--pl-color-rubric);
+  color: var(--pl-color-text);
+}
+
+/* ── Media ──────────────────────────────────────────────────────────────── */
+
+.blk-image {
+  display: grid;
+  gap: var(--pl-space-2);
+  justify-items: start;
+  margin: 0;
+}
+
+.blk-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--pl-radius-sm);
+}
+
+.blk-caption {
+  font-size: var(--pl-text-sm);
+  color: var(--pl-color-text-muted);
+}
+
+/*
+ * A native dialog. Modal behaviour, focus trapping and Escape come with the
+ * element; a hand-rolled overlay is a component to maintain and a keyboard
+ * trap to get wrong.
+ */
+.picker {
+  width: min(48rem, 92vw);
+  max-height: 80dvh;
+  padding: var(--pl-space-4) var(--pl-space-6) var(--pl-space-6);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-md);
+  background: var(--pl-color-bg-raised);
+  color: var(--pl-color-text);
+  overflow: auto;
+}
+
+.picker::backdrop {
+  background: var(--pl-color-scrim);
+}
+
+.picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-3);
+  align-items: center;
+  margin-bottom: var(--pl-space-4);
+}
+
+.picker-bar .panel-heading {
+  width: auto;
+  margin: 0;
+  margin-right: auto;
+}
+
+/* The input itself is replaced: a file control cannot be styled, and the
+   label is the accessible way to click it. */
+.picker-upload {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-accent);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-accent);
+  color: var(--pl-color-accent-text);
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  gap: 0;
+}
+
+.picker-upload span {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  font-family: var(--pl-font-machine);
+  font-size: var(--pl-text-sm);
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+}
+
+.picker-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.picker-upload:has(input:focus-visible) {
+  outline: var(--pl-focus-ring-width) solid var(--pl-color-focus-ring);
+  outline-offset: 2px;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--pl-space-3);
+}
+
+.picker-item {
+  padding: 0;
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+}
+
+.picker-item:hover {
+  border-color: var(--pl-color-rubric);
+}
+
+.picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
