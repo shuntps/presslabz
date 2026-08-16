@@ -1,7 +1,15 @@
-import { cleanup, screen, waitFor } from '@testing-library/react'
+import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fakeApi, getInput, renderApp, signIn } from '../test-utils.tsx'
+import {
+  type FakeApiOptions,
+  FULL_CREATION_PERMISSIONS,
+  fakeApi,
+  getInput,
+  renderApp,
+  signIn,
+  testUser,
+} from '../test-utils.tsx'
 
 /*
  * The editor is the most interactive surface in the product and the one place
@@ -29,14 +37,50 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function openNewDocument() {
+/** Replaces the default fake, for a test that needs the server to say no. */
+function serverSays(options: FakeApiOptions) {
+  api = fakeApi(options)
+  vi.stubGlobal('fetch', api.fetchMock)
+}
+
+async function open(path: string) {
   renderApp()
   await signIn()
-  window.history.pushState({}, '', '/content/post/new')
+  window.history.pushState({}, '', path)
   // The router listens to history, but nudging it is what makes the test
   // deterministic rather than dependent on when the listener fires.
   window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+async function openNewDocument() {
+  await open('/content/post/new')
   await screen.findByPlaceholderText(/^title$/i)
+}
+
+/** A document that is already on the site, as the server would describe it. */
+function liveDocument(permissions: {
+  update: boolean
+  delete: boolean
+  statuses: readonly string[]
+}) {
+  return {
+    id: 'doc-1',
+    type: 'post',
+    locale: 'en',
+    translationGroupId: 'group-1',
+    slug: 'a-live-document',
+    status: 'published',
+    title: 'A live document',
+    excerpt: null,
+    blocks: [],
+    meta: {},
+    authorId: testUser.id,
+    parentId: null,
+    publishedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    permissions,
+  }
 }
 
 describe('creating a document', () => {
@@ -119,5 +163,174 @@ describe('creating a document', () => {
     expect(screen.queryByLabelText(/publish at/i)).toBeNull()
     await userEvent.selectOptions(getInput(/state/i, 'select'), 'scheduled')
     expect(getInput(/publish at/i)).toBeDefined()
+  })
+})
+
+describe('controls the actor may not use', () => {
+  const options = (select: HTMLSelectElement) =>
+    Object.fromEntries(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => [
+          (option as HTMLOptionElement).value,
+          (option as HTMLOptionElement).disabled,
+        ]),
+    )
+
+  it('offers no publishable status to someone who may not publish', async () => {
+    /*
+     * The statuses come from the server, which decided them with the same
+     * function the route enforces. The interface disables rather than removes:
+     * a list that silently drops "Published" reads as a product without
+     * publishing, a greyed entry reads as a permission they do not have.
+     */
+    serverSays({
+      creationPermissions: { create: true, statuses: ['draft', 'archived', 'trash'] },
+    })
+    await openNewDocument()
+
+    expect(options(getInput(/state/i, 'select') as HTMLSelectElement)).toEqual({
+      draft: false,
+      scheduled: true,
+      published: true,
+      archived: false,
+      trash: false,
+    })
+  })
+
+  it('lets someone who may publish choose it', async () => {
+    await openNewDocument()
+
+    const select = getInput(/state/i, 'select') as HTMLSelectElement
+    expect(options(select).published).toBe(false)
+    await userEvent.selectOptions(select, 'published')
+    expect(select.value).toBe('published')
+  })
+
+  it('closes the whole editor on a document the actor may not write', async () => {
+    // A contributor whose draft an editor published: they still hold
+    // content:update:own over the row, and the server now refuses anyway.
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+
+    /*
+     * The enclosing fieldset is asserted rather than each control: that is the
+     * mechanism, and it is the reason a control added to this screen tomorrow
+     * is closed without anybody remembering to close it. jsdom does not report
+     * the inherited state on the descendants themselves, so asking them would
+     * be asking the wrong element.
+     *
+     * Re-queried inside waitFor because the router settles its transition
+     * after the first paint: a node captured before that is a node the editor
+     * has already replaced.
+     */
+    await waitFor(() => {
+      const controls = [
+        screen.getByPlaceholderText(/^title$/i),
+        getInput(/slug/i),
+        getInput(/state/i, 'select'),
+        screen.getByRole('button', { name: /^save$/i }),
+      ]
+      for (const control of controls) expect(control.closest('fieldset')?.disabled).toBe(true)
+    })
+  })
+
+  it('says why, rather than leaving a row of grey controls to explain itself', async () => {
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+    expect(screen.getByRole('status').textContent).toMatch(/permission to publish/i)
+  })
+
+  it('sends nothing when a refused editor is driven anyway', async () => {
+    // The property that matters is not the grey: it is that nothing leaves.
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+    })
+    await open('/content/post/doc-1')
+
+    const title = await screen.findByPlaceholderText(/^title$/i)
+    await userEvent.type(title, 'Rewritten')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    expect((title as HTMLTextAreaElement).value).toBe('A live document')
+    expect(api.requests.some((request) => request.route.startsWith('PATCH /content/'))).toBe(false)
+  })
+
+  it('withholds the missing-translation links when the group refuses them', async () => {
+    /*
+     * The case this closes: a contributor whose draft an editor published may
+     * no longer write that document, and joining its group means being able to
+     * write one of its members. So the type-level "may create a post" is the
+     * wrong question — the editor asked it and offered the link anyway, and
+     * the author found out on save.
+     *
+     * The type still says yes here; only the group says no. A link is not a
+     * form control, so the fieldset does not close it — it is withheld.
+     */
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+      creationPermissions: { create: true, statuses: ['draft', 'archived', 'trash'] },
+      translationPermissions: { create: false },
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+    await waitFor(() => expect(screen.getByText(/translations/i)).toBeDefined())
+    expect(screen.queryByRole('link', { name: /write it in/i })).toBeNull()
+  })
+
+  it('offers them when the group allows them', async () => {
+    serverSays({
+      documents: [liveDocument({ update: true, delete: true, statuses: ['draft', 'published'] })],
+      translationPermissions: { create: true },
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /write it in/i })).toBeDefined()
+    })
+  })
+
+  it('does not offer them merely because the type may be created', async () => {
+    // The exact mismatch: create permission held, group permission refused.
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+      creationPermissions: FULL_CREATION_PERMISSIONS,
+      translationPermissions: { create: false },
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+    await waitFor(() => expect(screen.getByText(/translations/i)).toBeDefined())
+    expect(screen.queryByRole('link', { name: /write it in/i })).toBeNull()
+  })
+
+  it('opens the same document for someone who may write it', async () => {
+    // The negative tests above are only worth anything if the positive one
+    // fails when the editor is closed for everybody.
+    serverSays({
+      documents: [liveDocument({ update: true, delete: true, statuses: ['draft', 'published'] })],
+    })
+    await open('/content/post/doc-1')
+
+    await screen.findByPlaceholderText(/^title$/i)
+
+    await waitFor(() => {
+      const title = screen.getByPlaceholderText(/^title$/i)
+      expect(title.closest('fieldset')?.disabled).toBe(false)
+    })
+
+    expect(screen.queryByRole('status')).toBeNull()
+    const select = getInput(/state/i, 'select') as HTMLSelectElement
+    expect(options(select)).toMatchObject({ draft: false, published: false, archived: true })
   })
 })

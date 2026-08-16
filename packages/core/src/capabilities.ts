@@ -14,6 +14,14 @@ export const CAPABILITIES = [
   'content:publish',
   'media:read',
   'media:upload',
+  /*
+   * Uploading and editing are separate rights. `media:upload` used to carry
+   * both, so anyone who could add an image could also rewrite the alt text on
+   * every asset in the library — including one somebody else uploaded, which
+   * is a description of a photograph being changed under its author.
+   */
+  'media:update:own',
+  'media:update:any',
   'media:delete:any',
   'terms:manage',
   'users:read',
@@ -55,12 +63,13 @@ const CONTRIBUTOR = [
   'content:delete:own',
 ] as const
 
-const AUTHOR = [...CONTRIBUTOR, 'content:publish', 'media:upload'] as const
+const AUTHOR = [...CONTRIBUTOR, 'content:publish', 'media:upload', 'media:update:own'] as const
 
 const EDITOR = [
   ...AUTHOR,
   'content:update:any',
   'content:delete:any',
+  'media:update:any',
   'media:delete:any',
   'terms:manage',
   'users:read',

@@ -1,10 +1,17 @@
 import type { Blocks } from '@presslabz/blocks'
-import type { ContentStatus } from '@presslabz/core'
+import type { ContentStatus, CreationPermissions, DocumentPermissions } from '@presslabz/core'
 import type { Locale } from '@presslabz/i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './api.ts'
 
+/*
+ * The permission shapes are imported from core rather than restated here.
+ * Retyping them would be the first half of reimplementing the policy: two
+ * declarations that agree today and are edited on different days.
+ */
 export interface ContentSummary {
+  /** What this actor may do with this document, decided by the server. */
+  permissions: DocumentPermissions
   id: string
   type: string
   locale: Locale
@@ -26,6 +33,8 @@ export interface ContentTypeSummary {
   name: string
   hierarchical: boolean
   taxonomies: string[]
+  /** What this actor could create of this type, for a document with no row yet. */
+  permissions: CreationPermissions
 }
 
 /**
@@ -152,20 +161,30 @@ export function useSaveContent(type: string, id: string | null) {
   })
 }
 
+export interface TranslationSet {
+  translations: ContentSummary[]
+  /**
+   * Whether a translation may be started in this group. Not the same question
+   * as "may create a document of this type": joining an existing group also
+   * needs the right to write one of its members as it currently stands, and a
+   * contributor whose draft an editor published no longer has it.
+   */
+  permissions: { create: boolean }
+}
+
 /**
  * Crosses locales on purpose, like the endpoint behind it. Everything the
  * editor says about a document's siblings comes from here rather than from a
- * listing that quietly dropped its locale filter.
+ * listing that quietly dropped its locale filter — including whether to offer
+ * starting the language that is missing.
  */
 export function useTranslations(type: string, id: string) {
   return useQuery({
     queryKey: ['content', type, 'translations', id],
     queryFn: async () =>
-      (
-        await apiFetch<{ translations: ContentSummary[] }>(
-          `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/translations`,
-        )
-      ).translations,
+      apiFetch<TranslationSet>(
+        `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/translations`,
+      ),
     enabled: id !== '',
   })
 }

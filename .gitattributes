@@ -1,0 +1,13 @@
+# Sources diff as text, always.
+#
+# Git decides binary-ness by looking for a NUL byte in either side of a diff,
+# and one test file carried a real NUL inside a string literal — the DOS "MZ"
+# header it feeds the upload route to prove sharp refuses it. The literal is
+# written with escapes now, but the blob already in history still holds the
+# byte, so without this the whole file renders as "Bin 6755 -> 12289 bytes"
+# and a reviewable change is hidden behind it.
+*.ts diff
+*.tsx diff
+*.css diff
+*.md diff
+*.json diff

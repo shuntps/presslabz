@@ -82,17 +82,76 @@ export function storageKeysOf(row: MediaRow): string[] {
   return [...new Set([row.storageKey, ...renditions])]
 }
 
-/** Alt text is the only thing about an asset a person edits after upload. */
-export async function updateMediaAlt(
+export class MediaForbiddenError extends Error {
+  constructor(message = 'Not allowed to edit this asset') {
+    super(message)
+    this.name = 'MediaForbiddenError'
+  }
+}
+
+export interface PatchMediaAltOptions {
+  /**
+   * Consulted inside the transaction, against the locked row. Required rather
+   * than optional: whether an actor may edit an asset depends on who owns it,
+   * so a caller that does not answer this has not decided, and a repository
+   * that let it skip the question would be the place the rule went missing.
+   * Returning false aborts the transaction.
+   */
+  readonly authorize: (current: MediaRow) => boolean
+}
+
+/**
+ * A patch, by locale. A string sets that language's description; `null`
+ * removes it; a language the patch does not mention is left alone.
+ */
+export type AltPatch = Readonly<Record<string, string | null>>
+
+/**
+ * Alt text is the only thing about an asset a person edits after upload.
+ *
+ * **A patch, not a replacement.** Taking the whole map from a caller means
+ * taking a snapshot with it: two people describing the same image in two
+ * languages both send `{...whatever they last saw, theirs}`, and the second
+ * write silently deletes the first. The merge happens here, against the row
+ * this transaction has locked, so a language nobody touched survives a write
+ * that started from a stale read of it.
+ *
+ * The row is locked from the read to the write, and the authorization decision
+ * is made in between. Reading the owner, deciding, and then updating would be
+ * deciding about a row that can change in the gap: `uploadedById` carries
+ * `ON DELETE SET NULL`, so deleting the uploader's account rewrites this
+ * column, and an asset that becomes owned by nobody needs `media:update:any`.
+ * `FOR UPDATE` makes that account deletion wait rather than land underneath
+ * the answer.
+ *
+ * Returns null when there is no such asset.
+ */
+export async function patchMediaAlt(
   db: Database,
   id: string,
-  alt: Record<string, string>,
+  patch: AltPatch,
+  options: PatchMediaAltOptions,
 ): Promise<MediaRow | null> {
-  const rows = await db
-    .update(media)
-    .set({ alt, updatedAt: new Date() })
-    .where(eq(media.id, id))
-    .returning()
+  return db.transaction(async (tx) => {
+    const locked = await tx.select().from(media).where(eq(media.id, id)).limit(1).for('update')
 
-  return rows[0] ?? null
+    const current = locked[0]
+    if (!current) return null
+
+    if (!options.authorize(current)) throw new MediaForbiddenError()
+
+    const merged = { ...current.alt }
+    for (const [locale, text] of Object.entries(patch)) {
+      if (text === null) delete merged[locale]
+      else merged[locale] = text
+    }
+
+    const rows = await tx
+      .update(media)
+      .set({ alt: merged, updatedAt: new Date() })
+      .where(eq(media.id, id))
+      .returning()
+
+    return rows[0] ?? null
+  })
 }

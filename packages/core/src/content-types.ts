@@ -1,7 +1,7 @@
 import { blocksSchema } from '@presslabz/blocks'
 import { isLocale } from '@presslabz/i18n'
 import { z } from 'zod'
-import type { Capability } from './capabilities.ts'
+import { type Actor, allows, type OperationAccess } from './access.ts'
 import { slugSchema } from './slug.ts'
 
 /**
@@ -53,20 +53,13 @@ export const CONTENT_OPERATIONS = ['read', 'create', 'update', 'delete', 'publis
 export type ContentOperation = (typeof CONTENT_OPERATIONS)[number]
 
 /**
- * What an operation costs.
- *
- * `own` exists because authorship changes the answer: a contributor may edit
- * their own draft and not anyone else's. Expressing that as two capabilities
- * rather than as a role check is what keeps `roleHasCapability` out of route
- * handlers — see the capability model in packages/core/src/capabilities.ts.
+ * What each operation costs. `own` exists because authorship changes the
+ * answer: a contributor may edit their own draft and not anyone else's.
+ * Expressing that as two capabilities rather than as a role check is what
+ * keeps `roleHasCapability` out of route handlers — see the capability model
+ * in packages/core/src/capabilities.ts. The comparison itself lives in
+ * access.ts, so media asks it the same way.
  */
-export interface OperationAccess {
-  /** Allows the operation on any row. */
-  readonly any: Capability
-  /** Allows it only on rows the actor authored. Absent when authorship is irrelevant. */
-  readonly own?: Capability
-}
-
 const DEFAULT_ACCESS: Readonly<Record<ContentOperation, OperationAccess>> = {
   read: { any: 'content:read' },
   create: { any: 'content:create' },
@@ -230,16 +223,10 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
 export function canPerform(
   type: AnyContentType,
   operation: ContentOperation,
-  actor: { readonly capabilities: ReadonlySet<Capability>; readonly id: string | null },
+  actor: Actor,
   resource?: { readonly authorId: string | null },
 ): boolean {
-  const access = type.access[operation]
-  if (actor.capabilities.has(access.any)) return true
-  if (!access.own || !actor.capabilities.has(access.own)) return false
-
-  // A document whose author was deleted is owned by nobody, and an anonymous
-  // actor owns nothing — neither may be matched by an "own only" capability.
-  return actor.id !== null && resource?.authorId != null && actor.id === resource.authorId
+  return allows(type.access[operation], actor, resource?.authorId)
 }
 
 /**
@@ -254,7 +241,7 @@ export function canPerform(
  */
 export function canReadDocument(
   type: AnyContentType,
-  actor: { readonly capabilities: ReadonlySet<Capability>; readonly id: string | null },
+  actor: Actor,
   resource: { readonly authorId: string | null; readonly status: ContentStatus },
 ): boolean {
   if (!canPerform(type, 'read', actor)) return false
@@ -276,26 +263,37 @@ export interface WriteIntent {
 /**
  * Every operation a write must be authorized for, not only the obvious one.
  *
- * The hole this closes: createSchema and updateSchema both accept `published`
- * and `scheduled`, so a write checked against `create` or `update` alone lets
- * a contributor put a document on the site by choosing a status. The schema
- * validated it and `content:publish` was never consulted. Reaching a
- * publishable state is a publishing decision whichever field carries it.
+ * `content:publish` is the cost of a document being in front of the public,
+ * not the cost of the keystroke that put it there. So it is required whenever
+ * a write touches a publishable state at either end:
  *
- * Two adjacent cases are deliberately *not* covered, because closing them
- * needs a capability that does not exist rather than a reinterpretation of one
- * that does. Leaving a publishable state is ungated, so anyone who may edit a
- * document may also take it off the site. And editing a document that is
- * already live is ungated, so a contributor keeps editing their own post after
- * an editor published it. Both want the equivalent of WordPress's
- * `edit_published_posts`; neither should be smuggled in here.
+ * - **entering** one — createSchema and updateSchema both accept `published`,
+ *   so a write checked against `create` or `update` alone lets a contributor
+ *   reach the site by choosing a status;
+ * - **staying** in one — editing live text is editing what the public reads,
+ *   and a patch carrying no `status` at all is the ordinary way to do it;
+ * - **leaving** one — unpublishing takes a page off the site, which is an
+ *   editorial act however cheap the transition looks.
+ *
+ * The middle case is the one that reads as an omission until it bites: a
+ * contributor writes a draft, an editor publishes it, and the contributor —
+ * who still holds `content:update:own` over the row — keeps rewriting a
+ * published page. This is WordPress's `edit_published_posts`, expressed
+ * through the capability that already exists rather than as a new one, because
+ * the question it answers is the same question: may this actor decide what the
+ * public sees.
+ *
+ * Statuses that are not publishable stay ungated between themselves: draft to
+ * archived to trash costs update alone.
  */
 export function operationsForWrite(intent: WriteIntent): readonly ContentOperation[] {
   const base: ContentOperation = intent.currentStatus === undefined ? 'create' : 'update'
-  const wasPublishable = intent.currentStatus !== undefined && isPublishable(intent.currentStatus)
 
-  if (isPublishable(intent.nextStatus) && !wasPublishable) return [base, 'publish']
-  return [base]
+  const touchesPublic =
+    isPublishable(intent.nextStatus) ||
+    (intent.currentStatus !== undefined && isPublishable(intent.currentStatus))
+
+  return touchesPublic ? [base, 'publish'] : [base]
 }
 
 /**
@@ -306,12 +304,111 @@ export function operationsForWrite(intent: WriteIntent): readonly ContentOperati
 export function canWrite(
   type: AnyContentType,
   intent: WriteIntent,
-  actor: { readonly capabilities: ReadonlySet<Capability>; readonly id: string | null },
+  actor: Actor,
   resource?: { readonly authorId: string | null },
 ): boolean {
   return operationsForWrite(intent).every((operation) =>
     canPerform(type, operation, actor, resource),
   )
+}
+
+/**
+ * The same rule for removal. Deleting a published document takes it off the
+ * site exactly as unpublishing does, and a policy that gated the second while
+ * leaving the first open would be a rule anyone could route around by choosing
+ * the more destructive verb.
+ */
+export function operationsForDelete(status: ContentStatus): readonly ContentOperation[] {
+  return isPublishable(status) ? ['delete', 'publish'] : ['delete']
+}
+
+export function canDelete(
+  type: AnyContentType,
+  status: ContentStatus,
+  actor: Actor,
+  resource?: { readonly authorId: string | null },
+): boolean {
+  return operationsForDelete(status).every((operation) =>
+    canPerform(type, operation, actor, resource),
+  )
+}
+
+/**
+ * Whether this actor may attach a translation to a group.
+ *
+ * "Being able to edit a member" is the **whole** write decision for that
+ * member as it currently stands, not the raw `update` capability. The two came
+ * apart the moment editing a live document started costing `content:publish`:
+ * a contributor whose draft an editor published still holds
+ * `content:update:own` over the row, so a rule phrased in capabilities alone
+ * would let them keep extending a group whose only document they may no longer
+ * touch. Adding a French version of a page you are not allowed to edit is the
+ * same act as editing it, one step removed.
+ *
+ * `nextStatus` is the member's own status because nothing about it is
+ * changing: the question is whether this actor could write that document at
+ * all, right now.
+ *
+ * The alternative — a distinct "may translate" policy, looser than "may edit" —
+ * is deliberately not taken. It would need a capability of its own
+ * (an assigned-translator workflow is exactly that), and inventing one by
+ * relaxing this check is how a group id becomes an access token again.
+ */
+export function canJoinTranslationGroup(
+  type: AnyContentType,
+  actor: Actor,
+  members: readonly { readonly authorId: string | null; readonly status: ContentStatus }[],
+): boolean {
+  if (!canPerform(type, 'create', actor)) return false
+
+  return members.some((member) =>
+    canWrite(type, { currentStatus: member.status, nextStatus: member.status }, actor, member),
+  )
+}
+
+/**
+ * What this actor may do with this document, decided once on the server.
+ *
+ * The admin needs the same answers to grey out a control, and the only two
+ * ways to give it them are to ship the policy to the client or to ship the
+ * conclusion. This is the conclusion: the interface renders it and never
+ * re-derives it, so a rule can never be enforced in one place and drawn
+ * differently in the other. It is presentation data — every route still
+ * decides for itself, against the locked row.
+ */
+export interface DocumentPermissions {
+  /** Whether this document may be edited at all, leaving its status alone. */
+  readonly update: boolean
+  readonly delete: boolean
+  /** The statuses this actor may move it to, current one included when it may stay. */
+  readonly statuses: readonly ContentStatus[]
+}
+
+export function permissionsForDocument(
+  type: AnyContentType,
+  actor: Actor,
+  resource: { readonly authorId: string | null; readonly status: ContentStatus },
+): DocumentPermissions {
+  const intent = (nextStatus: ContentStatus) => ({ currentStatus: resource.status, nextStatus })
+
+  return {
+    update: canWrite(type, intent(resource.status), actor, resource),
+    delete: canDelete(type, resource.status, actor, resource),
+    statuses: CONTENT_STATUSES.filter((status) => canWrite(type, intent(status), actor, resource)),
+  }
+}
+
+/** The same, for a document that does not exist yet. */
+export interface CreationPermissions {
+  readonly create: boolean
+  readonly statuses: readonly ContentStatus[]
+}
+
+export function permissionsForCreation(type: AnyContentType, actor: Actor): CreationPermissions {
+  return {
+    create: canPerform(type, 'create', actor),
+    statuses: CONTENT_STATUSES.filter((status) => canWrite(type, { nextStatus: status }, actor)),
+  }
 }
 
 export interface ContentTypeRegistry {
