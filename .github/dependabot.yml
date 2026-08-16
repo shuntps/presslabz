@@ -1,0 +1,14 @@
+version: 2
+
+updates:
+  # Actions pinned in CI workflows. npm ecosystems are added in phase 0, once the
+  # workspace manifests exist — Dependabot reports an error for a directory that
+  # has no manifest, so entries are added alongside the package.json they track.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
