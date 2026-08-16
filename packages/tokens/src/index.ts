@@ -32,9 +32,14 @@ export function resolveTheme(preference: ThemePreference, prefersDark: boolean):
 /**
  * Inline this in <head> before first paint. Without it the page renders in
  * light and then flips, which is the flash every themed site gets wrong.
+ *
+ * Deliberately a static literal rather than a template built from the
+ * constants above. Interpolating values into a string that is then executed
+ * as JavaScript is a code-construction sink: harmless while the inputs are
+ * hardcoded, an injection point the moment anyone makes the storage key
+ * configurable. The tests assert the literal cannot drift from the constants.
  */
-export const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
-  THEME_STORAGE_KEY,
-)});if(t==='light'||t==='dark'){document.documentElement.setAttribute(${JSON.stringify(
-  THEME_ATTRIBUTE,
-)},t)}}catch(e){}})()`
+export const THEME_INIT_SCRIPT =
+  '(function(){try{var t=localStorage.getItem("presslabz-theme");' +
+  'if(t==="light"||t==="dark"){' +
+  'document.documentElement.setAttribute("data-theme",t)}}catch(e){}})()'
