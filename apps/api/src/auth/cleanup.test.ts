@@ -111,16 +111,26 @@ describe('startSessionSweep', () => {
   })
 
   it('does not hold the process open', () => {
-    // A container that will not exit is a deploy that hangs.
+    /*
+     * A container that will not exit is a deploy that hangs.
+     *
+     * Counting timers and watching stop() clear them would stay green with the
+     * unref() removed, which makes it a test of the wrong thing. Node reports
+     * the reference state directly, so the timer itself is asked.
+     */
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+
     const sweeper = startSessionSweep({
       sweep: vi.fn().mockResolvedValue(0),
       log: recorder(),
       intervalMs: 1000,
     })
 
-    const timers = vi.getTimerCount()
-    expect(timers).toBeGreaterThan(0)
+    const timer = setIntervalSpy.mock.results[0]?.value as NodeJS.Timeout
+    expect(timer.hasRef()).toBe(false)
+
     sweeper.stop()
     expect(vi.getTimerCount()).toBe(0)
+    setIntervalSpy.mockRestore()
   })
 })

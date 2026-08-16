@@ -58,11 +58,15 @@ export async function deleteSessionsForUser(db: Database, userId: string): Promi
 /**
  * Removes every session whose lifetime is over.
  *
- * Retention is the session's own TTL plus at most one sweep interval: the
- * sweep is periodic, so a row that expires a minute after one runs waits for
- * the next. An expired session grants nothing in the meantime — every lookup
- * filters on expiry — but a record of who was signed in and when is not
- * something to keep for longer than it takes to notice.
+ * In normal operation retention is the session's own TTL plus at most one
+ * sweep interval, because the sweep is periodic and a row that expires just
+ * after one runs waits for the next. That is a target rather than a bound: a
+ * failed sweep is logged and retried on the following tick instead of
+ * escalating, so a run of database failures leaves rows for several intervals.
+ *
+ * An expired session grants nothing in the meantime — every lookup filters on
+ * expiry — but a record of who was signed in and when is not something to keep
+ * for longer than it takes to notice.
  * `sessions_expires_idx` is what makes the sweep a range scan rather than a
  * table scan.
  *
