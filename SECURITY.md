@@ -14,7 +14,7 @@ Please include what the problem is and where, how to reproduce it or a proof of 
 
 ## What to expect
 
-Reports are acknowledged as quickly as possible — realistically within a week, since this is currently a small project. You will be told whether the report is accepted, and credited in the advisory when a fix ships, unless you prefer otherwise.
+Reports are reviewed and handled on a best-effort basis, as quickly as circumstances allow. No response time is guaranteed. You will be told whether the report is accepted, and credited in the advisory when a fix ships, unless you prefer otherwise.
 
 ## Supported versions
 
