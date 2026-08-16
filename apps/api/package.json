@@ -1,0 +1,28 @@
+{
+  "name": "@presslabz/api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --watch src/index.ts",
+    "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@fastify/cors": "catalog:",
+    "@fastify/helmet": "catalog:",
+    "@fastify/rate-limit": "catalog:",
+    "@presslabz/db": "workspace:*",
+    "@presslabz/i18n": "workspace:*",
+    "fastify": "catalog:",
+    "iovalkey": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

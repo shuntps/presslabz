@@ -1,0 +1,37 @@
+packages:
+  - apps/*
+  - packages/*
+  - themes/*
+
+# Build scripts are denied by default; each one is an arbitrary-code-execution
+# point at install time. esbuild is allowed because it downloads its platform
+# binary in postinstall and cannot work without it.
+allowBuilds:
+  esbuild: true
+
+# Single source of truth for dependency versions across every workspace.
+# Packages reference these with "catalog:" instead of pinning their own.
+catalog:
+  # Language and tooling
+  typescript: 7.0.2
+  turbo: 2.10.10
+  '@biomejs/biome': 2.5.8
+  vitest: 4.1.10
+  '@types/node': 26.2.0
+
+  # API
+  fastify: 5.12.0
+  '@fastify/cors': 11.3.0
+  '@fastify/helmet': 13.1.0
+  '@fastify/rate-limit': 11.2.0
+
+  # Database
+  drizzle-orm: 0.45.2
+  drizzle-kit: 0.31.10
+  postgres: 3.4.9
+
+  # Cache and sessions
+  iovalkey: 0.4.0
+
+  # Validation
+  zod: 4.4.3

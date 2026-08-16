@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Pre-scaffold.** No source code exists yet. Everything below is settled, not proposed. The "Commands" section is deliberately empty and must be filled in by whoever lands phase 0.
+**Phase 0 landed.** The monorepo, local services, database schema, design tokens and i18n foundation exist and are verified end to end. There is no admin interface and no public rendering yet — those are phases 1 and 3. Everything below is settled, not proposed.
 
 PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
 
@@ -121,4 +121,34 @@ i18n and theming are load-bearing in phases 0 and 1 rather than polish at the en
 
 ## Commands
 
-None yet — there is no `package.json`. When phase 0 lands, replace this section with the real build, lint, test, and dev commands, including how to run a single test.
+Requires Node 24+, pnpm 11+ and Docker. First run:
+
+```sh
+cp .env.example .env
+pnpm install
+pnpm services:up      # Postgres, Valkey, MinIO — waits until all are healthy
+pnpm db:migrate
+pnpm dev
+```
+
+| Command | Purpose |
+|---|---|
+| `pnpm dev` | Run every app in watch mode |
+| `pnpm typecheck` | `tsc --noEmit` across all workspaces |
+| `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
+| `pnpm test` | Vitest across all workspaces |
+| `pnpm db:generate` | Write a migration from the schema diff |
+| `pnpm db:migrate` | Apply pending migrations |
+| `pnpm db:studio` | Browse the database |
+| `pnpm services:up` / `:down` / `:reset` | Local service containers; `:reset` wipes the volumes |
+
+Run a single test file, or a single test by name:
+
+```sh
+pnpm --filter @presslabz/i18n exec vitest run src/index.test.ts
+pnpm --filter @presslabz/i18n exec vitest run -t 'honours quality values'
+```
+
+There is no build step in development: Node 24 strips types at runtime, so
+`node src/index.ts` runs TypeScript directly. That is also why every import
+carries its `.ts` extension and every `tsconfig.json` sets `noEmit`.

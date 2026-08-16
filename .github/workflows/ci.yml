@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: presslabz
+          POSTGRES_PASSWORD: presslabz
+          POSTGRES_DB: presslabz
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U presslabz -d presslabz"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+      valkey:
+        image: valkey/valkey:9.1.1-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://presslabz:presslabz@localhost:5432/presslabz
+      VALKEY_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint and format
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Apply migrations
+        run: pnpm db:migrate

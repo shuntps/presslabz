@@ -1,0 +1,126 @@
+/*
+ * The only place colour is defined in PressLabz. The admin interface and
+ * every theme consume these variables; a theme author overrides values here
+ * rather than reimplementing theming.
+ *
+ * Three theme states:
+ *   - no data-theme attribute  -> follow the operating system
+ *   - data-theme="light"       -> forced light, wins over the media query
+ *   - data-theme="dark"        -> forced dark, wins over the media query
+ *
+ * Rule: the complete light palette is defined on bare :root. The dark blocks
+ * only redefine what changes. No colour may have its sole definition inside a
+ * media query or an attribute selector, or one of the three states loses it.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Neutral ramp */
+  --pl-color-bg: #ffffff;
+  --pl-color-bg-subtle: #f7f7f8;
+  --pl-color-bg-raised: #ffffff;
+  --pl-color-border: #e3e3e7;
+  --pl-color-border-strong: #c9c9d0;
+  --pl-color-text: #17171a;
+  --pl-color-text-muted: #5f5f6b;
+  --pl-color-text-faint: #8a8a96;
+
+  /* Accent */
+  --pl-color-accent: #2f5bd7;
+  --pl-color-accent-hover: #2748b0;
+  --pl-color-accent-text: #ffffff;
+  --pl-color-focus-ring: #2f5bd7;
+
+  /* Status */
+  --pl-color-danger: #c02626;
+  --pl-color-warning: #9a6400;
+  --pl-color-success: #1f7a40;
+
+  /* Typography */
+  --pl-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --pl-font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --pl-text-xs: 0.75rem;
+  --pl-text-sm: 0.875rem;
+  --pl-text-base: 1rem;
+  --pl-text-lg: 1.125rem;
+  --pl-text-xl: 1.375rem;
+  --pl-text-2xl: 1.75rem;
+  --pl-line-tight: 1.25;
+  --pl-line-normal: 1.55;
+
+  /* Spacing, on a 4px grid */
+  --pl-space-1: 0.25rem;
+  --pl-space-2: 0.5rem;
+  --pl-space-3: 0.75rem;
+  --pl-space-4: 1rem;
+  --pl-space-6: 1.5rem;
+  --pl-space-8: 2rem;
+  --pl-space-12: 3rem;
+
+  /* Radii and elevation */
+  --pl-radius-sm: 4px;
+  --pl-radius-md: 8px;
+  --pl-radius-lg: 12px;
+  --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+  --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+/* System preference, unless the user explicitly chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pl-color-bg: #131316;
+    --pl-color-bg-subtle: #1a1a1f;
+    --pl-color-bg-raised: #1f1f25;
+    --pl-color-border: #2e2e36;
+    --pl-color-border-strong: #45454f;
+    --pl-color-text: #f2f2f5;
+    --pl-color-text-muted: #a6a6b3;
+    --pl-color-text-faint: #77778a;
+
+    --pl-color-accent: #7ea0ff;
+    --pl-color-accent-hover: #9ab5ff;
+    --pl-color-accent-text: #10121a;
+    --pl-color-focus-ring: #7ea0ff;
+
+    --pl-color-danger: #ff8080;
+    --pl-color-warning: #e0a94a;
+    --pl-color-success: #6ed49a;
+
+    --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+    --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
+  }
+}
+
+/* Explicit choice. Repeated so the toggle wins in both directions. */
+:root[data-theme="dark"] {
+  --pl-color-bg: #131316;
+  --pl-color-bg-subtle: #1a1a1f;
+  --pl-color-bg-raised: #1f1f25;
+  --pl-color-border: #2e2e36;
+  --pl-color-border-strong: #45454f;
+  --pl-color-text: #f2f2f5;
+  --pl-color-text-muted: #a6a6b3;
+  --pl-color-text-faint: #77778a;
+
+  --pl-color-accent: #7ea0ff;
+  --pl-color-accent-hover: #9ab5ff;
+  --pl-color-accent-text: #10121a;
+  --pl-color-focus-ring: #7ea0ff;
+
+  --pl-color-danger: #ff8080;
+  --pl-color-warning: #e0a94a;
+  --pl-color-success: #6ed49a;
+
+  --pl-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --pl-shadow-md: 0 4px 12px rgb(0 0 0 / 0.6);
+}
+
+body {
+  margin: 0;
+  background: var(--pl-color-bg);
+  color: var(--pl-color-text);
+  font-family: var(--pl-font-sans);
+  font-size: var(--pl-text-base);
+  line-height: var(--pl-line-normal);
+}

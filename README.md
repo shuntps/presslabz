@@ -2,7 +2,7 @@
 
 A modern alternative to WordPress — secure and fast by construction, familiar by design.
 
-> **Status: pre-alpha.** There is no usable code yet. The repository currently holds the architecture decisions that the implementation will follow. Nothing here installs or runs.
+> **Status: pre-alpha.** The foundation is in place — database schema, local services, design tokens, i18n — and an API that answers a health check. There is no admin interface and no public site yet, so there is nothing to run a website on.
 
 The full architecture — conventions, data model, hook API, roadmap — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -60,7 +60,15 @@ Deployment targets self-hosted single-site installations on Node and Docker.
 
 Requires Node 24+, pnpm 11+ and Docker.
 
-Setup and development commands will be documented here once phase 0 lands.
+```sh
+cp .env.example .env
+pnpm install
+pnpm services:up      # Postgres, Valkey, MinIO
+pnpm db:migrate
+pnpm dev
+```
+
+Full command reference in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#commands).
 
 ## Contributing
 

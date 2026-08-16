@@ -1,0 +1,34 @@
+{
+  "name": "presslabz",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A modern, secure and fast alternative to WordPress",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "db:generate": "pnpm --filter @presslabz/db generate",
+    "db:migrate": "pnpm --filter @presslabz/db migrate",
+    "db:studio": "pnpm --filter @presslabz/db studio",
+    "services:up": "docker compose up -d --wait",
+    "services:down": "docker compose down",
+    "services:reset": "docker compose down -v && docker compose up -d --wait"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  }
+}
