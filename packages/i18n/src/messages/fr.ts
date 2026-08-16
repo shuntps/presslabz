@@ -22,9 +22,10 @@ export const fr: Messages = {
   'auth.password': 'Mot de passe',
   'auth.invalidCredentials': 'Ce courriel et ce mot de passe ne correspondent pas',
   'auth.tooManyAttempts': 'Trop de tentatives. Réessayez plus tard.',
+  'auth.tagline': 'Composer, traduire, publier.',
 
   'dashboard.title': 'Tableau de bord',
-  'dashboard.greeting': 'Connecté en tant que {name}',
+  'dashboard.name': 'Nom',
   'dashboard.role': 'Rôle',
   'dashboard.capabilities': 'Capacités',
   'dashboard.empty': 'Rien ici pour l’instant. Le contenu arrive à la phase suivante.',

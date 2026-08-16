@@ -24,9 +24,10 @@ export const en = {
   'auth.password': 'Password',
   'auth.invalidCredentials': 'That email and password do not match',
   'auth.tooManyAttempts': 'Too many attempts. Try again later.',
+  'auth.tagline': 'Compose, translate, publish.',
 
   'dashboard.title': 'Dashboard',
-  'dashboard.greeting': 'Signed in as {name}',
+  'dashboard.name': 'Name',
   'dashboard.role': 'Role',
   'dashboard.capabilities': 'Capabilities',
   'dashboard.empty': 'There is nothing here yet. Content arrives in the next phase.',

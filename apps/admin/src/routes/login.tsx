@@ -26,7 +26,12 @@ export function LoginPage() {
   return (
     <main className="centered">
       <form className="card" onSubmit={onSubmit}>
-        <h1>PressLabz</h1>
+        {/* The wordmark's second half carries the rubric. It is the only
+            coloured thing in the chrome, here and in the shell's top bar. */}
+        <h1 className="wordmark">
+          Press<i>Labz</i>
+        </h1>
+        <p className="tagline">{t('auth.tagline')}</p>
 
         <label>
           <span>{t('auth.email')}</span>
@@ -56,7 +61,7 @@ export function LoginPage() {
           </p>
         )}
 
-        <button type="submit" disabled={signIn.isPending}>
+        <button type="submit" className="primary" disabled={signIn.isPending}>
           {signIn.isPending ? t('auth.signingIn') : t('auth.signIn')}
         </button>
       </form>

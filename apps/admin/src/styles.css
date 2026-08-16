@@ -1,6 +1,23 @@
 /*
- * Every value here comes from @presslabz/tokens. A literal colour in this
- * file would be a defect: it would not follow the theme.
+ * Atelier, applied. Every value here comes from @presslabz/tokens — a literal
+ * colour would be a defect, it would not follow the theme, and a hardcoded
+ * breakpoint would be one too. styles.test.ts asserts both.
+ *
+ * Three rules hold this together, and they are worth more than any single
+ * declaration below:
+ *
+ *   - The typeface says what kind of thing you are looking at. Chrome is
+ *     --pl-font-machine, the reader's own writing is --pl-font-content,
+ *     machine-generated values are --pl-font-data. There is no fourth case.
+ *   - --pl-color-bg-raised is the working surface. Bars and switchers are
+ *     apparatus and take --pl-color-bg-subtle.
+ *   - Containment is a hairline and a step in background. No shadows, and
+ *     radii stay at --pl-radius-sm. Elevation is not a decoration here; when
+ *     the block editor needs a floating toolbar it will be the only thing in
+ *     the product that lifts, and it will mean something.
+ *
+ * Mobile-first throughout: every rule outside a media query is correct at
+ * 320px and the queries may only add.
  */
 
 *,
@@ -10,46 +27,130 @@
 }
 
 :focus-visible {
-  outline: 2px solid var(--pl-color-focus-ring);
+  outline: var(--pl-focus-ring-width) solid var(--pl-color-focus-ring);
   outline-offset: 2px;
 }
+
+/* ── Type roles ─────────────────────────────────────────────────────────── */
+
+/*
+ * The width axis, used only here. A title set wide and tight reads as
+ * signage; the same face at normal width is the interface talking.
+ */
+.page-title,
+.wordmark {
+  font-family: var(--pl-font-machine);
+  font-weight: 700;
+  font-stretch: var(--pl-display-width);
+  letter-spacing: var(--pl-display-tracking);
+  line-height: var(--pl-line-tight);
+  margin: 0;
+}
+
+.page-title {
+  font-size: var(--pl-text-2xl);
+}
+
+.wordmark {
+  font-size: var(--pl-text-lg);
+}
+
+/* The one mark of identity. Nothing else in the chrome is allowed colour. */
+.wordmark i {
+  font-style: normal;
+  color: var(--pl-color-rubric);
+}
+
+/* The reader's own writing, or a value they authored themselves. */
+.authored {
+  font-family: var(--pl-font-content);
+  font-weight: 400;
+}
+
+/* Anything the machine produced and the reader may need to copy exactly. */
+.data {
+  font-family: var(--pl-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The printer's rule: a hairline running from the title to the edge. It is
+ * the only horizontal division in the admin, so a page has structure without
+ * needing boxes to provide it.
+ */
+.title-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pl-space-4);
+  margin-bottom: var(--pl-space-6);
+}
+
+.title-row .rule {
+  flex: 1;
+  height: var(--pl-border-width);
+  background: var(--pl-color-border-strong);
+  margin-bottom: 0.45em;
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
 
 button,
 input,
 select {
   font: inherit;
   color: inherit;
+  /* 36px under a mouse, 44px under a finger — see --pl-tap-target. */
+  min-height: var(--pl-tap-target);
 }
 
 button {
+  /* inline-flex rather than the default, so min-height centres the label. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--pl-space-2) var(--pl-space-3);
-  border: 1px solid var(--pl-color-border-strong);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
   border-radius: var(--pl-radius-sm);
-  background: var(--pl-color-bg-raised);
+  background: transparent;
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--pl-color-accent);
+  border-color: var(--pl-color-text);
 }
 
 button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
+/*
+ * Filled controls take ink, not colour. A primary action does not have to be
+ * blue to be obvious — being the only solid thing on the screen is enough,
+ * and it leaves red free to mean something.
+ */
+button.primary,
 button[aria-pressed="true"] {
   background: var(--pl-color-accent);
   border-color: var(--pl-color-accent);
   color: var(--pl-color-accent-text);
 }
 
+button.primary:hover:not(:disabled),
+button[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pl-color-accent-hover);
+  border-color: var(--pl-color-accent-hover);
+}
+
 input,
 select {
   width: 100%;
   padding: var(--pl-space-2) var(--pl-space-3);
-  border: 1px solid var(--pl-color-border-strong);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
   border-radius: var(--pl-radius-sm);
+  /* Recessed into the working surface rather than raised off it. */
   background: var(--pl-color-bg);
 }
 
@@ -59,33 +160,67 @@ label {
 }
 
 label > span {
-  font-size: var(--pl-text-sm);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--pl-color-text-muted);
 }
+
+/* ── Sign-in ────────────────────────────────────────────────────────────── */
 
 .centered {
   min-height: 100dvh;
   display: grid;
-  place-content: center;
+  /*
+   * `safe` matters on a landscape phone and whenever the on-screen keyboard
+   * takes half the viewport. Plain centring on content taller than its
+   * container overflows in both directions, and the top — where the heading
+   * and the first field are — ends up above the scroll origin, unreachable.
+   */
+  align-content: safe center;
+  justify-items: center;
   gap: var(--pl-space-6);
-  padding: var(--pl-space-6);
+  padding-block: calc(var(--pl-gutter) + var(--pl-safe-top))
+    calc(var(--pl-gutter) + var(--pl-safe-bottom));
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
 }
 
 .card {
   display: grid;
   gap: var(--pl-space-4);
-  min-width: min(22rem, 90vw);
-  padding: var(--pl-space-8);
-  border: 1px solid var(--pl-color-border);
-  border-radius: var(--pl-radius-lg);
+  /*
+   * min() rather than a min-width: the card takes the width it wants until
+   * the screen is narrower, and then it takes the screen. A min-width would
+   * keep asking for its full size on a 320px phone and overflow instead.
+   */
+  width: min(22rem, 100%);
+  padding: var(--pl-space-6);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
   background: var(--pl-color-bg-raised);
-  box-shadow: var(--pl-shadow-md);
 }
 
-.card h1 {
-  margin: 0;
+@media (min-width: 40rem) {
+  .card {
+    padding: var(--pl-space-8);
+  }
+}
+
+/*
+ * The one screen where the wordmark is allowed to be large, and the only
+ * screen in the product with no content face on it — before you sign in,
+ * there is nothing of yours here to set.
+ */
+.card .wordmark {
   font-size: var(--pl-text-2xl);
-  line-height: var(--pl-line-tight);
+}
+
+.tagline {
+  margin: calc(var(--pl-space-2) * -1) 0 var(--pl-space-2);
+  font-size: var(--pl-text-sm);
+  color: var(--pl-color-text-muted);
 }
 
 .error {
@@ -98,6 +233,8 @@ label > span {
   color: var(--pl-color-text-muted);
 }
 
+/* ── Switchers ──────────────────────────────────────────────────────────── */
+
 .switchers {
   display: flex;
   flex-wrap: wrap;
@@ -107,62 +244,128 @@ label > span {
 
 .switcher {
   display: flex;
+  /* Three theme buttons plus their legend do not fit across a 320px screen.
+     Centring only shows once they wrap, and keeps the overflow row under the
+     rest of the group instead of adrift against the left edge. */
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: var(--pl-space-2);
   margin: 0;
   padding: 0;
   border: 0;
+  /* A fieldset defaults to min-content, which refuses to shrink below its
+     widest child and pushes the page sideways. */
+  min-width: 0;
 }
 
 .switcher legend,
 .switcher > span {
   float: left;
   padding: 0 var(--pl-space-2) 0 0;
-  font-size: var(--pl-text-sm);
-  color: var(--pl-color-text-muted);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
 }
 
 .switcher select {
   width: auto;
 }
 
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+
 .bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--pl-space-4);
+  gap: var(--pl-space-2) var(--pl-space-4);
   align-items: center;
   justify-content: space-between;
-  padding: var(--pl-space-3) var(--pl-space-6);
-  border-bottom: 1px solid var(--pl-color-border);
+  padding-block: calc(var(--pl-space-3) + var(--pl-safe-top)) var(--pl-space-3);
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+  /* Apparatus, so the recessed step — never the working surface. Opaque
+     regardless, or the content scrolls visibly underneath it. */
   background: var(--pl-color-bg-subtle);
 }
 
 .bar-end {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--pl-space-4);
+  gap: var(--pl-space-2) var(--pl-space-4);
   align-items: center;
 }
 
 .content {
-  padding: var(--pl-space-8) var(--pl-space-6);
-  max-width: 60rem;
+  /*
+   * A container rather than a media query for what is inside it. The panels
+   * of the block editor in phase 2 will hold these same components at widths
+   * that have nothing to do with the viewport's, and a component that reads
+   * its own box is the only kind that survives being put in one.
+   */
+  container: content / inline-size;
+  width: 100%;
+  max-width: var(--pl-layout-max);
+  margin-inline: auto;
+  padding-block: var(--pl-section) calc(var(--pl-section) + var(--pl-safe-bottom));
+  padding-inline: calc(var(--pl-gutter) + var(--pl-safe-left))
+    calc(var(--pl-gutter) + var(--pl-safe-right));
 }
 
+.content p {
+  max-width: var(--pl-measure);
+}
+
+/* The working surface: it holds the reader's own values. */
+.panel {
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-raised);
+  padding: var(--pl-space-4) var(--pl-space-6);
+  margin-bottom: var(--pl-section);
+}
+
+/*
+ * One column by default. `max-content` on the term column, which is what a
+ * definition list wants on a wide screen, cannot shrink — a long term and an
+ * unbreakable value in the same row overflow the page instead of wrapping.
+ */
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--pl-space-2) var(--pl-space-6);
-  margin: var(--pl-space-6) 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--pl-space-1);
+  margin: 0;
 }
 
 .facts dt {
-  color: var(--pl-color-text-muted);
-  font-size: var(--pl-text-sm);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+  padding-top: var(--pl-space-2);
 }
 
 .facts dd {
-  margin: 0;
+  margin: 0 0 var(--pl-space-4);
+  min-width: 0;
+}
+
+@container content (min-width: 30rem) {
+  .facts {
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--pl-space-3) var(--pl-space-6);
+  }
+
+  .facts dd {
+    margin: 0;
+    padding-top: var(--pl-space-2);
+  }
 }
 
 .caps {
@@ -172,14 +375,19 @@ label > span {
   margin: 0;
   padding: 0;
   list-style: none;
+  min-width: 0;
 }
 
 .caps code {
   display: inline-block;
+  max-width: 100%;
   padding: 2px var(--pl-space-2);
-  border: 1px solid var(--pl-color-border);
+  border: var(--pl-border-width) solid var(--pl-color-border);
   border-radius: var(--pl-radius-sm);
   background: var(--pl-color-bg-subtle);
-  font-family: var(--pl-font-mono);
+  font-family: var(--pl-font-data);
   font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-muted);
+  /* `content:read` has no break opportunity a line breaker will take. */
+  overflow-wrap: anywhere;
 }
