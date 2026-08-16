@@ -18,7 +18,7 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
   let db: Database
 
   beforeAll(async () => {
-    scratch = await createScratchDatabase()
+    scratch = await createScratchDatabase('sessions')
     handle = createDb(scratch.url, { maxConnections: 10 })
     db = handle.db
   }, 60_000)
@@ -62,7 +62,7 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
     let bootstrapDb: Database
 
     beforeAll(async () => {
-      bootstrap = await createScratchDatabase('presslabz_scratch_bootstrap')
+      bootstrap = await createScratchDatabase('bootstrap')
       // Enough connections that the concurrent calls below really do overlap
       // rather than queueing on the pool and passing for the wrong reason.
       bootstrapHandle = createDb(bootstrap.url, { maxConnections: 10 })
@@ -79,7 +79,6 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
         createInitialAdministrator(bootstrapDb, {
           email: `first-${index}@presslabz.test`,
           displayName: `First ${index}`,
-          role: 'administrator',
           passwordHash: null,
         }),
       )
@@ -100,7 +99,6 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
       const result = await createInitialAdministrator(bootstrapDb, {
         email: 'second@presslabz.test',
         displayName: 'Second',
-        role: 'administrator',
         passwordHash: null,
       })
 

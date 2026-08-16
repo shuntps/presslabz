@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import rateLimit from '@fastify/rate-limit'
 import { createBuiltinRegistry } from '@presslabz/core'
-import { createDb } from '@presslabz/db'
+import { createDb, deleteExpiredSessions } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
 import Fastify from 'fastify'
 import { Valkey } from 'iovalkey'
@@ -102,7 +102,7 @@ export async function buildApp() {
     app.log.warn({ error }, 'media bucket is not reachable; uploads will fail')
   })
 
-  const sweeper = startSessionSweep(db, app.log)
+  const sweeper = startSessionSweep({ sweep: () => deleteExpiredSessions(db), log: app.log })
 
   app.addHook('onClose', async () => {
     sweeper.stop()

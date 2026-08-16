@@ -81,7 +81,13 @@ export interface BootstrapResult {
  */
 export async function createInitialAdministrator(
   db: Database,
-  user: NewUser,
+  /*
+   * The role is not among these. A caller cannot ask this function for a
+   * subscriber: the one account it exists to create is the administrator, and
+   * a parameter that could say otherwise is a signature that lies about what
+   * the code below does.
+   */
+  user: Omit<NewUser, 'role'>,
 ): Promise<BootstrapResult> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${BOOTSTRAP_LOCK})`)
@@ -90,7 +96,10 @@ export async function createInitialAdministrator(
     const existing = counted[0]?.count ?? 0
     if (existing > 0) return { created: null, existing }
 
-    const rows = await tx.insert(users).values(user).returning()
+    const rows = await tx
+      .insert(users)
+      .values({ ...user, role: 'administrator' })
+      .returning()
     const created = rows[0]
     if (!created) throw new Error('Insert returned no row')
     return { created, existing: 0 }

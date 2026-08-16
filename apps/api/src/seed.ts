@@ -31,7 +31,6 @@ try {
   const { created, existing } = await createInitialAdministrator(db, {
     email,
     displayName,
-    role: 'administrator',
     passwordHash,
   })
 

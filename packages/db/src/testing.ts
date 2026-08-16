@@ -49,15 +49,36 @@ export function hasIntegrationEnv(): boolean {
  * for can happen. Deleting the developer's own rows to make room would be a
  * test that costs more than it proves.
  *
- * The name is fixed and the database is dropped and recreated each run, so a
- * suite that crashed halfway leaves nothing for the next one to trip over.
+ * The name is unique per call. A fixed one plus `drop database ... with
+ * (force)` is a suite that terminates another run's connections and deletes
+ * the database out from under it — two developers, or a developer and CI
+ * against the same server, and one of them fails for reasons that have nothing
+ * to do with the code. FORCE stays, because it is what makes the teardown
+ * reliable against a connection this suite itself left open; what changes is
+ * that it can only ever reach a database this call created.
+ *
+ * A run that dies before its teardown leaves one behind. They all share the
+ * prefix below, so `drop database` on anything matching it is safe to do by
+ * hand, and an empty scratch database costs nothing until then.
  */
-export async function createScratchDatabase(name = 'presslabz_scratch'): Promise<{
+export const SCRATCH_PREFIX = 'presslabz_scratch_'
+
+/** Postgres identifiers cap at 63 bytes, so the suffix stays short. */
+function scratchName(label: string): string {
+  const unique = `${process.pid.toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
+  const name = `${SCRATCH_PREFIX}${label}_${unique}`.toLowerCase().replace(/[^a-z0-9_]/g, '')
+  return name.slice(0, 63)
+}
+
+export async function createScratchDatabase(label = 'db'): Promise<{
   url: string
+  name: string
   drop: () => Promise<void>
 }> {
   const source = process.env.DATABASE_URL
   if (!source) throw new Error('DATABASE_URL is required to create a scratch database')
+
+  const name = scratchName(label)
 
   const { default: postgres } = await import('postgres')
   const { drizzle } = await import('drizzle-orm/postgres-js')
@@ -66,11 +87,13 @@ export async function createScratchDatabase(name = 'presslabz_scratch'): Promise
   const adminUrl = new URL(source)
   adminUrl.pathname = '/postgres'
 
+  // Identifiers cannot be parameterised, so the name is restricted instead.
+  if (!new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(name)) {
+    throw new Error(`Refusing to create "${name}": not a scratch database name`)
+  }
+
   const admin = postgres(adminUrl.toString(), { max: 1 })
   try {
-    // Identifiers cannot be parameterised, so the name is restricted instead.
-    if (!/^[a-z][a-z0-9_]{0,62}$/.test(name)) throw new Error(`Unsafe database name "${name}"`)
-    await admin.unsafe(`drop database if exists ${name} with (force)`)
     await admin.unsafe(`create database ${name}`)
   } finally {
     await admin.end({ timeout: 5 })
@@ -91,6 +114,7 @@ export async function createScratchDatabase(name = 'presslabz_scratch'): Promise
 
   return {
     url,
+    name,
     drop: async () => {
       const cleanup = postgres(adminUrl.toString(), { max: 1 })
       try {
