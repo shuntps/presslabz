@@ -57,11 +57,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Before the tests, not after: the repository suite runs against the
+      # real database, because the guarantees worth asserting there are
+      # properties of a transaction and do not survive a fake.
+      - name: Apply migrations
+        run: pnpm db:migrate
+
       - name: Test
         run: pnpm test
 
       - name: Build
         run: pnpm build
-
-      - name: Apply migrations
-        run: pnpm db:migrate

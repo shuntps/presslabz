@@ -28,6 +28,24 @@ export function isContentStatus(value: unknown): value is ContentStatus {
   return typeof value === 'string' && (CONTENT_STATUSES as readonly string[]).includes(value)
 }
 
+/**
+ * Statuses that put a document in front of the public.
+ *
+ * `scheduled` sits here with `published` because a schedule needs no further
+ * human act to go live — approving a schedule *is* approving the publication,
+ * only later. Treating it as a draft that happens to carry a date is how an
+ * author without publishing rights ships to the site by picking a date
+ * instead of pressing a button.
+ */
+export const PUBLISHABLE_STATUSES = [
+  'published',
+  'scheduled',
+] as const satisfies readonly ContentStatus[]
+
+export function isPublishable(status: ContentStatus): boolean {
+  return (PUBLISHABLE_STATUSES as readonly ContentStatus[]).includes(status)
+}
+
 /** Statuses a reader without editing rights may ever be served. */
 export const PUBLIC_CONTENT_STATUSES = ['published'] as const satisfies readonly ContentStatus[]
 
@@ -94,10 +112,26 @@ export interface AnyContentType {
   readonly taxonomies: readonly string[]
   readonly meta: z.ZodType
   readonly access: Readonly<Record<ContentOperation, OperationAccess>>
-  /** Validates a whole document on the way in. */
+  /**
+   * The invariants of a whole document, wherever that state came from. The
+   * repository validates the stored row merged with an incoming patch against
+   * this, which is the only way `{ status: 'scheduled' }` can be judged at
+   * all: the patch alone does not say whether a date exists.
+   */
+  readonly stateSchema: z.ZodType
+  /** A whole document arriving from outside, plus its create-only fields. */
   readonly createSchema: z.ZodType
-  /** The same, with every field optional. Locale is absent on purpose. */
+  /**
+   * A patch. Strict, and it refuses `locale` by name rather than dropping it.
+   * It deliberately carries no cross-field rule, because a patch is not a
+   * state and cannot be judged as one.
+   */
   readonly updateSchema: z.ZodType
+}
+
+const SCHEDULE_NEEDS_DATE = {
+  message: 'A scheduled document needs a publication date',
+  path: ['publishedAt'],
 }
 
 export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
@@ -110,7 +144,7 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
   const hierarchical = options.hierarchical ?? false
   const meta = (options.meta ?? metaDefault) as TMeta
 
-  const base = {
+  const stateShape = {
     slug: slugSchema,
     title: z.string().min(1).max(300),
     excerpt: z.string().max(1000).optional(),
@@ -126,31 +160,42 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
     ...(hierarchical ? { parentId: z.uuid().optional() } : {}),
   }
 
+  const scheduleHasDate = (value: { status?: ContentStatus; publishedAt?: Date | undefined }) =>
+    value.status !== 'scheduled' || value.publishedAt !== undefined
+
+  const stateSchema = z.object(stateShape).refine(scheduleHasDate, SCHEDULE_NEEDS_DATE)
+
   const createSchema = z
     .object({
       /**
-       * Locale is required on create and absent from update. Every document
-       * is one translation, and moving an existing one between languages
-       * would silently change which unique (type, locale, slug) row it
-       * collides with — a rename dressed up as an edit.
+       * Locale is required on create and refused on update. Every document is
+       * one translation, and moving an existing one between languages would
+       * silently change which unique (type, locale, slug) row it collides
+       * with — a rename dressed up as an edit.
        */
       locale: z.string().refine(isLocale, { message: 'Unsupported locale' }),
       /** Supplied to attach this document to an existing translation group. */
       translationGroupId: z.uuid().optional(),
-      ...base,
+      ...stateShape,
     })
-    .refine((value) => value.status !== 'scheduled' || value.publishedAt !== undefined, {
-      message: 'A scheduled document needs a publication date',
-      path: ['publishedAt'],
-    })
+    .refine(scheduleHasDate, SCHEDULE_NEEDS_DATE)
 
-  const updateSchema = z
-    .object(base)
-    .partial()
-    .refine((value) => value.status !== 'scheduled' || value.publishedAt !== undefined, {
-      message: 'A scheduled document needs a publication date',
-      path: ['publishedAt'],
-    })
+  /**
+   * Strict, so an unknown key is an error rather than something silently
+   * dropped. A caller that sent a field the server ignored has been told its
+   * write succeeded when part of it did not, which is worse than a rejection.
+   *
+   * `locale` is named rather than left to the unknown-key path, so the answer
+   * is "a document cannot change language" instead of "unrecognized key": the
+   * caller is not confused about the field, they are wrong about the
+   * operation, and only one of those two messages says so.
+   */
+  const updateSchema = z.strictObject({
+    ...z.object(stateShape).partial().shape,
+    locale: z
+      .never({ error: 'A document cannot change language; create the translation instead' })
+      .optional(),
+  })
 
   return {
     name: options.name,
@@ -158,19 +203,17 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
     taxonomies: options.taxonomies ?? [],
     meta,
     access: { ...DEFAULT_ACCESS, ...options.access },
+    stateSchema,
     createSchema,
     updateSchema,
   } satisfies AnyContentType
 }
 
 /**
- * Whether an actor may perform an operation on a document. The single
- * authorization question for content, so the REST route, the tRPC procedure
- * and anything a plugin calls all reach the same answer.
- *
- * It takes capabilities rather than a role, which is what keeps roles from
- * leaking out of capabilities.ts, and it owns the ownership comparison so no
- * caller re-derives it. Omit `resource` for operations that have no row yet.
+ * Whether an actor may perform an operation on a document. It takes
+ * capabilities rather than a role, which is what keeps roles from leaking out
+ * of capabilities.ts, and it owns the ownership comparison so no caller
+ * re-derives it. Omit `resource` for operations that have no row yet.
  */
 export function canPerform(
   type: AnyContentType,
@@ -185,6 +228,54 @@ export function canPerform(
   // A document whose author was deleted is owned by nobody, and an anonymous
   // actor owns nothing — neither may be matched by an "own only" capability.
   return actor.id !== null && resource?.authorId != null && actor.id === resource.authorId
+}
+
+export interface WriteIntent {
+  /** The status the document will carry once the write lands. */
+  readonly nextStatus: ContentStatus
+  /** The status it carries now. Absent means this is a creation. */
+  readonly currentStatus?: ContentStatus
+}
+
+/**
+ * Every operation a write must be authorized for, not only the obvious one.
+ *
+ * The hole this closes: createSchema and updateSchema both accept `published`
+ * and `scheduled`, so a write checked against `create` or `update` alone lets
+ * a contributor put a document on the site by choosing a status. The schema
+ * validated it and `content:publish` was never consulted. Reaching a
+ * publishable state is a publishing decision whichever field carries it.
+ *
+ * Two adjacent cases are deliberately *not* covered, because closing them
+ * needs a capability that does not exist rather than a reinterpretation of one
+ * that does. Leaving a publishable state is ungated, so anyone who may edit a
+ * document may also take it off the site. And editing a document that is
+ * already live is ungated, so a contributor keeps editing their own post after
+ * an editor published it. Both want the equivalent of WordPress's
+ * `edit_published_posts`; neither should be smuggled in here.
+ */
+export function operationsForWrite(intent: WriteIntent): readonly ContentOperation[] {
+  const base: ContentOperation = intent.currentStatus === undefined ? 'create' : 'update'
+  const wasPublishable = intent.currentStatus !== undefined && isPublishable(intent.currentStatus)
+
+  if (isPublishable(intent.nextStatus) && !wasPublishable) return [base, 'publish']
+  return [base]
+}
+
+/**
+ * The single authorization question for a write. Callers ask this rather than
+ * assembling operationsForWrite and canPerform themselves, so that no route
+ * can consult one and forget the other.
+ */
+export function canWrite(
+  type: AnyContentType,
+  intent: WriteIntent,
+  actor: { readonly capabilities: ReadonlySet<Capability>; readonly id: string | null },
+  resource?: { readonly authorId: string | null },
+): boolean {
+  return operationsForWrite(intent).every((operation) =>
+    canPerform(type, operation, actor, resource),
+  )
 }
 
 export interface ContentTypeRegistry {

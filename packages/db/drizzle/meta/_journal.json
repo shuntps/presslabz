@@ -8,6 +8,13 @@
       "when": 1786876186472,
       "tag": "0000_left_stone_men",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786891841857,
+      "tag": "0001_tiny_bedlam",
+      "breakpoints": true
     }
   ]
 }

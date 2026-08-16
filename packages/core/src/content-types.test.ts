@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { capabilitiesFor } from './capabilities.ts'
+import { type Capability, capabilitiesFor } from './capabilities.ts'
 import { BUILTIN_CONTENT_TYPES, pageType, postType } from './content-types.builtin.ts'
 import {
   CONTENT_OPERATIONS,
   canPerform,
+  canWrite,
   createContentTypeRegistry,
   defineContentType,
+  operationsForWrite,
 } from './content-types.ts'
 
 const alice = 'a'
@@ -69,12 +71,25 @@ describe('defineContentType', () => {
     expect(post.success && 'parentId' in post.data).toBe(false)
   })
 
-  it('will not let an update move a document between languages', () => {
-    // Each document is one translation. Changing its locale would silently
-    // change which unique (type, locale, slug) row it collides with.
+  it('refuses a language move by name rather than dropping it', () => {
+    // z.object() strips unknown keys, so this used to be accepted and then
+    // silently ignored — the caller was told the write succeeded when the
+    // part they cared about did not happen.
     const parsed = postType.updateSchema.safeParse({ title: 'Titre', locale: 'en' })
-    expect(parsed.success).toBe(true)
-    expect(parsed.success && 'locale' in parsed.data).toBe(false)
+    expect(parsed.success).toBe(false)
+    expect(parsed.success ? '' : parsed.error.issues[0]?.message).toMatch(/cannot change language/)
+  })
+
+  it('refuses any other key it does not know, instead of ignoring it', () => {
+    const parsed = postType.updateSchema.safeParse({ title: 'Titre', authorId: 'someone-else' })
+    expect(parsed.success).toBe(false)
+    expect(parsed.success ? '' : parsed.error.issues[0]?.message).toMatch(/[Uu]nrecognized key/)
+  })
+
+  it('does not judge a patch as if it were a state', () => {
+    // The patch alone cannot know whether a date already exists on the row,
+    // so the cross-field rule does not belong here. stateSchema decides.
+    expect(postType.updateSchema.safeParse({ status: 'scheduled' }).success).toBe(true)
   })
 
   it('lets an update carry one field alone', () => {
@@ -153,6 +168,141 @@ describe('canPerform', () => {
         operation,
       ).toBe('boolean')
     }
+  })
+})
+
+describe('stateSchema', () => {
+  const state = (overrides: Record<string, unknown> = {}) => ({
+    slug: 'le-futur-du-cms',
+    title: 'Le futur du CMS',
+    meta: {},
+    ...overrides,
+  })
+
+  it('judges the merged state, which is the only thing that knows', () => {
+    // A row already carrying a date, patched to scheduled: valid.
+    const merged = {
+      ...state({ publishedAt: new Date('2026-09-01T09:00:00Z') }),
+      status: 'scheduled',
+    }
+    expect(postType.stateSchema.safeParse(merged).success).toBe(true)
+
+    // The same patch onto a row with no date: not valid.
+    const bare = { ...state(), status: 'scheduled' }
+    expect(postType.stateSchema.safeParse(bare).success).toBe(false)
+  })
+
+  it('holds the same invariant createSchema does', () => {
+    expect(postType.createSchema.safeParse(document({ status: 'scheduled' })).success).toBe(false)
+    expect(postType.stateSchema.safeParse(state({ status: 'scheduled' })).success).toBe(false)
+  })
+})
+
+describe('operationsForWrite', () => {
+  it('asks for publish when a creation lands in a publishable state', () => {
+    expect(operationsForWrite({ nextStatus: 'draft' })).toEqual(['create'])
+    expect(operationsForWrite({ nextStatus: 'published' })).toEqual(['create', 'publish'])
+    // Scheduling is publishing with a delay: nobody presses a button later.
+    expect(operationsForWrite({ nextStatus: 'scheduled' })).toEqual(['create', 'publish'])
+  })
+
+  it('asks for publish when an update moves into a publishable state', () => {
+    expect(operationsForWrite({ currentStatus: 'draft', nextStatus: 'published' })).toEqual([
+      'update',
+      'publish',
+    ])
+    expect(operationsForWrite({ currentStatus: 'draft', nextStatus: 'scheduled' })).toEqual([
+      'update',
+      'publish',
+    ])
+  })
+
+  it('does not ask twice for a document that is already publishable', () => {
+    expect(operationsForWrite({ currentStatus: 'published', nextStatus: 'published' })).toEqual([
+      'update',
+    ])
+    expect(operationsForWrite({ currentStatus: 'scheduled', nextStatus: 'published' })).toEqual([
+      'update',
+    ])
+  })
+
+  it('leaves the ungated cases ungated, on purpose', () => {
+    // Both want an edit_published_posts equivalent that does not exist yet.
+    expect(operationsForWrite({ currentStatus: 'published', nextStatus: 'draft' })).toEqual([
+      'update',
+    ])
+    expect(operationsForWrite({ currentStatus: 'archived', nextStatus: 'draft' })).toEqual([
+      'update',
+    ])
+  })
+})
+
+describe('canWrite', () => {
+  const actor = (role: Parameters<typeof capabilitiesFor>[0], id: string | null = alice) => ({
+    capabilities: capabilitiesFor(role),
+    id,
+  })
+
+  it('stops a contributor publishing by choosing a status', () => {
+    // The whole point: the schema accepts `published`, so if the route only
+    // checked `create` this would have gone straight onto the site.
+    expect(canWrite(postType, { nextStatus: 'draft' }, actor('contributor'))).toBe(true)
+    expect(canWrite(postType, { nextStatus: 'published' }, actor('contributor'))).toBe(false)
+    expect(canWrite(postType, { nextStatus: 'scheduled' }, actor('contributor'))).toBe(false)
+  })
+
+  it('stops a contributor publishing their own draft by editing it', () => {
+    const own = { authorId: alice }
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'draft', nextStatus: 'draft' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(true)
+    expect(
+      canWrite(
+        postType,
+        { currentStatus: 'draft', nextStatus: 'published' },
+        actor('contributor'),
+        own,
+      ),
+    ).toBe(false)
+  })
+
+  it('lets an author publish their own and still not touch another', () => {
+    expect(
+      canWrite(postType, { currentStatus: 'draft', nextStatus: 'published' }, actor('author'), {
+        authorId: alice,
+      }),
+    ).toBe(true)
+    expect(
+      canWrite(postType, { currentStatus: 'draft', nextStatus: 'published' }, actor('author'), {
+        authorId: bob,
+      }),
+    ).toBe(false)
+  })
+
+  it('requires both operations, not either one', () => {
+    // An editor may update anything but cannot publish without the capability.
+    const publisherOnly = {
+      capabilities: new Set<Capability>(['content:publish']),
+      id: alice,
+    }
+    expect(canWrite(postType, { nextStatus: 'published' }, publisherOnly)).toBe(false)
+
+    const creatorOnly = {
+      capabilities: new Set<Capability>(['content:create']),
+      id: alice,
+    }
+    expect(canWrite(postType, { nextStatus: 'published' }, creatorOnly)).toBe(false)
+
+    const both = {
+      capabilities: new Set<Capability>(['content:create', 'content:publish']),
+      id: alice,
+    }
+    expect(canWrite(postType, { nextStatus: 'published' }, both)).toBe(true)
   })
 })
 

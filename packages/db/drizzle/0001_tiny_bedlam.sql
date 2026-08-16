@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "contents_group_locale_uq" ON "contents" USING btree ("translation_group_id","locale");

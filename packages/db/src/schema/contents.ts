@@ -67,6 +67,15 @@ export const contents = pgTable(
   },
   (t) => [
     uniqueIndex('contents_type_locale_slug_uq').on(t.type, t.locale, t.slug),
+    /*
+     * One translation per language per group. The repository also checks this
+     * inside its transaction so the error can say something useful, but the
+     * check alone is not a guarantee: two concurrent inserts of the same new
+     * locale can both read an empty result before either writes. This index
+     * is what actually makes it impossible, and it keeps holding for any code
+     * path written later that forgets to look.
+     */
+    uniqueIndex('contents_group_locale_uq').on(t.translationGroupId, t.locale),
     index('contents_translation_group_idx').on(t.translationGroupId),
     index('contents_listing_idx').on(t.type, t.locale, t.status, t.publishedAt),
     index('contents_meta_gin').using('gin', t.meta),
