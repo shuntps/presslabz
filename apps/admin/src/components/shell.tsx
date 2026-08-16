@@ -66,7 +66,12 @@ export function Shell() {
           <div className="bar-end">
             <LocaleSwitcher />
             <ThemeSwitcher />
-            <button type="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => signOut.mutate()}
+              disabled={signOut.isPending}
+            >
               {t('auth.signOut')}
             </button>
           </div>

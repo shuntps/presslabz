@@ -61,10 +61,22 @@ export function useSignOut() {
   return useMutation({
     mutationFn: () => apiFetch<void>('/auth/logout', { method: 'POST' }),
     onSuccess: () => {
-      // Clear everything, not just the session: any cached data belonged to
-      // the user who just signed out.
-      queryClient.clear()
+      /*
+       * The session goes to null first, and the session entry is then left
+       * alone while everything else is dropped.
+       *
+       * clear() removes the query object the mounted observer is attached to;
+       * a setQueryData after it creates a fresh entry that nothing is
+       * listening to, so the interface kept rendering the signed-in shell
+       * with a signed-out cookie. Order matters, and so does not removing the
+       * one query that is being read at that moment.
+       */
       queryClient.setQueryData(SESSION_QUERY_KEY, null)
+
+      // Anything else in the cache belonged to the user who just left.
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== SESSION_QUERY_KEY[0],
+      })
     },
   })
 }

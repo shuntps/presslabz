@@ -23,7 +23,7 @@ export function ThemeSwitcher() {
   }
 
   return (
-    <fieldset className="switcher">
+    <fieldset className="switcher segmented">
       <legend>{t('theme.label')}</legend>
       {THEME_PREFERENCES.map((option) => (
         <button

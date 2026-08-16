@@ -259,15 +259,66 @@ label > span {
   min-width: 0;
 }
 
+/*
+ * The switchers name themselves. A control showing "Français" beside one
+ * showing Light / Dark / System does not need the words LANGUAGE and THEME
+ * printed next to it, and in a bar that is apparatus those two labels were
+ * most of its width. The text stays for anyone who is not looking at it.
+ */
 .switcher legend,
 .switcher > span {
-  float: left;
-  padding: 0 var(--pl-space-2) 0 0;
-  font-family: var(--pl-font-data);
-  font-size: var(--pl-text-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--pl-color-text-faint);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * One control with three segments, not three controls. A display preference
+ * should not carry the same weight as the actions around it, and three
+ * separate boxes were shouting louder than anything on the page.
+ */
+.switcher.segmented {
+  gap: 0;
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  overflow: hidden;
+}
+
+.switcher.segmented button {
+  border: 0;
+  border-radius: 0;
+  font-weight: 500;
+}
+
+.switcher.segmented button + button {
+  border-left: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.switcher.segmented button:hover:not(:disabled) {
+  background: var(--pl-color-bg);
+}
+
+.switcher.segmented button[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pl-color-accent-hover);
+}
+
+/*
+ * An exit, not an action. It sits in the same bar as a theme toggle and had
+ * exactly the same weight, which said the two were comparable decisions.
+ */
+button.quiet {
+  border-color: transparent;
+  font-weight: 500;
+  color: var(--pl-color-text-muted);
+}
+
+button.quiet:hover:not(:disabled) {
+  border-color: var(--pl-color-border-strong);
+  color: var(--pl-color-text);
 }
 
 .switcher select {

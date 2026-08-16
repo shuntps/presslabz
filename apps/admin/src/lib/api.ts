@@ -20,7 +20,9 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     ...init,
     credentials: 'include',
     headers: {
-      'content-type': 'application/json',
+      // Only when there is one to describe. Announcing a JSON body and then
+      // sending nothing is what made sign-out answer 400.
+      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
       ...init.headers,
     },
   })

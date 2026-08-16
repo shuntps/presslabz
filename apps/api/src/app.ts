@@ -32,10 +32,48 @@ export async function buildApp() {
   const valkey = new Valkey(env.VALKEY_URL, { lazyConnect: true, maxRetriesPerRequest: 2 })
 
   await app.register(helmet, { contentSecurityPolicy: false })
-  // credentials must be allowed: the admin is served from a different origin
-  // in development and authenticates with a cookie.
-  await app.register(cors, { origin: env.ADMIN_ORIGIN, credentials: true })
+  /*
+   * credentials must be allowed: the admin is served from a different origin
+   * in development and authenticates with a cookie.
+   *
+   * The method list is explicit because the default is GET, HEAD and POST —
+   * every PATCH and DELETE this API serves would be refused by the browser
+   * before it left the page, while curl and app.inject() both sail through
+   * because neither performs a preflight. A test asserts the list.
+   */
+  await app.register(cors, {
+    origin: env.ADMIN_ORIGIN,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
   await app.register(cookie)
+
+  /*
+   * A POST or DELETE that carries no body but still says it is JSON is a
+   * normal thing for a client to send, and Fastify answers 400 for it. Sign
+   * out was doing exactly that. Treating an empty body as absent is what a
+   * caller means, and it keeps the failure from reaching anyone who writes a
+   * client against this API later.
+   */
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body: string, done) => {
+      if (body === '') return done(null, undefined)
+      try {
+        done(null, JSON.parse(body))
+      } catch {
+        // Fastify's own parser marks this 400. Handing back a bare SyntaxError
+        // instead makes malformed input from a client look like a server
+        // fault, which is both wrong and the sort of thing that gets paged on.
+        const invalid = Object.assign(new Error('Body is not valid JSON'), {
+          statusCode: 400,
+          code: 'FST_ERR_CTP_INVALID_JSON_BODY',
+        })
+        done(invalid, undefined)
+      }
+    },
+  )
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' })
 
   app.addHook('onRequest', async (request) => {
