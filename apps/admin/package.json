@@ -12,10 +12,12 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@presslabz/blocks": "workspace:*",
     "@presslabz/core": "workspace:*",
     "@presslabz/i18n": "workspace:*",
     "@presslabz/tokens": "workspace:*",
     "@tanstack/react-query": "catalog:",
+    "@tanstack/react-router": "1.170.29",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

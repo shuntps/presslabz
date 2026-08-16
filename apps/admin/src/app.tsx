@@ -1,14 +1,16 @@
+import { RouterProvider } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useLocale } from './lib/i18n.tsx'
 import { useSession } from './lib/session.ts'
 import { syncThemeFromServer } from './lib/theme.tsx'
-import { DashboardPage } from './routes/dashboard.tsx'
+import { router } from './router.tsx'
 import { LoginPage } from './routes/login.tsx'
 
 /**
- * Routing stays deliberately trivial while there are two screens. TanStack
- * Router arrives with the content routes in phase 2, when there is a tree
- * worth describing; introducing it now would be machinery around a boolean.
+ * The session gate sits above the router rather than inside it. Every route
+ * below already has a user, so no route has to remember to guard itself, and
+ * signing out returns here rather than navigating somewhere that then has to
+ * decide what to do about it.
  */
 export function App() {
   const { t, locale, setLocale } = useLocale()
@@ -40,5 +42,5 @@ export function App() {
     )
   }
 
-  return user ? <DashboardPage /> : <LoginPage />
+  return user ? <RouterProvider router={router} /> : <LoginPage />
 }

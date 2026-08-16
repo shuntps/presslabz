@@ -36,6 +36,21 @@ export const fr: Messages = {
   'content.status.archived': 'Archivé',
   'content.status.trash': 'Corbeille',
 
+  'content.type.post.plural': 'Articles',
+  'content.type.page.plural': 'Pages',
+  'content.column.title': 'Titre',
+  'content.column.language': 'Langue',
+  'content.column.updated': 'Modifié',
+  'content.column.status': 'État',
+  'content.count': '{total} au total · {drafts} en brouillon',
+  'content.empty': 'Rien d’écrit pour l’instant. Le premier commence ici.',
+  'content.gap': 'Écart',
+  'content.gapCount': '{count} publiés ici n’ont pas encore de version dans l’autre langue.',
+  'content.untranslated': 'Pas de traduction',
+
+  'nav.dashboard': 'Tableau de bord',
+  'nav.compose': 'Composer',
+
   'error.notFound': 'Introuvable',
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',

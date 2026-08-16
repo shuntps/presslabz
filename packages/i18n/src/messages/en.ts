@@ -38,6 +38,21 @@ export const en = {
   'content.status.archived': 'Archived',
   'content.status.trash': 'Trash',
 
+  'content.type.post.plural': 'Posts',
+  'content.type.page.plural': 'Pages',
+  'content.column.title': 'Title',
+  'content.column.language': 'Language',
+  'content.column.updated': 'Updated',
+  'content.column.status': 'State',
+  'content.count': '{total} total · {drafts} in draft',
+  'content.empty': 'Nothing written yet. The first one starts here.',
+  'content.gap': 'Gap',
+  'content.gapCount': '{count} published here have no version in the other language yet.',
+  'content.untranslated': 'No translation',
+
+  'nav.dashboard': 'Dashboard',
+  'nav.compose': 'Compose',
+
   'error.notFound': 'Not found',
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',
