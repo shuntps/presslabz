@@ -60,5 +60,8 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Build
+        run: pnpm build
+
       - name: Apply migrations
         run: pnpm db:migrate

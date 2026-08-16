@@ -17,6 +17,20 @@ export const en = {
 
   'locale.label': 'Language',
 
+  'auth.signIn': 'Sign in',
+  'auth.signingIn': 'Signing in…',
+  'auth.signOut': 'Sign out',
+  'auth.email': 'Email',
+  'auth.password': 'Password',
+  'auth.invalidCredentials': 'That email and password do not match',
+  'auth.tooManyAttempts': 'Too many attempts. Try again later.',
+
+  'dashboard.title': 'Dashboard',
+  'dashboard.greeting': 'Signed in as {name}',
+  'dashboard.role': 'Role',
+  'dashboard.capabilities': 'Capabilities',
+  'dashboard.empty': 'There is nothing here yet. Content arrives in the next phase.',
+
   'content.status.draft': 'Draft',
   'content.status.scheduled': 'Scheduled',
   'content.status.published': 'Published',

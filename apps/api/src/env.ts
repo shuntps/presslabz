@@ -16,6 +16,8 @@ const schema = z
     API_PORT: z.coerce.number().int().positive().max(65535).default(3000),
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
     VALKEY_URL: z.string().min(1, 'VALKEY_URL is required'),
+    /** Exact origin allowed to send credentialed requests. Never a wildcard. */
+    ADMIN_ORIGIN: z.string().url().default('http://localhost:5173'),
     DEFAULT_LOCALE: z.string().default('en').refine(isLocale),
     SUPPORTED_LOCALES: localeList,
   })

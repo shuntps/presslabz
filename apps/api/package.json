@@ -7,16 +7,22 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch src/index.ts",
     "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "seed": "node --env-file-if-exists=../../.env src/seed.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@fastify/cookie": "catalog:",
     "@fastify/cors": "catalog:",
     "@fastify/helmet": "catalog:",
     "@fastify/rate-limit": "catalog:",
+    "@node-rs/argon2": "catalog:",
+    "@presslabz/core": "workspace:*",
     "@presslabz/db": "workspace:*",
     "@presslabz/i18n": "workspace:*",
+    "@presslabz/tokens": "workspace:*",
     "fastify": "catalog:",
+    "fastify-plugin": "catalog:",
     "iovalkey": "catalog:",
     "zod": "catalog:"
   },

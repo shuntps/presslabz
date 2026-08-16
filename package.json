@@ -21,6 +21,7 @@
     "db:generate": "pnpm --filter @presslabz/db generate",
     "db:migrate": "pnpm --filter @presslabz/db migrate",
     "db:studio": "pnpm --filter @presslabz/db studio",
+    "seed": "pnpm --filter @presslabz/api seed",
     "services:up": "docker compose up -d --wait",
     "services:down": "docker compose down",
     "services:reset": "docker compose down -v && docker compose up -d --wait"

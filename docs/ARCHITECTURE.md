@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phase 0 landed.** The monorepo, local services, database schema, design tokens and i18n foundation exist and are verified end to end. There is no admin interface and no public rendering yet — those are phases 1 and 3. Everything below is settled, not proposed.
+**Phase 1 landed.** You can sign in to the admin, in English or French, in light or dark. Sessions, the capability model and user preferences are verified end to end. There is no content model and no public rendering yet — those are phases 2 and 3. Everything below is settled, not proposed.
 
 PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
 
@@ -111,6 +111,24 @@ A cookie is chosen over `localStorage` because the server can read it at all, be
 
 `THEME_INIT_SCRIPT` is a static string literal. Building it by interpolating the cookie name would be a code-construction sink, which CodeQL correctly flags: harmless while the name is hardcoded, an injection point as soon as it becomes configurable. Tests assert the literal and the constants cannot drift apart.
 
+## Authentication and permissions
+
+**Capabilities are what the system checks. Roles are only named bundles of them.** No code outside `packages/core/src/capabilities.ts` may branch on a role. WordPress lets `current_user_can()` take either, and the two drift; here the type system prevents it.
+
+Capabilities distinguish `:own` from `:any` — a contributor edits their own drafts and nobody else's, which a single `content:update` cannot express. `canActOnResource()` answers the question callers actually have ("may this user edit *this* document") so the ownership comparison is not reimplemented at each call site.
+
+Role bundles are built by composition rather than by an implicit "higher role inherits lower" rule, so each role's additions are visible and revoking one is a one-line change. A test asserts each role is a superset of the previous, so the intended hierarchy cannot silently break.
+
+**Sessions.** The cookie holds a 256-bit random token; the database stores only its SHA-256. Read access to `sessions` therefore does not allow impersonation. SHA-256 rather than Argon2 is deliberate: the token is high-entropy random data, not a human-chosen secret, so there is no brute force to slow down and Argon2 would only add latency to every authenticated request. The cookie is `httpOnly`, `SameSite=Lax`, and `Secure` in production. Sessions last 30 days and are extended on use once less than 15 days remain.
+
+**Passwords** use Argon2id at OWASP's baseline — 19 MiB, two iterations, no parallelism. A test asserts the produced digest actually begins with `$argon2id$` and carries those parameters, rather than trusting the configuration constant or the library default.
+
+**Login always costs the same** whether the account exists, has no password, or the password is wrong, so response timing cannot enumerate registered addresses. That route is rate limited far more tightly than the rest of the API.
+
+The client receives the user's capability list so the interface can hide what they cannot do. That is presentation only — the server enforces every capability independently, and a route guard answers 403 rather than 404, since hiding routes from an authenticated user only makes the admin harder to debug.
+
+Not yet built: passkeys and TOTP. The stack commits to both; they are a phase 1 follow-up rather than something to half-implement.
+
 ## Hook API
 
 Typed through a declaration map, so payload types are known at compile time:
@@ -142,7 +160,8 @@ cp .env.example .env
 pnpm install
 pnpm services:up      # Postgres, Valkey, MinIO — waits until all are healthy
 pnpm db:migrate
-pnpm dev
+pnpm seed             # first administrator, from SEED_ADMIN_* in .env
+pnpm dev              # API on :3000, admin on :5173
 ```
 
 | Command | Purpose |
@@ -151,6 +170,7 @@ pnpm dev
 | `pnpm typecheck` | `tsc --noEmit` across all workspaces |
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
+| `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm db:generate` | Write a migration from the schema diff |
 | `pnpm db:migrate` | Apply pending migrations |
 | `pnpm db:studio` | Browse the database |

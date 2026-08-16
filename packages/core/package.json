@@ -1,15 +1,12 @@
 {
-  "name": "@presslabz/tokens",
+  "name": "@presslabz/core",
   "version": "0.0.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./preferences": "./src/preferences.ts",
-    "./tokens.css": "./src/tokens.css"
+    ".": "./src/index.ts"
   },
-  "//": "Import ./preferences from anything without a DOM — the root entry pulls in document and HTMLElement.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -2,7 +2,7 @@
 
 A modern alternative to WordPress — secure and fast by construction, familiar by design.
 
-> **Status: pre-alpha.** The foundation is in place — database schema, local services, design tokens, i18n — and an API that answers a health check. There is no admin interface and no public site yet, so there is nothing to run a website on.
+> **Status: pre-alpha.** You can sign in to the admin, in English or French, in light or dark mode, with roles and capabilities enforced. There is no content model and no public site yet, so there is still nothing to run a website on.
 
 The full architecture — conventions, data model, hook API, roadmap — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -65,7 +65,8 @@ cp .env.example .env
 pnpm install
 pnpm services:up      # Postgres, Valkey, MinIO
 pnpm db:migrate
-pnpm dev
+pnpm seed             # first administrator, from SEED_ADMIN_* in .env
+pnpm dev              # API on :3000, admin on :5173
 ```
 
 Full command reference in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#commands).

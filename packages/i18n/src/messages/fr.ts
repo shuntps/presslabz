@@ -15,6 +15,20 @@ export const fr: Messages = {
 
   'locale.label': 'Langue',
 
+  'auth.signIn': 'Se connecter',
+  'auth.signingIn': 'Connexion…',
+  'auth.signOut': 'Se déconnecter',
+  'auth.email': 'Courriel',
+  'auth.password': 'Mot de passe',
+  'auth.invalidCredentials': 'Ce courriel et ce mot de passe ne correspondent pas',
+  'auth.tooManyAttempts': 'Trop de tentatives. Réessayez plus tard.',
+
+  'dashboard.title': 'Tableau de bord',
+  'dashboard.greeting': 'Connecté en tant que {name}',
+  'dashboard.role': 'Rôle',
+  'dashboard.capabilities': 'Capacités',
+  'dashboard.empty': 'Rien ici pour l’instant. Le contenu arrive à la phase suivante.',
+
   'content.status.draft': 'Brouillon',
   'content.status.scheduled': 'Planifié',
   'content.status.published': 'Publié',
