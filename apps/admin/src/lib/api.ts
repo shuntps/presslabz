@@ -4,6 +4,12 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /**
+     * The server distinguishes a taken slug from an existing translation and
+     * says which in `reason`. Dropping it here would leave the interface to
+     * guess, or to say "conflict" and let the author work out what kind.
+     */
+    readonly reason?: string,
   ) {
     super(code)
     this.name = 'ApiError'
@@ -33,7 +39,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   if (!response.ok) {
     const code = typeof body?.error === 'string' ? body.error : 'unexpected'
-    throw new ApiError(response.status, code)
+    const reason = typeof body?.reason === 'string' ? body.reason : undefined
+    throw new ApiError(response.status, code, reason)
   }
 
   return body as T

@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { Shell } from './components/shell.tsx'
+import { ContentEditorPage } from './routes/content-editor.tsx'
 import { ContentListPage } from './routes/content-list.tsx'
 import { DashboardPage } from './routes/dashboard.tsx'
 
@@ -29,7 +30,29 @@ const contentListRoute = createRoute({
   component: ContentListPage,
 })
 
-const routeTree = rootRoute.addChildren([dashboardRoute, contentListRoute])
+/*
+ * `new` before `$id`, so the literal wins the match. A document whose id was
+ * the string "new" is impossible — ids are uuids — but relying on that rather
+ * than on order would be relying on the wrong thing.
+ */
+const contentNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/content/$type/new',
+  component: () => <ContentEditorPage mode="new" />,
+})
+
+const contentEditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/content/$type/$id',
+  component: () => <ContentEditorPage mode="edit" />,
+})
+
+const routeTree = rootRoute.addChildren([
+  dashboardRoute,
+  contentListRoute,
+  contentNewRoute,
+  contentEditRoute,
+])
 
 export const router = createRouter({ routeTree })
 

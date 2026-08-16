@@ -1,6 +1,6 @@
 import type { ContentStatus } from '@presslabz/core'
 import { formatDate, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
-import { useParams } from '@tanstack/react-router'
+import { Link, useParams } from '@tanstack/react-router'
 import {
   type ContentSummary,
   groupTranslations,
@@ -40,7 +40,13 @@ function Row({ row, primary }: { row: ContentSummary; primary: boolean }) {
     <div className={primary ? 'row' : 'row secondary'}>
       <span className={markClass(row.status)} aria-hidden="true" />
       <span className="cell-title">
-        <span className="authored">{row.title}</span>
+        <Link
+          to="/content/$type/$id"
+          params={{ type: row.type, id: row.id }}
+          className="authored title-link"
+        >
+          {row.title || t('content.untitled')}
+        </Link>
         <span className="data slug">/{row.slug}</span>
       </span>
       <span className="data">{row.locale}</span>
@@ -107,6 +113,9 @@ export function ContentListPage() {
         <h1 className="page-title">{labelKey ? t(labelKey) : type}</h1>
         <span className="rule" />
         <span className="data count">{t('content.count', { total: rows.length, drafts })}</span>
+        <Link to="/content/$type/new" params={{ type }} className="button-link">
+          {t('content.new')}
+        </Link>
       </div>
 
       {rows.length === 0 ? (

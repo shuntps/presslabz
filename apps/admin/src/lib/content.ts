@@ -1,7 +1,7 @@
 import type { Blocks } from '@presslabz/blocks'
 import type { ContentStatus } from '@presslabz/core'
 import type { Locale } from '@presslabz/i18n'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './api.ts'
 
 export interface ContentSummary {
@@ -89,4 +89,65 @@ export function groupTranslations(
   }
 
   return [...byGroup.values()]
+}
+
+export function useContent(type: string, id: string) {
+  return useQuery({
+    queryKey: ['content', type, 'one', id],
+    queryFn: async () =>
+      (
+        await apiFetch<{ content: ContentSummary }>(
+          `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+        )
+      ).content,
+    // Creating a document mounts this hook with nothing to fetch.
+    enabled: id !== '',
+  })
+}
+
+export interface ContentDraft {
+  locale: Locale
+  slug: string
+  title: string
+  excerpt?: string | undefined
+  status: ContentStatus
+  blocks: Blocks
+  publishedAt?: string | undefined
+  translationGroupId?: string | undefined
+}
+
+/**
+ * One mutation for both cases. Creating and editing differ only in which
+ * request goes out; the screen behind them is the same screen, so it should
+ * not have to know which one it is.
+ */
+export function useSaveContent(type: string, id: string | null) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (draft: ContentDraft) => {
+      if (id === null) {
+        const body = await apiFetch<{ content: ContentSummary }>(
+          `/content/${encodeURIComponent(type)}`,
+          { method: 'POST', body: JSON.stringify(draft) },
+        )
+        return body.content
+      }
+
+      // Locale is refused on update by the server — a document is one
+      // translation — so it is not sent rather than sent and rejected.
+      const { locale: _locale, translationGroupId: _group, ...patch } = draft
+      const body = await apiFetch<{ content: ContentSummary }>(
+        `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: JSON.stringify(patch) },
+      )
+      return body.content
+    },
+    onSuccess: (content) => {
+      queryClient.setQueryData(['content', type, 'one', content.id], content)
+      // The listings are one language each and this document is in one of
+      // them, but a status change moves it between filters, so both go.
+      queryClient.invalidateQueries({ queryKey: ['content', type] })
+    },
+  })
 }

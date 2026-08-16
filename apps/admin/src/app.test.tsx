@@ -1,10 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { App } from './app.tsx'
-import { LocaleProvider } from './lib/i18n.tsx'
-import { ThemeProvider } from './lib/theme.tsx'
+import { fakeApi, findInput, getInput, renderApp, signIn } from './test-utils.tsx'
 
 /*
  * The admin had no behaviour test at all, and the fault that shipped from it
@@ -12,85 +9,6 @@ import { ThemeProvider } from './lib/theme.tsx'
  * stylesheet was fine, while the interface kept rendering the signed-in shell
  * against a signed-out cookie. Nothing but rendering it could have said so.
  */
-
-const user = {
-  id: 'u1',
-  email: 'someone@presslabz.test',
-  displayName: 'Someone',
-  role: 'administrator',
-  locale: 'en',
-  themePreference: 'system',
-  capabilities: ['content:read', 'content:create'],
-}
-
-/** A fake API small enough to read, stateful enough to sign in and out of. */
-function fakeApi() {
-  const state = { signedIn: false, locale: 'en' }
-  const calls: string[] = []
-
-  const json = (body: unknown, status = 200) =>
-    Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'content-type': 'application/json' },
-      }),
-    )
-
-  const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
-    const url = new URL(String(input))
-    const route = `${init.method ?? 'GET'} ${url.pathname}`
-    calls.push(route)
-
-    switch (route) {
-      case 'GET /auth/me':
-        return state.signedIn ? json({ user: { ...user, locale: state.locale } }) : json({}, 401)
-      case 'POST /auth/login':
-        state.signedIn = true
-        return json({ user: { ...user, locale: state.locale } })
-      case 'POST /auth/logout':
-        state.signedIn = false
-        return Promise.resolve(new Response(null, { status: 204 }))
-      case 'PATCH /auth/preferences': {
-        const body = JSON.parse(String(init.body ?? '{}'))
-        if (body.locale) state.locale = body.locale
-        return json(body)
-      }
-      case 'GET /content-types':
-        return state.signedIn
-          ? json({ types: [{ name: 'post', hierarchical: false, taxonomies: [] }] })
-          : json({}, 401)
-      default:
-        if (url.pathname.startsWith('/content/')) return json({ contents: [] })
-        return json({}, 404)
-    }
-  })
-
-  return { state, calls, fetchMock }
-}
-
-/**
- * The login form wraps its input in the label rather than pairing them by id,
- * so a text query matches both the label and the control. Naming the element
- * asks for the one that can be typed into.
- */
-const findInput = (name: RegExp, selector = 'input') => screen.findByLabelText(name, { selector })
-const getInput = (name: RegExp, selector = 'input') => screen.getByLabelText(name, { selector })
-
-function renderApp() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: 0 } },
-  })
-
-  return render(
-    <QueryClientProvider client={client}>
-      <LocaleProvider>
-        <ThemeProvider>
-          <App />
-        </ThemeProvider>
-      </LocaleProvider>
-    </QueryClientProvider>,
-  )
-}
 
 let api: ReturnType<typeof fakeApi>
 
@@ -110,13 +28,6 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
-
-async function signIn() {
-  await userEvent.type(await findInput(/email/i), 'someone@presslabz.test')
-  await userEvent.type(getInput(/password/i), 'passphrase')
-  await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
-  await screen.findByRole('navigation')
-}
 
 describe('session', () => {
   it('shows the sign-in screen when nobody is signed in', async () => {
@@ -147,7 +58,7 @@ describe('session', () => {
       expect(screen.queryByRole('navigation')).toBeNull()
     })
     expect(await findInput(/email/i)).toBeDefined()
-    expect(api.calls).toContain('POST /auth/logout')
+    expect(api.requests.map((r) => r.route)).toContain('POST /auth/logout')
   })
 })
 
@@ -164,7 +75,7 @@ describe('preferences', () => {
     await userEvent.selectOptions(getInput(/language/i, 'select'), 'fr')
 
     await waitFor(() => {
-      expect(api.calls).toContain('PATCH /auth/preferences')
+      expect(api.requests.map((r) => r.route)).toContain('PATCH /auth/preferences')
     })
     await waitFor(() => {
       expect(screen.getByRole('link', { name: /tableau de bord/i })).toBeDefined()

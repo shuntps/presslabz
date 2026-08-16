@@ -782,3 +782,332 @@ button.quiet:hover:not(:disabled) {
   text-transform: uppercase;
   color: var(--pl-color-rubric);
 }
+
+/* ── The editor ─────────────────────────────────────────────────────────── */
+
+/*
+ * Where the typographic rule pays for itself. The draft is the only content
+ * face on the screen and the galley is the only lit surface, so the thing
+ * being written is visibly a different kind of object from everything
+ * arranged around it. The palette and the inspector are not allowed to
+ * compete, because they are not allowed to speak in the same voice.
+ */
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+}
+
+@media (min-width: 64rem) {
+  .editor {
+    grid-template-columns: 9rem minmax(0, 1fr) 15rem;
+    grid-template-areas: "palette galley inspector";
+  }
+
+  .palette {
+    grid-area: palette;
+    border-right: var(--pl-border-width) solid var(--pl-color-border);
+    border-bottom: 0;
+  }
+
+  .galley {
+    grid-area: galley;
+  }
+
+  .inspector {
+    grid-area: inspector;
+    border-left: var(--pl-border-width) solid var(--pl-color-border);
+    border-top: 0;
+  }
+}
+
+.galley {
+  background: var(--pl-color-bg-raised);
+  /* The left gutter is where block controls live, so they never sit on top of
+     the text the way a floating toolbar does. */
+  padding: var(--pl-section) var(--pl-gutter) var(--pl-space-12)
+    calc(var(--pl-gutter) + var(--pl-space-12));
+}
+
+.galley .measure {
+  max-width: var(--pl-measure);
+  margin-inline: auto;
+}
+
+.galley-title {
+  font-size: var(--pl-text-2xl);
+  font-weight: 600;
+  line-height: var(--pl-line-tight);
+  margin-bottom: var(--pl-space-4);
+}
+
+.galley-empty {
+  font-size: var(--pl-text-sm);
+}
+
+/* A textarea that reads as prose: no box, no scrollbar, no resize handle. */
+.growing {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  resize: none;
+  overflow: hidden;
+  min-height: 0;
+  line-height: var(--pl-line-normal);
+}
+
+.growing:focus-visible {
+  outline-offset: 4px;
+}
+
+.blk {
+  position: relative;
+  margin-bottom: var(--pl-space-4);
+}
+
+/* The block's name, in the gutter, on hover or while it is selected. */
+.blk::before {
+  content: attr(data-label);
+  position: absolute;
+  /* Clear of the selection rule, which sits one step out from the text. */
+  right: calc(100% + var(--pl-space-6));
+  top: 0.35rem;
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.blk:hover::before,
+.blk.selected::before {
+  opacity: 1;
+}
+
+.blk.selected::before {
+  color: var(--pl-color-rubric);
+}
+
+.blk.selected::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--pl-space-4) * -1);
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--pl-color-rubric);
+}
+
+.blk-controls {
+  position: absolute;
+  right: calc(100% + var(--pl-space-6));
+  top: 1.5rem;
+  display: grid;
+  gap: 1px;
+  opacity: 0;
+}
+
+.blk:hover .blk-controls,
+.blk:focus-within .blk-controls {
+  opacity: 1;
+}
+
+button.tiny {
+  min-height: 1.35rem;
+  padding: 0 var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+  font-weight: 400;
+}
+
+.blk-h2 {
+  font-size: var(--pl-text-xl);
+  font-weight: 600;
+}
+.blk-h3 {
+  font-size: var(--pl-text-lg);
+  font-weight: 600;
+}
+.blk-h4 {
+  font-size: var(--pl-text-base);
+  font-weight: 600;
+}
+
+.blk-heading {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  gap: var(--pl-space-2);
+  align-items: start;
+}
+
+.blk-level {
+  min-height: 1.6rem;
+  padding: 0 var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+}
+
+.blk-quote {
+  border-left: 2px solid var(--pl-color-rubric);
+  padding-left: var(--pl-space-3);
+}
+
+.blk-quote .growing {
+  font-style: italic;
+  color: var(--pl-color-text-muted);
+}
+
+.blk-attribution,
+.blk-lang {
+  width: auto;
+  min-height: 1.6rem;
+  margin-top: var(--pl-space-1);
+  padding: 0 var(--pl-space-2);
+  font-size: var(--pl-text-xs);
+  background: none;
+  border-color: var(--pl-color-border);
+}
+
+.blk-list {
+  display: grid;
+  gap: var(--pl-space-1);
+  justify-items: start;
+}
+
+.blk-list .growing {
+  border-left: var(--pl-border-width) solid var(--pl-color-border);
+  padding-left: var(--pl-space-3);
+}
+
+.blk-ordered {
+  display: flex;
+  align-items: center;
+  gap: var(--pl-space-2);
+  font-size: var(--pl-text-xs);
+  color: var(--pl-color-text-muted);
+}
+
+.blk-ordered input {
+  width: auto;
+  min-height: 0;
+}
+
+.blk-ordered span {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+}
+
+.blk-code .growing {
+  font-size: var(--pl-text-sm);
+  background: var(--pl-color-bg);
+  padding: var(--pl-space-3);
+  border-radius: var(--pl-radius-sm);
+}
+
+/* ── Apparatus around the galley ────────────────────────────────────────── */
+
+.palette,
+.inspector {
+  background: var(--pl-color-bg-subtle);
+  padding: var(--pl-space-4) var(--pl-gutter);
+}
+
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-1);
+  align-content: start;
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+@media (min-width: 64rem) {
+  .palette {
+    display: grid;
+    justify-items: stretch;
+  }
+}
+
+.palette-item {
+  justify-content: flex-start;
+  font-size: var(--pl-text-sm);
+}
+
+.panel-heading {
+  width: 100%;
+  margin: 0 0 var(--pl-space-2);
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+}
+
+.inspector {
+  display: grid;
+  gap: var(--pl-space-3);
+  align-content: start;
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.inspector .growing,
+.inspector textarea {
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  overflow: auto;
+  resize: vertical;
+}
+
+.inspector-facts {
+  gap: var(--pl-space-1);
+  font-size: var(--pl-text-xs);
+}
+
+.group-id {
+  overflow-wrap: anywhere;
+  color: var(--pl-color-text-faint);
+}
+
+.saved {
+  margin: 0;
+  font-size: var(--pl-text-xs);
+}
+
+/* A link that has to look like the action it performs. */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-accent);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-accent);
+  color: var(--pl-color-accent-text);
+  font-size: var(--pl-text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.button-link:hover {
+  background: var(--pl-color-accent-hover);
+  border-color: var(--pl-color-accent-hover);
+}
+
+.title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.title-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
