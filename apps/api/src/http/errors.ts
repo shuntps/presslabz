@@ -35,9 +35,11 @@ const GENERIC: Record<number, string> = {
 /**
  * The status is preserved, only the body is replaced.
  *
- * Flattening every 5xx to 500 would erase real information: a 503 from a
- * dependency that is down, or from Fastify's own handler timeout, tells a
- * client something true and actionable — try again — which a 500 does not.
+ * Flattening every 5xx to 500 would erase real information: a 503 says the
+ * unavailability is probably temporary, and may carry Retry-After, which a 500
+ * does not say. Whether anything is actually retried stays the client's
+ * decision — it depends on the method, on whether it is idempotent, and on the
+ * client's own policy. The signal is preserved; no safe replay is promised.
  */
 function genericFor(statusCode: number, requestId: string): Failure {
   return { statusCode, error: GENERIC[statusCode] ?? 'internal', requestId }
@@ -107,13 +109,20 @@ export function registerErrorHandling(app: FastifyInstance): void {
  * Fields the logger must never write, whatever a serializer is changed to do
  * later.
  *
- * This is the half that can be guaranteed: they are structured fields we own,
- * and a test asserts their absence. The other half cannot be — an error
- * message is a free-form string from an arbitrary library and may carry a
- * secret anywhere in it. No expression sanitises that, and none is claimed to.
- * Server logs therefore inherit the handling the database gets: restricted
- * access, bounded retention. It is a property of the system, stated, not a
- * defect hidden behind a regular expression.
+ * These are structured fields we own, so their absence is a guarantee and a
+ * test asserts it. An error's own message is a different problem: it is
+ * free-form text from an arbitrary library and may carry a secret anywhere in
+ * it, and no generic expression or filter can be trusted to remove every
+ * secret from arbitrary text without a structured contract to work against.
+ *
+ * That leaves a choice rather than an impossibility. The message could be left
+ * out of the log entirely, or replaced by structured errors and codes, or
+ * written through an allow-list, or have known sensitive values masked, hashed
+ * or encrypted — each of those costs diagnostic detail. This project logs the
+ * whole message, because a third-party failure is usually only explicable in
+ * its own words, and treats the result accordingly: server logs inherit the
+ * handling the database gets, restricted access and bounded retention. The
+ * trade is stated, not hidden behind a regular expression.
  */
 export const REDACTED_LOG_PATHS = [
   'req.headers.cookie',

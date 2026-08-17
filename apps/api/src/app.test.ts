@@ -183,5 +183,70 @@ describe.skipIf(!ready)('app configuration', () => {
 
       expect(response.statusCode).toBe(400)
     })
+
+    /*
+     * The reason the hand-rolled parser had to go, asserted rather than
+     * asserted about. It was built on JSON.parse and accepted these; Fastify's
+     * own parser refuses them, and nothing here replaces it any more.
+     *
+     * Every payload is a raw string on purpose. Written as an object literal,
+     * `__proto__:` sets the prototype instead of creating a property, so
+     * JSON.stringify produces `{}` — measured, that shape is answered 200 and
+     * would have made this test pass while sending nothing at all.
+     */
+    const poisoned: [string, string][] = [
+      ['__proto__ alone', '{"__proto__":{"polluted":"yes"}}'],
+      ['__proto__ beside real fields', '{"email":"a@b.test","__proto__":{"polluted":"yes"}}'],
+      ['__proto__ nested in an object', '{"user":{"__proto__":{"polluted":"yes"}}}'],
+      ['__proto__ with a plain value', '{"__proto__":"polluted"}'],
+      ['constructor carrying a prototype', '{"constructor":{"prototype":{"polluted":"yes"}}}'],
+    ]
+
+    it.each(poisoned)('refuses a body poisoning the prototype: %s', async (_label, payload) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: { 'content-type': 'application/json' },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json().code).toBe('FST_ERR_CTP_INVALID_JSON_BODY')
+    })
+
+    it('leaves Object.prototype untouched after every one of them', async () => {
+      for (const [, payload] of poisoned) {
+        await app.inject({
+          method: 'POST',
+          url: '/auth/logout',
+          headers: { 'content-type': 'application/json' },
+          payload,
+        })
+      }
+
+      // The pollution those payloads are trying to produce, checked on a fresh
+      // object and on the prototype itself rather than on the request's body.
+      const fresh = {} as Record<string, unknown>
+      expect(fresh.polluted).toBeUndefined()
+      expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false)
+      expect({}.constructor).toBe(Object)
+    })
+
+    it('still accepts a constructor key that carries no prototype', async () => {
+      /*
+       * The parser refuses the shape, not the word: `constructor` as ordinary
+       * data is data. Asserted so that "refuse everything suspicious" is not
+       * mistaken for the protection, which would break legitimate bodies while
+       * looking safer.
+       */
+      const response = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: { 'content-type': 'application/json' },
+        payload: '{"constructor":{"name":"not a prototype"}}',
+      })
+
+      expect(response.statusCode).not.toBe(400)
+    })
   })
 })

@@ -76,8 +76,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     logger: {
       level: env.NODE_ENV === 'development' ? 'info' : 'warn',
       // Guaranteed for the structured fields we own. An error's own message is
-      // free-form text from an arbitrary library and cannot be sanitised by
-      // any expression — see the note in http/errors.ts.
+      // free-form text from an arbitrary library, which no generic filter can
+      // be trusted to clear of secrets; it is logged whole on purpose, and the
+      // logs are handled accordingly — see the note in http/errors.ts.
       redact: REDACTED_LOG_PATHS,
     },
     /*

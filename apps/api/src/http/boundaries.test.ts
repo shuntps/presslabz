@@ -189,8 +189,8 @@ describe('the application timeout, and why it is off by default', () => {
      * Measured, and the whole reason the default is off: Fastify's handler
      * timeout is cooperative. It answers 503 and aborts request.signal, but
      * nothing in this codebase observes that signal, so the handler carries on
-     * and its write lands anyway — the client is told to retry an operation
-     * that in fact succeeded.
+     * and its write lands anyway — the client is told the service is
+     * unavailable for an operation that in fact completed.
      *
      * The value is still accepted from an operator: this is a trade-off to
      * make, not a setting to forbid. What must not happen is claiming it

@@ -185,10 +185,11 @@ describe('a 4xx is left alone', () => {
 describe('what the log must never contain', () => {
   it('keeps cookies, authorization and the body out of it', async () => {
     /*
-     * Guaranteed for the structured fields we own. An error's own message is
-     * free-form text from an arbitrary library and cannot be sanitised by any
-     * expression — that half is documented as a property of the system, not
-     * claimed as a guarantee.
+     * Guaranteed for the structured fields we own, which is what this asserts.
+     * An error's own message is free-form text from an arbitrary library, and
+     * no generic filter can be trusted to clear arbitrary text of secrets
+     * without a structured contract — so keeping the whole message is a stated
+     * decision with a stated cost, not a guarantee this suite can make.
      */
     const instance = await serve()
     await instance.inject({
