@@ -3,6 +3,7 @@ import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
+import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
 
 /*
  * These drive the real routes against a real database, because the thing being
@@ -29,6 +30,7 @@ const uniqueSlug = (name: string) => `rt-${name}-${Math.floor(Math.random() * 1e
 
 describe.skipIf(!ready)('content routes', () => {
   let scratch: Awaited<ReturnType<typeof createScratchDatabase>>
+  let namespace: string
   let app: FastifyInstance
   let handle: ReturnType<typeof createDb>
   let db: Database
@@ -51,6 +53,7 @@ describe.skipIf(!ready)('content routes', () => {
 
   beforeAll(async () => {
     scratch = await createScratchDatabase('content-routes')
+    namespace = testRateLimitNamespace('content-routes')
 
     // env.ts throws at import time when the environment is incomplete, so the
     // app is imported only once the suite knows it can run.
@@ -60,7 +63,7 @@ describe.skipIf(!ready)('content routes', () => {
     ])
     cookieName = SESSION_COOKIE
 
-    app = await buildApp({ databaseUrl: scratch.url })
+    app = await buildApp({ databaseUrl: scratch.url, rateLimitNamespace: namespace })
     await app.ready()
 
     handle = createDb(scratch.url, { maxConnections: 5 })
@@ -80,6 +83,8 @@ describe.skipIf(!ready)('content routes', () => {
     await handle.close()
     await app.close()
     await scratch.drop()
+    // The scratch database goes with a DROP; Valkey keys do not.
+    await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
   })
 
   async function post(role: string, body: Record<string, unknown>) {

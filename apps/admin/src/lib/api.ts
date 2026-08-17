@@ -1,18 +1,40 @@
-const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3000'
+/**
+ * Where the API is, as the installation configured it.
+ *
+ * An empty value is a missing value, not a request for same-origin calls: an
+ * operator who writes `VITE_API_URL=` in .env means "I have not set this yet",
+ * and resolving to relative paths would send every request to the admin's own
+ * server — the dev server, in development — where it would be answered by the
+ * page shell rather than by the API.
+ *
+ * The default is the canonical local configuration. It must match the host in
+ * the browser's address bar; see vite-env.d.ts and .env.example for why the
+ * two cannot be mixed.
+ */
+const API_URL = import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3000'
 
 export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    /**
-     * The server distinguishes a taken slug from an existing translation and
-     * says which in `reason`. Dropping it here would leave the interface to
-     * guess, or to say "conflict" and let the author work out what kind.
-     */
-    readonly reason?: string,
-  ) {
+  readonly status: number
+  readonly code: string
+  /**
+   * The server distinguishes a taken slug from an existing translation and
+   * says which in `reason`. Dropping it here would leave the interface to
+   * guess, or to say "conflict" and let the author work out what kind.
+   */
+  readonly reason: string | undefined
+
+  /**
+   * Assigned in the body rather than declared as constructor parameter
+   * properties. Vite compiles this app and would accept them, but the rule is
+   * one rule: they are the syntax Node refuses to strip, and code that moves
+   * into a shared package should not have to be rewritten to make the move.
+   */
+  constructor(status: number, code: string, reason?: string) {
     super(code)
     this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.reason = reason
   }
 }
 

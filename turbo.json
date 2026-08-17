@@ -17,6 +17,11 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      // Strict mode is the default: a variable missing from this list is
+      // filtered out of the task's environment and takes no part in the cache
+      // key. A suite would then quietly test the schema defaults while the
+      // installation runs on something else, and the cache would hand back a
+      // result computed under a different configuration.
       "env": [
         "CI",
         "DATABASE_URL",
@@ -27,7 +32,21 @@
         "S3_ACCESS_KEY_ID",
         "S3_SECRET_ACCESS_KEY",
         "MEDIA_BASE_URL",
-        "ADMIN_ORIGIN"
+        "ADMIN_ORIGIN",
+        "DEFAULT_LOCALE",
+        "SUPPORTED_LOCALES",
+        "API_HOST",
+        "API_PORT",
+        "CLIENT_IP_SOURCE",
+        "TRUSTED_PROXIES",
+        "CLIENT_IP_HEADER",
+        "IPV6_RATE_LIMIT_PREFIX",
+        "RATE_LIMIT_NAMESPACE",
+        "HTTP_SOCKET_IDLE_TIMEOUT_MS",
+        "HTTP_HEADERS_TIMEOUT_MS",
+        "HTTP_REQUEST_TIMEOUT_MS",
+        "HTTP_HANDLER_TIMEOUT_MS",
+        "HEALTH_CHECK_TIMEOUT_MS"
       ]
     }
   }

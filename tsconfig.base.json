@@ -18,6 +18,11 @@
     // imports carry their .ts extension exactly as written.
     "allowImportingTsExtensions": true,
     "noEmit": true,
+    // The other half of that: the type checker refuses the syntax Node cannot
+    // strip — parameter properties, enums, namespaces — instead of accepting
+    // what would then fail to load at boot. The runtime check in
+    // apps/api/scripts is what proves the graph itself loads.
+    "erasableSyntaxOnly": true,
 
     "skipLibCheck": true,
     "esModuleInterop": true,

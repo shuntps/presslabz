@@ -20,6 +20,7 @@ import type { FastifyInstance } from 'fastify'
 import sharp from 'sharp'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
+import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
 
 /*
  * Against the real MinIO, because what is being asserted is that bytes a
@@ -63,6 +64,7 @@ async function multipart(body: Buffer, filename: string, type: string) {
 
 describe.skipIf(!ready)('media routes', () => {
   let scratch: Awaited<ReturnType<typeof createScratchDatabase>>
+  let namespace: string
   let app: FastifyInstance
   let handle: ReturnType<typeof createDb>
   let db: Database
@@ -95,6 +97,7 @@ describe.skipIf(!ready)('media routes', () => {
 
   beforeAll(async () => {
     scratch = await createScratchDatabase('media-routes')
+    namespace = testRateLimitNamespace('media-routes')
 
     const [{ buildApp }, { SESSION_COOKIE }, storageModule] = await Promise.all([
       import('../app.ts'),
@@ -104,7 +107,7 @@ describe.skipIf(!ready)('media routes', () => {
     cookieName = SESSION_COOKIE
     storage = storageModule
 
-    app = await buildApp({ databaseUrl: scratch.url })
+    app = await buildApp({ databaseUrl: scratch.url, rateLimitNamespace: namespace })
     await app.ready()
 
     handle = createDb(scratch.url, { maxConnections: 5 })
@@ -135,6 +138,8 @@ describe.skipIf(!ready)('media routes', () => {
     await handle.close()
     await app.close()
     await scratch.drop()
+    // The scratch database goes with a DROP; Valkey keys do not.
+    await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
   })
 
   async function upload(body: Buffer, filename: string, type: string, role = 'administrator') {
