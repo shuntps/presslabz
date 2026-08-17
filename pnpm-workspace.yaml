@@ -33,6 +33,12 @@ catalog:
   '@fastify/cookie': 11.1.2
   '@fastify/helmet': 13.1.0
   '@fastify/rate-limit': 11.2.0
+  # The library Fastify itself resolves trustProxy with. Declared directly
+  # because the header mode has to answer "is this peer a declared proxy?"
+  # about the socket address, which is a different question from the one
+  # trustProxy answers — and reimplementing CIDR matching for IPv6 to ask it
+  # would be a second, worse copy of this.
+  '@fastify/proxy-addr': 5.1.0
 
   # Auth
   '@node-rs/argon2': 2.1.0

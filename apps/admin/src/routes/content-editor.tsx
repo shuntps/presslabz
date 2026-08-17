@@ -3,15 +3,10 @@ import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
 import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
-import {
-  BLOCK_LABELS,
-  BlockEditor,
-  CREATABLE_BLOCKS,
-  emptyBlock,
-  imageBlock,
-} from '../components/block-editor.tsx'
+import { BlockEditor } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
+import { BLOCK_LABELS, CREATABLE_BLOCKS, emptyBlock, imageBlock } from '../lib/blocks.ts'
 import {
   type ContentSummary,
   useContent,

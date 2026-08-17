@@ -16,6 +16,8 @@ PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It d
 
 **One definition per concept.** Before writing a type, schema, constant, or helper, check whether a `packages/*` workspace already exports it. When something is needed by two apps, move it into a package rather than copying it. A Zod schema is declared once and drives the API contract, the TS types, and the admin forms; domain logic lives in `packages/core`, never in a route handler or a React component. Treat a duplicated definition as a defect, not a style preference — but extract on the second real use, not in anticipation of one.
 
+**A module that exports a React component exports nothing else.** This is a project convention, deliberately stricter than the plugin's rule: `@vitejs/plugin-react` tolerates some simple constant exports and invalidates the module when an incompatible export changes. What was observed is the second half of that — `BLOCK_LABELS`, `CREATABLE_BLOCKS` and the two block constructors sat beside `BlockEditor`, and every edit answered `Could not Fast Refresh ("BLOCK_LABELS" export is incompatible)` and reloaded the page. An object, an array or a function is rebuilt on each evaluation, so it cannot be matched against the previous one; a reload in an editor costs the draft being typed. The convention avoids having to reason about which exports are comparable while writing UI. Block metadata and constructors live in `lib/blocks.ts`, and anything similar belongs beside them rather than next to a component.
+
 ## Architecture principles
 
 These four rules are the point of the project. Designs that violate them should be rejected in review.
@@ -203,6 +205,46 @@ None of this is protection. Every operation is authorized on the server, indepen
 
 Not yet built: passkeys and TOTP. The stack commits to both; they are a phase 1 follow-up rather than something to half-implement.
 
+## The HTTP boundary
+
+**One name, end to end.** The admin sends its requests with the session cookie, so the API names the origins allowed to make them — `ADMIN_ORIGIN`, an exact list, never a wildcard and never a reflected value. CORS compares scheme, host and port, which makes `http://localhost:5173` and `http://127.0.0.1:5173` two different origins for one machine. Reproduced in a browser: the admin open on the second while the API allowed the first, and the answer to `GET /auth/me` was blocked before the page could read it — so `apiFetch` saw a network failure instead of a 401, `useSession` could not turn that into "signed out", and the interface showed a breakage where the sign-in form belonged.
+
+Allowing both origins is not the fix, and would not work: the session cookie is `SameSite=Lax`, and `localhost` and `127.0.0.1` are different sites, so a fetch from one to the other would not carry it even with CORS satisfied. An installation picks a name and uses it in the browser, in `ADMIN_ORIGIN` and in `VITE_API_URL`. Both coherent local configurations are supported through configuration alone — localhost is the default, `127.0.0.1` needs no code change — and `.env.example` states the two side by side.
+
+`VITE_API_URL` is where the admin sends its requests, and it lives in the same root `.env` as everything else: `vite.config.ts` sets `envDir` to the monorepo root, because Vite otherwise reads `apps/admin/.env`, a file nobody creates. Before that, setting it at the root did nothing at all — in development and in the build alike — and the admin silently kept its compiled-in default. Only `VITE_`-prefixed variables are exposed to the client, which is why the database and S3 credentials in that file cannot leak into a bundle; a test asserts that on the built artifact.
+
+**It is substituted into the bundle at build time, not read at runtime.** It is configurable per environment and per build — development reads it from the file, a build takes whatever the environment or the file holds at that moment — but once a bundle or an image exists, its API URL is fixed. Pointing a built artifact somewhere else means building it again. Runtime configuration for the client is not built and is not implied.
+
+**A build decides its own `NODE_ENV`.** That variable belongs to the process that loads the shared file as its environment, which is the API; the admin only takes `VITE_` values from it. Vite reads `NODE_ENV` out of env files too, though, so the production build inherited `development` and shipped React's development build — 271 modules and 643.01 kB (190.22 kB gzip) against 265 and 405.86 kB (124.31 kB gzip), with an exit code of 0 either way. It cannot be corrected inside `vite.config.ts`: Vite decides whether the process already has a `NODE_ENV` before it loads the config file, so anything the config sets is too late and the file still wins — measured. `apps/admin/scripts/build.ts` sets it before Vite starts, with `??=` so an explicit value from CI or a container still decides, and a test builds through that same script and reads the artifact.
+
+**Nothing about the inside of the system crosses it.** Fastify's default error handler forwards `error.message` verbatim for every status, 500 included — its own documentation says so and warns about it. Against an unreachable database this API answered an unauthenticated caller with the failing SQL, the full column list of `users` including `password_hash`, and the email address that caller had just submitted, echoed back under `params`. A 5xx now carries a status, a stable code and a correlation id, and nothing else. The status is preserved rather than flattened to 500, because a 503 tells a client to try again and a 500 does not. Every 4xx keeps Fastify's own shape: those describe the request, not us.
+
+**Logging splits into what can be guaranteed and what cannot.** Cookies, `authorization`, `set-cookie` and request bodies are redacted — structured fields we own, with a test asserting their absence. An error's own message is free-form text from an arbitrary library and may carry a secret anywhere in it; no expression sanitises that, and none is claimed to. Server logs therefore inherit the handling the database gets: restricted access, bounded retention. That is a property of the system, stated, not a defect hidden behind a regular expression.
+
+**Who the client is, is configuration, not a guess.** `trustProxy: true` meant a client reaching the API directly could set `X-Forwarded-For` and take a fresh rate-limit allowance with every value — measured: ten login attempts per forged address, with no limit on addresses. It is replaced by `CLIENT_IP_SOURCE`, which is `socket` (believe nothing), `forwarded` (walk `X-Forwarded-For` against an explicit `TRUSTED_PROXIES` list) or `header` (read a named header, but only from a declared proxy). There is no boolean and no hop count: a hop count is forgeable the moment a topology has paths of different lengths. Every option supplied is applied or refuses to start — an option quietly ignored is the failure this exists to prevent.
+
+The `forwarded` walk goes right to left, skipping trusted entries and stopping at the first that is not, which is why no hop count is needed, why a missing hop is harmless, and why a prefix the client forged is never reached. Addresses and CIDR ranges are both accepted, which is Fastify's own contract, and a subnet dedicated to load balancers is exactly what a range is for. The rule is not "no ranges" but "nothing untrusted inside one": a shared container network declared here trusts every container in it to name a visitor. Addresses are normalised before any comparison, so an IPv4-mapped form is one client and not two.
+
+**What the walk returns is then validated, because the walk answers a different question.** It decides which entry of the chain is the client; it never decides whether that entry is an address, and Fastify's documentation says plainly that `request.ip` and `request.ips` are metadata to validate strictly before any security decision. Measured: a trusted peer sending `X-Forwarded-For: garbage` was answered 200, the client identity was the string `garbage`, and `evil-a` and `evil-b` were two rate-limit buckets — an unlimited supply of allowances, from behind the proxy this time rather than in front of it. Both modes now require exactly one valid IPv4 or IPv6 address, normalised, and answer 400 with the stable reason `invalid_forwarded_address` otherwise. A header the proxy sent more than once is refused rather than resolved to its first entry: two claims are not an identity, and picking one would pick the one an attacker upstream is likeliest to control.
+
+**A declared proxy that names no client is refused too**, with `missing_forwarded_address` — no header, an empty one, or a chain naming none but proxies. The walk then ends on the proxy's own address, and taking it would hand every visitor behind that proxy one identity and one quota with nothing on the surface to say so. There is no exception for `/health`: a deployment's own probe satisfies the contract of the mode it configured, or the mode is not configured. It is also the second reason a declared range must contain proxies and nothing else: a range wide enough to contain visitors would refuse those visitors here, on top of trusting whatever else lives in it. A peer that is *not* a declared proxy is untouched by all of this: it keeps its socket address, header or no header, because that address is the one thing it cannot choose.
+
+`request.clientIp` is that answer, computed once, before the rate limiter's hook. The limiter's **key** is derived from it through the plugin's `normalizeIP`, which groups IPv6 by prefix — handing it the full address would give a client with a `/64` an endless supply of buckets.
+
+**Rate-limit counters live in Valkey.** In memory the quota is per process, so behind a load balancer every instance grants the full allowance and a limit of ten becomes ten per instance. The plugin's built-in `redis` option is documented as requiring `ioredis`; this project runs `iovalkey`, so it uses the public `store` extension point and brings its own adapter — the Lua, the atomicity and the failure behaviour are ours to prove rather than inherited from an unmaintained compatibility. The client is separate from the health one and configured to fail in milliseconds: with iovalkey's defaults a command against an unreachable server took ten to forty seconds to give up, which would have made "fail open" an outage.
+
+The plugin constructs the store itself, so its dependencies are bound into the class it is handed rather than read from a module-level handle. That handle was "last configuration wins": two applications built at once in one process — a test suite, a future embedded runner — shared whichever finished configuring last, and measured, one application's counters landed under the other's namespace against the other's client, silently. Binding removes the shared slot instead of narrowing the window.
+
+When the store is unreachable the global limit **fails open** — it is a courtesy against accidental hammering, and losing the count beats refusing everything — while `/auth/login` **fails closed** with a generic 503. There the count *is* the protection, and opening it during a store failure hands an attacker the window they would arrange on purpose. Existing sessions live in Postgres, so what stops is signing in, not being signed in. There is no per-process fallback: a silent local quota would look like protection and not be one. Failures are logged on transition — one line when it breaks, one when it recovers with the count of what was hidden between — because the plugin swallows the error and a line per request would write one per request for the whole outage. Both lines are `warn`: the API runs at `warn` outside development, so a recovery at `info` would be invisible where it matters. The generic 5xx handler does not log that error a second time: the route that fails closed raises it once per attempt, and measured, twenty-five login attempts during one outage wrote one transition line and twenty-five stacks of the same failure. It is the one error class exempt from that log, because its own is bounded and complete; every other 5xx is still logged in full.
+
+**Four timeouts, because they are four different things.** Socket inactivity (`connectionTimeout`), receiving the headers (`headersTimeout`), receiving the whole request (`requestTimeout`), and the route lifecycle (`handlerTimeout`). Measured on Node 24: incomplete headers and silent connections are answered 408 by `requestTimeout`, a socket that stops mid-body is closed by inactivity, and a body that keeps arriving is reaped by neither — bounded only by `bodyLimit`. **A minimum transfer rate has to be imposed at the proxy where one exists**; that observation is version-specific and should be re-checked rather than copied. `connectionsCheckingInterval` is fixed internally at 5s and not exposed: Node enforces `requestTimeout` on a sweep, and at the 30s default a timeout of a few seconds is applied up to half a minute late.
+
+`handlerTimeout` is **0 — off — by default**, and is the one timeout allowed to be zero. Fastify's is cooperative: it sends 503 and aborts `request.signal`, but the handler keeps running until something observes that signal, and nothing in this codebase does. Measured: a handler that ignores the signal receives its 503 and still completes its write. Turning it on before cancellation is wired would mean answering 503 while the database write it was meant to stop landed anyway, and the client retried. Wiring `request.signal` through to Drizzle and to the image pipeline is named work, not a solved problem.
+
+**`/health` answers for every dependency, including the limiter's store.** A degraded store used to be a line inside a body that still said `status: ok` behind a 200 — a health check reporting health while `/auth/login` refused everyone, telling a load balancer to keep sending traffic to an instance that could not authenticate anybody. Database, cache or store: any one of them degraded makes the whole report `degraded` and the response 503. `up` means every dependency answered, not that everything is perfect.
+
+**`/health` is bounded and does not accumulate.** Each dependency is probed under `HEALTH_CHECK_TIMEOUT_MS`, and at most one probe per dependency runs at a time: concurrent callers await the one already running instead of starting another, or a liveness check calling every few seconds against a wedged database would stack a query per call and exhaust the pool. The slot is released when the operation finally settles, so a later probe genuinely observes recovery. This bounds the **response**, not the work — the query that lost the race runs to completion inside the database. Postgres.js can cancel a query, but its own documentation warns that cancellation opens a new connection, is not guaranteed, and can race into cancelling a different one, so it is not used. `/health` stays subject to the rate limiter: it reaches two dependencies, and leaving it unmetered would be an unlimited way to make the API work.
+
 ## Hook API
 
 Typed through a declaration map, so payload types are known at compile time:
@@ -227,7 +269,7 @@ i18n and theming are load-bearing in phases 0 and 1 rather than polish at the en
 
 ## Commands
 
-Requires Node 24+, pnpm 11+ and Docker. First run:
+Requires Node 24.12+, pnpm 11+ and Docker. First run:
 
 ```sh
 cp .env.example .env
@@ -244,6 +286,7 @@ pnpm dev              # API on :3000, admin on :5173
 | `pnpm typecheck` | `tsc --noEmit` across all workspaces |
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
+| `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm db:generate` | Write a migration from the schema diff |
 | `pnpm db:migrate` | Apply pending migrations |
@@ -257,6 +300,29 @@ pnpm --filter @presslabz/i18n exec vitest run src/index.test.ts
 pnpm --filter @presslabz/i18n exec vitest run -t 'honours quality values'
 ```
 
-There is no build step in development: Node 24 strips types at runtime, so
+There is no build step in development: Node strips types at runtime, so
 `node src/index.ts` runs TypeScript directly. That is also why every import
 carries its `.ts` extension and every `tsconfig.json` sets `noEmit`.
+
+**The declared minimum is Node 24.12 because of that, not by habit.** Type
+stripping only became stable in 24.12.0 — it was enabled by default from 23.6
+and stopped warning in 24.3, but the project runs its server on it, so the
+floor is where the feature is stable rather than where it first worked. The
+same floor covers `import.meta.main`, added in 24.2.0, which is what lets
+`index.ts` be loaded without starting a server; it is not deprecated, but the
+documentation still classes it as stability 1.0, so it is worth re-checking
+rather than assuming.
+
+Stripping is not compiling, and Node refuses the TypeScript that would need
+real emit — parameter properties, enums, namespaces. Nothing else in the
+pipeline sees that: `tsc --noEmit` accepts them because it never emits, Vitest
+accepts them because it transpiles through esbuild, and the build accepts them
+too. A parameter property reached `main` that way once and failed at boot with
+`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Two things close it, and both run in CI:
+`erasableSyntaxOnly` in `tsconfig.base.json`, which makes the type checker
+refuse the syntax everywhere, and `pnpm --filter @presslabz/api check:native`,
+which loads the server's real module graph through Node's own loader. The load
+starts nothing — the listen in `index.ts` is behind `import.meta.main` — and
+touches no data. `node --check` is not an alternative: measured, it exits 0 on
+a file with a parameter property, and it reads one file rather than following
+its imports.

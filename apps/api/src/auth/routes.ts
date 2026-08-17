@@ -45,9 +45,18 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
   app.post(
     '/auth/login',
     {
-      // Far stricter than the global limit: this is the one route where
-      // guessing is the attack.
-      config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+      /*
+       * Far stricter than the global limit: this is the one route where
+       * guessing is the attack.
+       *
+       * And the one route that refuses rather than degrades. The global limit
+       * keeps serving when the store is unreachable, because losing a courtesy
+       * count beats an outage. Here the count *is* the protection: opening it
+       * during a store failure hands an attacker the window they would create
+       * on purpose if they could. Existing sessions live in Postgres and keep
+       * working, so what stops is signing in, not being signed in.
+       */
+      config: { rateLimit: { max: 10, timeWindow: '15 minutes', skipOnError: false } },
     },
     async (request, reply) => {
       const parsed = loginBody.safeParse(request.body)

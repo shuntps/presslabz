@@ -1,7 +1,7 @@
-import type { Block, Blocks, BlockType, InlineContent } from '@presslabz/blocks'
+import type { Block, Blocks } from '@presslabz/blocks'
 import { inlineToPlainText } from '@presslabz/blocks'
-import type { MessageKey } from '@presslabz/i18n'
 import { useState } from 'react'
+import { BLOCK_LABELS, inlineText } from '../lib/blocks.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import { useMediaLibrary } from '../lib/media.ts'
 import { MediaPicker } from './media-picker.tsx'
@@ -18,55 +18,6 @@ import { MediaPicker } from './media-picker.tsx'
  * would be the wrong order. The consequence to know about is that editing a
  * block whose text came from elsewhere and carried marks would drop them.
  */
-
-export const BLOCK_LABELS: Record<BlockType, MessageKey> = {
-  paragraph: 'block.paragraph',
-  heading: 'block.heading',
-  quote: 'block.quote',
-  list: 'block.list',
-  code: 'block.code',
-  image: 'block.image',
-  divider: 'block.divider',
-}
-
-/**
- * What the palette offers. Image is here but handled apart from the rest: a
- * block that must name a media id cannot be created empty, so the palette
- * opens the picker and the block arrives already pointing at something.
- */
-export const CREATABLE_BLOCKS = [
-  'paragraph',
-  'heading',
-  'quote',
-  'list',
-  'code',
-  'divider',
-] as const satisfies readonly BlockType[]
-
-export function imageBlock(mediaId: string): Block {
-  return { id: crypto.randomUUID(), type: 'image', mediaId }
-}
-
-const text = (value: string): InlineContent => (value === '' ? [] : [{ type: 'text', text: value }])
-
-export function emptyBlock(type: (typeof CREATABLE_BLOCKS)[number]): Block {
-  const id = crypto.randomUUID()
-
-  switch (type) {
-    case 'paragraph':
-      return { id, type, content: [] }
-    case 'heading':
-      return { id, type, level: 2, content: [] }
-    case 'quote':
-      return { id, type, content: [] }
-    case 'list':
-      return { id, type, ordered: false, items: [[]] }
-    case 'code':
-      return { id, type, code: '' }
-    case 'divider':
-      return { id, type }
-  }
-}
 
 interface BlockEditorProps {
   blocks: Blocks
@@ -168,7 +119,7 @@ function BlockBody({
           value={inlineToPlainText(block.content)}
           placeholder={t('block.paragraph')}
           onFocus={onFocus}
-          onChange={(value) => onChange({ ...block, content: text(value) })}
+          onChange={(value) => onChange({ ...block, content: inlineText(value) })}
         />
       )
 
@@ -195,7 +146,7 @@ function BlockBody({
             value={inlineToPlainText(block.content)}
             placeholder={t('block.heading')}
             onFocus={onFocus}
-            onChange={(value) => onChange({ ...block, content: text(value) })}
+            onChange={(value) => onChange({ ...block, content: inlineText(value) })}
           />
         </div>
       )
@@ -208,7 +159,7 @@ function BlockBody({
             value={inlineToPlainText(block.content)}
             placeholder={t('block.quote')}
             onFocus={onFocus}
-            onChange={(value) => onChange({ ...block, content: text(value) })}
+            onChange={(value) => onChange({ ...block, content: inlineText(value) })}
           />
           <input
             className="data blk-attribution"
@@ -249,7 +200,7 @@ function BlockBody({
               onFocus={onFocus}
               onChange={(value) => {
                 const items = [...block.items]
-                items[index] = text(value)
+                items[index] = inlineText(value)
                 onChange({ ...block, items })
               }}
             />
@@ -367,7 +318,10 @@ function ImageBlockBody({
           placeholder={t('editor.attribution')}
           onFocus={onFocus}
           onChange={(value) =>
-            onChange({ ...block, ...(value === '' ? { caption: [] } : { caption: text(value) }) })
+            onChange({
+              ...block,
+              ...(value === '' ? { caption: [] } : { caption: inlineText(value) }),
+            })
           }
         />
 

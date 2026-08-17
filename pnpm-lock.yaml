@@ -24,6 +24,9 @@ catalogs:
     '@fastify/multipart':
       specifier: 10.1.1
       version: 10.1.1
+    '@fastify/proxy-addr':
+      specifier: 5.1.0
+      version: 5.1.0
     '@fastify/rate-limit':
       specifier: 11.2.0
       version: 11.2.0
@@ -198,6 +201,9 @@ importers:
       '@fastify/multipart':
         specifier: 'catalog:'
         version: 10.1.1
+      '@fastify/proxy-addr':
+        specifier: 'catalog:'
+        version: 5.1.0
       '@fastify/rate-limit':
         specifier: 'catalog:'
         version: 11.2.0

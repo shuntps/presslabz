@@ -78,6 +78,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The type checker never emits and Vitest transpiles through esbuild, so
+      # neither sees the syntax Node refuses to strip. This loads the server's
+      # real module graph through Node's own loader — no server started, no
+      # data touched — which is the only place that divergence shows up.
+      - name: Load the server under Node's TypeScript runtime
+        run: pnpm --filter @presslabz/api check:native
+
       # Before the tests, not after: the repository suite runs against the
       # real database, because the guarantees worth asserting there are
       # properties of a transaction and do not survive a fake.

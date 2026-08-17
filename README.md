@@ -58,7 +58,7 @@ Deployment targets self-hosted single-site installations on Node and Docker.
 
 ## Development
 
-Requires Node 24+, pnpm 11+ and Docker.
+Requires Node 24.12+, pnpm 11+ and Docker.
 
 ```sh
 cp .env.example .env
