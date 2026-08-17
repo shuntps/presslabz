@@ -17,7 +17,7 @@ import { createProbe } from './health/probe.ts'
 import { summarizeHealth } from './health/status.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
-import { REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
+import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
 import { mediaRoutes } from './media/routes.ts'
 import { ensureBucket } from './media/storage.ts'
 import { createValkeyStore, StoreHealth } from './rate-limit/valkey-store.ts'
@@ -199,6 +199,17 @@ export async function buildApp(options: BuildAppOptions = {}) {
      * auth/routes.ts, where guessing is the attack.
      */
     skipOnError: true,
+    /*
+     * The plugin's own 429 error carries no code, so the error handler cannot
+     * tell it from a dependency that happens to throw a 4xx — and unrecognised
+     * 4xx are redacted. Building it here says the message is ours and meant to
+     * be read; the wording and the Retry-After header are unchanged.
+     */
+    errorResponseBuilder: (_request, context) =>
+      new ClientFacingError(
+        context.statusCode ?? 429,
+        `Rate limit exceeded, retry in ${context.after}`,
+      ),
   })
 
   app.addHook('onRequest', async (request) => {

@@ -323,6 +323,23 @@ describe.skipIf(!hasIntegrationEnv())('the application applies its configured li
       // The login limit is 10 per window, and it is reached despite the
       // rotation: every request counted against the same real peer.
       expect(codes.filter((code) => code === 429).length).toBeGreaterThan(0)
+
+      /*
+       * And the refusal still says what it is. The limiter's error carries no
+       * code of its own, so the boundary cannot tell it from a dependency that
+       * happens to throw a 4xx — which is redacted. app.ts builds it through
+       * the plugin's errorResponseBuilder for exactly that reason, and this is
+       * where the built application proves it.
+       */
+      const refused = await built.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'nobody@presslabz.test', password: 'a-long-enough-passphrase' },
+      })
+
+      expect(refused.statusCode).toBe(429)
+      expect(refused.json().message).toContain('Rate limit exceeded')
+      expect(refused.headers['retry-after']).toBeDefined()
     } finally {
       await built.close()
       await dropRateLimitKeys(env.VALKEY_URL, namespace)
