@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import { createScratchDatabase, gate, hasIntegrationEnv, held, settle } from '../testing.ts'
 import {
   ContentConflictError,
   ContentForbiddenError,
@@ -427,17 +427,6 @@ describe.skipIf(!ready)('contents repository', () => {
   })
 
   describe('locks that hold under a controlled interleaving', () => {
-    /** Lets a test hold a transaction open at a chosen point. */
-    function gate() {
-      let open: () => void = () => {}
-      const opened = new Promise<void>((resolve) => {
-        open = resolve
-      })
-      return { open, opened }
-    }
-
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 250))
-
     it('decides a deletion against the row as it is, not as it was', async () => {
       /*
        * updateContent locks the content row and never the group, so the group
@@ -455,22 +444,26 @@ describe.skipIf(!ready)('contents repository', () => {
       const holding = gate()
       const release = gate()
 
-      const writer = db.transaction(async (tx) => {
-        await tx.select().from(contents).where(eq(contents.id, row.id)).limit(1).for('update')
-        holding.open()
-        await release.opened
-        await tx.update(contents).set({ status: 'published' }).where(eq(contents.id, row.id))
-      })
+      const writer = held(
+        db.transaction(async (tx) => {
+          await tx.select().from(contents).where(eq(contents.id, row.id)).limit(1).for('update')
+          holding.open()
+          await release.opened
+          await tx.update(contents).set({ status: 'published' }).where(eq(contents.id, row.id))
+        }),
+      )
 
       await holding.opened
 
       let sawStatus: string | null = null
-      const deletion = deleteContent(db, row.id, {
-        authorize: (current) => {
-          sawStatus = current.status
-          return current.status === 'draft'
-        },
-      })
+      const deletion = held(
+        deleteContent(db, row.id, {
+          authorize: (current) => {
+            sawStatus = current.status
+            return current.status === 'draft'
+          },
+        }),
+      )
 
       try {
         // The deletion is now waiting on the content row, not reading past it.
@@ -507,33 +500,39 @@ describe.skipIf(!ready)('contents repository', () => {
       const removing = gate()
       const release = gate()
 
-      const remover = db.transaction(async (tx) => {
-        await tx
-          .select()
-          .from(translationGroups)
-          .where(eq(translationGroups.id, only.translationGroupId))
-          .limit(1)
-          .for('update')
-        await tx.delete(contents).where(eq(contents.id, only.id))
-        removing.open()
-        await release.opened
-        await tx.delete(translationGroups).where(eq(translationGroups.id, only.translationGroupId))
-      })
+      const remover = held(
+        db.transaction(async (tx) => {
+          await tx
+            .select()
+            .from(translationGroups)
+            .where(eq(translationGroups.id, only.translationGroupId))
+            .limit(1)
+            .for('update')
+          await tx.delete(contents).where(eq(contents.id, only.id))
+          removing.open()
+          await release.opened
+          await tx
+            .delete(translationGroups)
+            .where(eq(translationGroups.id, only.translationGroupId))
+        }),
+      )
 
       await removing.opened
 
       let sawMembers: string[] | null = null
-      const join = createContent(db, {
-        type: TYPE,
-        locale: 'en',
-        translationGroupId: only.translationGroupId,
-        authorId: null,
-        state: state({ slug: 'contender' }),
-        authorizeJoin: (members) => {
-          sawMembers = members.map((member) => member.id)
-          return members.length > 0
-        },
-      })
+      const join = held(
+        createContent(db, {
+          type: TYPE,
+          locale: 'en',
+          translationGroupId: only.translationGroupId,
+          authorId: null,
+          state: state({ slug: 'contender' }),
+          authorizeJoin: (members) => {
+            sawMembers = members.map((member) => member.id)
+            return members.length > 0
+          },
+        }),
+      )
 
       try {
         await settle()
@@ -570,24 +569,28 @@ describe.skipIf(!ready)('contents repository', () => {
       const holding = gate()
       const release = gate()
 
-      const holder = db.transaction(async (tx) => {
-        await tx
-          .select()
-          .from(translationGroups)
-          .where(eq(translationGroups.id, first.translationGroupId))
-          .limit(1)
-          .for('update')
-        holding.open()
-        await release.opened
-      })
+      const holder = held(
+        db.transaction(async (tx) => {
+          await tx
+            .select()
+            .from(translationGroups)
+            .where(eq(translationGroups.id, first.translationGroupId))
+            .limit(1)
+            .for('update')
+          holding.open()
+          await release.opened
+        }),
+      )
 
       await holding.opened
 
       let finished = false
-      const deletion = deleteContent(db, first.id).then((result) => {
-        finished = true
-        return result
-      })
+      const deletion = held(
+        deleteContent(db, first.id).then((result) => {
+          finished = true
+          return result
+        }),
+      )
 
       try {
         await settle()

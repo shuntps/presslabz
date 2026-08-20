@@ -125,3 +125,52 @@ export async function createScratchDatabase(label = 'db'): Promise<{
     },
   }
 }
+
+/**
+ * Support for the suites that assert what happens *between* two transactions.
+ *
+ * They all have the same shape: hold one transaction open at a chosen point,
+ * start a second operation, prove it is blocked rather than reading past the
+ * lock, then release and assert on the outcome. The three helpers below were
+ * written twice, once per suite; they live here now so a third suite does not
+ * write them a third time.
+ */
+
+/** Lets a test hold a transaction open at a chosen point. */
+export function gate(): { open: () => void; opened: Promise<void> } {
+  let open: () => void = () => {}
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { open, opened }
+}
+
+/**
+ * Long enough for a blocked query to have run if it were going to.
+ *
+ * There is no event for "this statement is waiting on a lock", so the only
+ * available proof is that it had time and did nothing.
+ */
+export const settle = (): Promise<unknown> => new Promise((resolve) => setTimeout(resolve, 250))
+
+/**
+ * Keeps a promise's rejection from counting as unhandled while the test is
+ * still setting up.
+ *
+ * These suites deliberately start an operation and only assert on it several
+ * statements later, after releasing the transaction that was blocking it. If
+ * it rejects in between — which is exactly what the refusal tests expect it to
+ * do — Node reports an unhandled rejection, and Vitest fails the whole run
+ * while every test in it passes. That is not hypothetical: it turned a
+ * documentation-only pull request red, and it was green on a re-run, because
+ * the window is a matter of scheduling.
+ *
+ * Attaching a handler at creation closes the window and changes nothing else:
+ * the promise keeps its rejection, so `await expect(p).rejects` still sees it,
+ * and a rejection the test did not expect still fails the assertion rather
+ * than being swallowed.
+ */
+export function held<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => {})
+  return promise
+}
