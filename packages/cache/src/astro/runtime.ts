@@ -1,6 +1,6 @@
 import { Valkey } from 'iovalkey'
 import { withTagCollection } from '../collector.ts'
-import { createPageCache, type PageCache } from '../store.ts'
+import { createNullPageCache, createPageCache, type PageCache } from '../store.ts'
 import { isTag } from '../tags.ts'
 import type { ValkeyCacheOptions } from './config.ts'
 
@@ -150,6 +150,15 @@ export function createProvider(cache: PageCache): ValkeyCacheProvider {
  * is also how the API reads the same three settings.
  */
 const factory = (config: ValkeyCacheOptions | undefined): ValkeyCacheProvider => {
+  /*
+   * Off at runtime, not only at build. Every other setting here is read from
+   * the environment for the reason above, and leaving this one behind meant
+   * `PAGE_CACHE_ENABLED=false` silently kept caching on a server that was
+   * built with it on — which is exactly the kind of half-applied switch an
+   * operator debugs for an hour.
+   */
+  if (process.env.PAGE_CACHE_ENABLED === 'false') return createProvider(createNullPageCache())
+
   const url = process.env.VALKEY_URL ?? config?.url
   if (!url) throw new Error('The page cache needs a Valkey URL')
 

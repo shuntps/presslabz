@@ -2,6 +2,7 @@
 import { LOCALE_LABELS, LOCALE_TAGS } from '@presslabz/i18n'
 import type { SiteContext } from '@presslabz/theme-kit'
 import ThemeHead from '@presslabz/theme-kit/ThemeHead.astro'
+import ThemeToggle from '@presslabz/theme-kit/ThemeToggle.astro'
 import '../tokens.css'
 
 interface Props {
@@ -41,13 +42,28 @@ const { site, title, description } = Astro.props
           site.translations.length > 0 ? (
             <nav aria-label={site.t('web.nav.languages')} class="languages">
               {site.translations.map((translation) => (
-                <a href={translation.href} lang={translation.locale} hreflang={translation.locale}>
+                <a
+                  href={translation.href}
+                  lang={translation.locale}
+                  hreflang={translation.locale}
+                  class:list={{ elsewhere: !translation.available }}
+                  title={translation.available ? undefined : site.t('web.nav.untranslated')}
+                >
                   {LOCALE_LABELS[translation.locale]}
                 </a>
               ))}
             </nav>
           ) : null
         }
+
+        <ThemeToggle
+          label={site.t('web.theme.label')}
+          options={{
+            light: site.t('web.theme.light'),
+            dark: site.t('web.theme.dark'),
+            system: site.t('web.theme.system'),
+          }}
+        />
       </div>
     </header>
 
@@ -116,6 +132,15 @@ const { site, title, description } = Astro.props
   .languages a {
     font-family: var(--pl-font-data);
     font-size: var(--pl-text-xs);
+  }
+
+  /*
+   * A language that has no version of this page still gets a link, so the
+   * reader is never stuck — but it is marked, because it leads somewhere else.
+   */
+  .languages a.elsewhere {
+    color: var(--pl-color-text-faint);
+    text-decoration-style: dotted;
   }
 
   nav a[aria-current='page'] {

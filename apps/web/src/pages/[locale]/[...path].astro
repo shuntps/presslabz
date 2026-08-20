@@ -9,7 +9,7 @@ import {
   loadMedia,
   loadTranslations,
 } from '../../data/content.ts'
-import { localeConfig } from '../../env.ts'
+import { env, localeConfig } from '../../env.ts'
 import {
   archivePath,
   documentPath,
@@ -101,7 +101,7 @@ if (locale && route?.kind === 'document') {
         kind: 'document',
         document: await documentView(row, route.type, path, await loadMedia(row, locale)),
         head: documentHead({ locale, type: route.type, path, meta: row.meta, siblings }),
-        translations: translationLinks(siblings, route.type, locale),
+        translations: translationLinks(siblings, route.type, locale, env.SITE_NAME),
       }
     }
   }
@@ -119,7 +119,12 @@ const site = siteContext({
       : view.kind === 'archive'
         ? listingHead(Astro.url.pathname)
         : MISSING_HEAD,
-  translations: view.kind === 'document' ? view.translations : [],
+  translations:
+    view.kind === 'document'
+      ? view.translations
+      : view.kind === 'archive' && locale
+        ? listingTranslations(Astro.url.pathname, locale)
+        : [],
   /*
    * A type at the locale root has no archive and therefore no feed; a page is
    * not something a reader subscribes to.

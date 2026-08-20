@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./Blocks.astro": "./src/Blocks.astro",
     "./ThemeHead.astro": "./src/ThemeHead.astro",
-    "./Inline.astro": "./src/Inline.astro"
+    "./Inline.astro": "./src/Inline.astro",
+    "./ThemeToggle.astro": "./src/ThemeToggle.astro"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

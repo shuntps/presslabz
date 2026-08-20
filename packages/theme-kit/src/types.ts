@@ -34,6 +34,17 @@ export interface TranslationLink {
   readonly locale: Locale
   readonly href: string
   readonly title: string
+  /**
+   * False when this language has no version of what is on the page, and the
+   * link goes to that language's home page instead.
+   *
+   * Both cases are offered, because a switcher that disappears on an
+   * untranslated document leaves a reader with no way to change language at
+   * all. Marking the difference is what keeps it from being a lie: the reader
+   * is told the link does not lead to this page in that language, rather than
+   * discovering it after the jump.
+   */
+  readonly available: boolean
 }
 
 export interface NavLink {

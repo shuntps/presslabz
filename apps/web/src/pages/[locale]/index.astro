@@ -3,7 +3,7 @@ import { createBuiltinRegistry } from '@presslabz/core'
 import { loadArchive } from '../../data/content.ts'
 import { localeConfig } from '../../env.ts'
 import { archivePath, primaryType } from '../../lib/routes.ts'
-import { listingHead, MISSING_HEAD } from '../../lib/seo.ts'
+import { listingHead, listingTranslations, MISSING_HEAD } from '../../lib/seo.ts'
 import { archiveView, siteContext } from '../../lib/view.ts'
 import { theme } from '../../theme.ts'
 
@@ -22,6 +22,7 @@ const site = siteContext({
   registry,
   head: locale ? listingHead(Astro.url.pathname) : MISSING_HEAD,
   feedHref: locale && type ? `${archivePath(locale, type)}/feed.xml` : null,
+  translations: locale ? listingTranslations(Astro.url.pathname, locale) : [],
 })
 
 const archive = locale && type ? await loadArchive({ type, locale, page: 1 }) : null

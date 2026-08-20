@@ -371,7 +371,13 @@ describe.skipIf(!ready)('the public site', () => {
     it('announces no alternates for a document that exists in one language', async () => {
       const html = await (await get('/en/about')).text()
 
-      expect(html).not.toContain('hreflang=')
+      /*
+       * The head, specifically. The language switcher's own link carries an
+       * hreflang attribute too — accurately, since it names the language of
+       * the page it leads to — but what a search engine reads as a set of
+       * translations is `<link rel="alternate">`, and there is no set here.
+       */
+      expect(html).not.toContain('<link rel="alternate" hreflang=')
       expect(html).toMatch(/<link rel="canonical" href="[^"]*\/en\/about"/)
     })
 
@@ -547,6 +553,58 @@ describe.skipIf(!ready)('the public site', () => {
       // body — which is what the module would have supplied had it been empty.
       expect(html).toContain('content="Written by the author, not derived."')
       expect(html).not.toContain('content="Fixture body"')
+    })
+  })
+
+  describe('the controls a reader needs', () => {
+    it('offers the other language on a listing, where every page exists', async () => {
+      const home = await (await get('/en')).text()
+      const archive = await (await get('/en/blog')).text()
+
+      expect(home).toContain('href="/fr"')
+      expect(archive).toContain('href="/fr/blog"')
+    })
+
+    it('offers the translation itself on a document that has one', async () => {
+      const html = await (await get('/en/blog/hello-world')).text()
+      expect(html).toContain('href="/fr/blog/bonjour-le-monde"')
+    })
+
+    /*
+     * A switcher that disappears on an untranslated document leaves the reader
+     * with no way to change language at all. Offering the language and saying
+     * where it actually leads is the honest half of that.
+     */
+    it('still offers a language the document was never translated into, marked', async () => {
+      const html = await (await get('/en/about')).text()
+
+      expect(html).toContain('href="/fr"')
+      expect(html).toMatch(/class="[^"]*elsewhere/)
+      expect(html).toContain('goes to the home page')
+    })
+
+    it('carries the theme control on every page', async () => {
+      for (const path of ['/en', '/en/blog', '/en/blog/hello-world', '/fr']) {
+        expect(await (await get(path)).text(), path).toContain('data-theme-toggle')
+      }
+    })
+
+    /*
+     * Hidden until its script runs. A reader without JavaScript keeps the
+     * system preference, which the stylesheet already honours, and is not
+     * shown a button that does nothing.
+     */
+    it('hides that control until the script that makes it work has run', async () => {
+      const html = await (await get('/en')).text()
+      expect(html).toMatch(/hidden[^>]*data-theme-toggle|data-theme-toggle[^>]*hidden/)
+    })
+
+    it('offers all three states, not a two-way switch', async () => {
+      const html = await (await get('/en')).text()
+
+      for (const value of ['light', 'dark', 'system']) {
+        expect(html).toContain(`value="${value}"`)
+      }
     })
   })
 

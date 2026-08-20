@@ -3,7 +3,7 @@ import type { Locale } from '@presslabz/i18n'
 import type { PageHead, TranslationLink } from '@presslabz/theme-kit'
 import type { Sibling } from '../data/content.ts'
 import { env, localeConfig } from '../env.ts'
-import { documentPath } from './routes.ts'
+import { documentPath, homePath } from './routes.ts'
 
 /**
  * The absolute form of a path, built on the address readers actually use.
@@ -86,16 +86,59 @@ export const MISSING_HEAD: PageHead = {
   noindex: true,
 }
 
+/**
+ * What the language switcher offers on a document.
+ *
+ * Every language this installation serves, minus the one being read. A real
+ * translation links to it; a language the document has not been translated
+ * into links to that language's home page and says so — because a switcher
+ * that vanishes on an untranslated document leaves the reader no way to
+ * change language at all, and one that pretends the page exists elsewhere
+ * sends them to a 404.
+ */
 export function translationLinks(
   siblings: readonly Sibling[],
   type: AnyContentType,
   current: Locale,
+  siteName: string,
 ): TranslationLink[] {
-  return siblings
-    .filter((sibling) => sibling.path !== null && sibling.row.locale !== current)
-    .map((sibling) => ({
-      locale: sibling.row.locale as Locale,
-      href: documentPath(sibling.row.locale as Locale, type, sibling.path as readonly string[]),
-      title: sibling.row.title,
+  const translated = new Map(
+    siblings
+      .filter((sibling) => sibling.path !== null && sibling.row.locale !== current)
+      .map((sibling) => [sibling.row.locale as Locale, sibling] as const),
+  )
+
+  return localeConfig.locales
+    .filter((locale) => locale !== current)
+    .map((locale) => {
+      const sibling = translated.get(locale)
+
+      return sibling
+        ? {
+            locale,
+            href: documentPath(locale, type, sibling.path as readonly string[]),
+            title: sibling.row.title,
+            available: true,
+          }
+        : { locale, href: homePath(locale), title: siteName, available: false }
+    })
+}
+
+/**
+ * The same page in another language, for a listing.
+ *
+ * A home page and an archive exist in every language by construction — the
+ * same route with a different prefix — so the switcher is never uncertain
+ * there. The path is rewritten rather than rebuilt, so a route this function
+ * has never heard of still switches correctly.
+ */
+export function listingTranslations(path: string, current: Locale): TranslationLink[] {
+  return localeConfig.locales
+    .filter((locale) => locale !== current)
+    .map((locale) => ({
+      locale,
+      href: path.replace(/^\/[^/]+/, `/${locale}`),
+      title: '',
+      available: true,
     }))
 }
