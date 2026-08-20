@@ -21,18 +21,19 @@ const { site, title, description } = Astro.props
   <body>
     <header>
       <a class="wordmark" href={site.homeHref}>{site.siteName}</a>
-      <div class="rails">
-        {
-          site.nav.length > 0 ? (
-            <nav aria-label={site.t('web.nav.label')}>
-              {site.nav.map((link) => (
-                <a href={link.href} aria-current={link.current ? 'page' : undefined}>
-                  {link.label}
-                </a>
-              ))}
-            </nav>
-          ) : null
-        }
+      {
+        site.nav.length > 0 ? (
+          <nav class="sections" aria-label={site.t('web.nav.label')}>
+            {site.nav.map((link) => (
+              <a href={link.href} aria-current={link.current ? 'page' : undefined}>
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        ) : null
+      }
+
+      <div class="controls">
         {
           /*
            * Only translations that exist. A switcher that lists every language
@@ -99,15 +100,39 @@ const { site, title, description } = Astro.props
 </style>
 
 <style>
+  /*
+   * Correct at 320px first: everything stacks and centres, because three
+   * groups side by side on a phone leaves no room for any of them. There is no
+   * max-width query here or anywhere in the project — the narrow case is the
+   * default, and the wide one only adds.
+   */
   header {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--pl-space-4);
-    align-items: baseline;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--pl-space-3);
     background: var(--pl-color-bg-subtle);
     border-block-end: 1px solid var(--pl-color-border);
     padding: var(--pl-space-4) var(--pl-gutter);
+  }
+
+  /*
+   * Three columns, with the sections centred in the bar rather than merely
+   * placed between its neighbours: the outer columns are equal, so the middle
+   * one sits on the centre of the header whatever the wordmark or the controls
+   * happen to be wide.
+   */
+  @media (min-width: 48rem) {
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: var(--pl-space-6);
+    }
+
+    .controls {
+      justify-content: flex-end;
+    }
   }
 
   .wordmark {
@@ -116,11 +141,12 @@ const { site, title, description } = Astro.props
     text-decoration: none;
   }
 
-  .rails {
+  .controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--pl-space-4) var(--pl-space-6);
+    align-items: center;
+    justify-content: center;
+    gap: var(--pl-space-4);
   }
 
   nav {

@@ -227,6 +227,22 @@ describe.skipIf(!ready)('the public site', () => {
   const get = (path: string, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { redirect: 'manual', headers })
 
+  /**
+   * Reads a page and insists it is a page.
+   *
+   * Every assertion that only read the body used to pass on a 500: Astro can
+   * answer with a complete, correct-looking document and a failed status when
+   * a template throws late, so `toContain('Hello world')` was true of a
+   * response no browser would show. Seventy-three tests stayed green while
+   * /en/blog was broken. Nothing here reads a body without checking the status
+   * that came with it.
+   */
+  async function html(path: string, headers: Record<string, string> = {}): Promise<string> {
+    const response = await get(path, headers)
+    expect(response.status, `${path} should have rendered`).toBe(200)
+    return response.text()
+  }
+
   describe('locale routing', () => {
     it('sends the site root to the language the reader asked for', async () => {
       const english = await get('/', { 'accept-language': 'en-GB,en;q=0.9' })
@@ -263,17 +279,17 @@ describe.skipIf(!ready)('the public site', () => {
   describe('what the public may read', () => {
     it('renders a published document from its blocks', async () => {
       const response = await get('/en/blog/hello-world')
-      const html = await response.text()
+      const body = await response.text()
 
       expect(response.status).toBe(200)
-      expect(html).toContain('Hello world')
+      expect(body).toContain('Hello world')
       /*
        * A paragraph, not an exact string of markup: the theme owns what a
        * block looks like and adds its own scoping attributes. What the site
        * guarantees is that the document's text reaches the page as the block
        * it was written as.
        */
-      expect(html).toMatch(/<p[^>]*>Fixture body<\/p>/)
+      expect(body).toMatch(/<p[^>]*>Fixture body<\/p>/)
     })
 
     it('withholds a draft', async () => {
@@ -330,11 +346,11 @@ describe.skipIf(!ready)('the public site', () => {
 
   describe('archives', () => {
     it('lists what is published, and only that', async () => {
-      const html = await (await get('/en/blog')).text()
+      const body = await html('/en/blog')
 
-      expect(html).toContain('Hello world')
-      expect(html).not.toContain('A draft')
-      expect(html).not.toContain('Tomorrow')
+      expect(body).toContain('Hello world')
+      expect(body).not.toContain('A draft')
+      expect(body).not.toContain('Tomorrow')
     })
 
     it('answers a page past the end with 404 rather than an empty list', async () => {
@@ -349,17 +365,17 @@ describe.skipIf(!ready)('the public site', () => {
 
   describe('what a document tells a machine', () => {
     it('names every language of a translated document, each way round', async () => {
-      const english = await (await get('/en/blog/hello-world')).text()
-      const french = await (await get('/fr/blog/bonjour-le-monde')).text()
+      const english = await html('/en/blog/hello-world')
+      const french = await html('/fr/blog/bonjour-le-monde')
 
-      for (const html of [english, french]) {
-        expect(html).toMatch(
+      for (const body of [english, french]) {
+        expect(body).toMatch(
           /<link rel="alternate" hreflang="en" href="[^"]*\/en\/blog\/hello-world"/,
         )
-        expect(html).toMatch(
+        expect(body).toMatch(
           /<link rel="alternate" hreflang="fr" href="[^"]*\/fr\/blog\/bonjour-le-monde"/,
         )
-        expect(html).toContain('hreflang="x-default"')
+        expect(body).toContain('hreflang="x-default"')
       }
     })
 
@@ -369,7 +385,7 @@ describe.skipIf(!ready)('the public site', () => {
      * site as a translation set.
      */
     it('announces no alternates for a document that exists in one language', async () => {
-      const html = await (await get('/en/about')).text()
+      const body = await html('/en/about')
 
       /*
        * The head, specifically. The language switcher's own link carries an
@@ -377,13 +393,13 @@ describe.skipIf(!ready)('the public site', () => {
        * the page it leads to — but what a search engine reads as a set of
        * translations is `<link rel="alternate">`, and there is no set here.
        */
-      expect(html).not.toContain('<link rel="alternate" hreflang=')
-      expect(html).toMatch(/<link rel="canonical" href="[^"]*\/en\/about"/)
+      expect(body).not.toContain('<link rel="alternate" hreflang=')
+      expect(body).toMatch(/<link rel="canonical" href="[^"]*\/en\/about"/)
     })
 
     it('offers the reader the translations that exist, and only those', async () => {
-      const translated = await (await get('/en/blog/hello-world')).text()
-      const alone = await (await get('/en/about')).text()
+      const translated = await html('/en/blog/hello-world')
+      const alone = await html('/en/about')
 
       expect(translated).toContain('/fr/blog/bonjour-le-monde')
       expect(alone).not.toContain('/fr/')
@@ -397,16 +413,16 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     it('says nothing canonical about a page that does not exist', async () => {
-      const html = await (await get('/en/nothing')).text()
+      const body = await (await get('/en/nothing')).text()
 
-      expect(html).not.toContain('rel="canonical"')
-      expect(html).toContain('content="noindex"')
+      expect(body).not.toContain('rel="canonical"')
+      expect(body).toContain('content="noindex"')
     })
 
     it('advertises the feed of the section it belongs to', async () => {
-      const html = await (await get('/en/blog/hello-world')).text()
+      const body = await html('/en/blog/hello-world')
 
-      expect(html).toMatch(
+      expect(body).toMatch(
         /<link rel="alternate" type="application\/atom\+xml"[^>]*href="[^"]*\/en\/blog\/feed.xml"/,
       )
     })
@@ -414,7 +430,7 @@ describe.skipIf(!ready)('the public site', () => {
 
   describe('the sitemap', () => {
     it('lists the home page, the archives and every published document', async () => {
-      const xml = await (await get('/sitemap.xml')).text()
+      const xml = await html('/sitemap.xml')
 
       expect(xml).toContain('/en/blog/hello-world')
       expect(xml).toContain('/fr/blog/bonjour-le-monde')
@@ -424,7 +440,7 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     it('withholds what the public cannot read', async () => {
-      const xml = await (await get('/sitemap.xml')).text()
+      const xml = await html('/sitemap.xml')
 
       expect(xml).not.toContain('a-draft')
       expect(xml).not.toContain('tomorrow')
@@ -435,12 +451,12 @@ describe.skipIf(!ready)('the public site', () => {
      * results, so listing one would be the site contradicting itself.
      */
     it('leaves out a document marked noindex', async () => {
-      const xml = await (await get('/sitemap.xml')).text()
+      const xml = await html('/sitemap.xml')
       expect(xml).not.toContain('/en/blog/quiet')
     })
 
     it('carries the alternates of a translated document', async () => {
-      const xml = await (await get('/sitemap.xml')).text()
+      const xml = await html('/sitemap.xml')
       expect(xml).toContain('hreflang="fr"')
     })
   })
@@ -468,7 +484,7 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     it('keeps unpublished documents out of it', async () => {
-      const xml = await (await get('/en/blog/feed.xml')).text()
+      const xml = await html('/en/blog/feed.xml')
 
       expect(xml).not.toContain('A draft')
       expect(xml).not.toContain('Tomorrow')
@@ -487,10 +503,10 @@ describe.skipIf(!ready)('the public site', () => {
 
     it('opens a draft for whoever holds a live token', async () => {
       const response = await get(`/en/preview/${linkFor(draftId)}`)
-      const html = await response.text()
+      const body = await response.text()
 
       expect(response.status).toBe(200)
-      expect(html).toContain('A draft')
+      expect(body).toContain('A draft')
     })
 
     /*
@@ -541,33 +557,33 @@ describe.skipIf(!ready)('the public site', () => {
      * which is how the API gets validated before anybody outside uses it.
      */
     it('lets a module supply what an author left out', async () => {
-      const html = await (await get('/en/blog')).text()
+      const body = await html('/en/blog')
 
-      expect(html).toContain('The body has to stand in for the summary here.')
+      expect(body).toContain('The body has to stand in for the summary here.')
     })
 
     it('never lets it overwrite what an author did write', async () => {
-      const html = await (await get('/en/blog/hello-world')).text()
+      const body = await html('/en/blog/hello-world')
 
       // The description is the author's sentence, not one derived from the
       // body — which is what the module would have supplied had it been empty.
-      expect(html).toContain('content="Written by the author, not derived."')
-      expect(html).not.toContain('content="Fixture body"')
+      expect(body).toContain('content="Written by the author, not derived."')
+      expect(body).not.toContain('content="Fixture body"')
     })
   })
 
   describe('the controls a reader needs', () => {
     it('offers the other language on a listing, where every page exists', async () => {
-      const home = await (await get('/en')).text()
-      const archive = await (await get('/en/blog')).text()
+      const home = await html('/en')
+      const archive = await html('/en/blog')
 
       expect(home).toContain('href="/fr"')
       expect(archive).toContain('href="/fr/blog"')
     })
 
     it('offers the translation itself on a document that has one', async () => {
-      const html = await (await get('/en/blog/hello-world')).text()
-      expect(html).toContain('href="/fr/blog/bonjour-le-monde"')
+      const body = await html('/en/blog/hello-world')
+      expect(body).toContain('href="/fr/blog/bonjour-le-monde"')
     })
 
     /*
@@ -576,11 +592,11 @@ describe.skipIf(!ready)('the public site', () => {
      * where it actually leads is the honest half of that.
      */
     it('still offers a language the document was never translated into, marked', async () => {
-      const html = await (await get('/en/about')).text()
+      const body = await html('/en/about')
 
-      expect(html).toContain('href="/fr"')
-      expect(html).toMatch(/class="[^"]*elsewhere/)
-      expect(html).toContain('goes to the home page')
+      expect(body).toContain('href="/fr"')
+      expect(body).toMatch(/class="[^"]*elsewhere/)
+      expect(body).toContain('goes to the home page')
     })
 
     it('carries the theme control on every page', async () => {
@@ -595,15 +611,15 @@ describe.skipIf(!ready)('the public site', () => {
      * shown a button that does nothing.
      */
     it('hides that control until the script that makes it work has run', async () => {
-      const html = await (await get('/en')).text()
-      expect(html).toMatch(/hidden[^>]*data-theme-toggle|data-theme-toggle[^>]*hidden/)
+      const body = await html('/en')
+      expect(body).toMatch(/hidden[^>]*data-theme-toggle|data-theme-toggle[^>]*hidden/)
     })
 
     it('offers all three states, not a two-way switch', async () => {
-      const html = await (await get('/en')).text()
+      const body = await html('/en')
 
       for (const value of ['light', 'dark', 'system']) {
-        expect(html).toContain(`value="${value}"`)
+        expect(body).toContain(`value="${value}"`)
       }
     })
   })
@@ -668,11 +684,11 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     it('carries the pre-paint theme script rather than a rendered attribute', async () => {
-      const html = await (await get('/en/blog/hello-world')).text()
+      const body = await html('/en/blog/hello-world')
 
-      expect(html).toContain('presslabz-theme')
-      expect(html).not.toContain('data-theme="dark"')
-      expect(html).not.toContain('data-theme="light"')
+      expect(body).toContain('presslabz-theme')
+      expect(body).not.toContain('data-theme="dark"')
+      expect(body).not.toContain('data-theme="light"')
     })
   })
 })
