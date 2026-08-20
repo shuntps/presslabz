@@ -111,6 +111,7 @@ export const en = {
   'media.altPlaceholder': 'Describe the image',
   'media.altForbidden': 'Only the person who uploaded this can describe it',
   'nav.dashboard': 'Dashboard',
+  'nav.newIn': 'New {type}',
   'nav.compose': 'Compose',
 
   /* Public site. Everything a reader sees that the site says on its own behalf. */

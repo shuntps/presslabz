@@ -109,6 +109,7 @@ export const fr: Messages = {
   'media.altPlaceholder': 'Décrivez l’image',
   'media.altForbidden': 'Seule la personne qui a téléversé cette image peut la décrire',
   'nav.dashboard': 'Tableau de bord',
+  'nav.newIn': 'Nouveau : {type}',
   'nav.compose': 'Composer',
 
   /* Site public. Tout ce qu'un lecteur voit et que le site dit en son nom. */

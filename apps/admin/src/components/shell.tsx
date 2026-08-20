@@ -46,15 +46,34 @@ export function Shell() {
             <p className="rail-group">{t('nav.compose')}</p>
             {types.map((type) => {
               const key = TYPE_LABELS[type.name]
+              const label = key ? t(key) : type.name
+
               return (
-                <Link
-                  key={type.name}
-                  to="/content/$type"
-                  params={{ type: type.name }}
-                  className="rail-link"
-                >
-                  {key ? t(key) : type.name}
-                </Link>
+                <div className="rail-row" key={type.name}>
+                  <Link to="/content/$type" params={{ type: type.name }} className="rail-link">
+                    {label}
+                  </Link>
+                  {/*
+                    Writing something is the reason anybody opens this, and it
+                    was three clicks away: the group heading above is a label,
+                    not a link, so the rail offered no way to start a document
+                    at all — you had to reach the listing first and find the
+                    button there. Offered per type rather than as one "new"
+                    action, because "new" has to mean something, and the
+                    server is asked whether this actor may create each one.
+                  */}
+                  {type.permissions.create && (
+                    <Link
+                      to="/content/$type/new"
+                      params={{ type: type.name }}
+                      className="rail-new"
+                      aria-label={t('nav.newIn', { type: label })}
+                      title={t('nav.newIn', { type: label })}
+                    >
+                      +
+                    </Link>
+                  )}
+                </div>
               )
             })}
           </>

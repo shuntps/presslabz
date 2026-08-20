@@ -437,6 +437,49 @@ button.quiet:hover:not(:disabled) {
   }
 }
 
+/*
+ * A type and the one action that matters for it, on one line. The label
+ * navigates; the plus starts something. Keeping them in one row is what makes
+ * writing reachable from anywhere in the product rather than only from the
+ * listing.
+ */
+.rail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pl-space-2);
+}
+
+.rail-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Never smaller than a finger, whatever the type size says. */
+  min-width: var(--pl-tap-target);
+  min-height: var(--pl-tap-target);
+  color: var(--pl-color-text-faint);
+  text-decoration: none;
+  font-family: var(--pl-font-machine);
+  font-size: var(--pl-text-base);
+  line-height: 1;
+}
+
+@media (min-width: 48rem) {
+  .rail-new {
+    min-width: 0;
+    min-height: 0;
+    padding: var(--pl-space-1) var(--pl-gutter) var(--pl-space-1) var(--pl-space-2);
+  }
+}
+
+.rail-new:hover {
+  color: var(--pl-color-text);
+}
+
+.rail-new:focus-visible {
+  outline: 2px solid var(--pl-color-focus-ring);
+  outline-offset: 2px;
+}
+
 .rail-link {
   position: relative;
   display: flex;
@@ -457,6 +500,15 @@ button.quiet:hover:not(:disabled) {
 
 .rail-link:hover {
   color: var(--pl-color-text);
+}
+
+/*
+ * After `.rail-link`, not before it. A more specific selector placed earlier
+ * reads as working until something else in the cascade moves, and this file
+ * has already lost an afternoon to exactly that.
+ */
+.rail-row .rail-link {
+  flex: 1;
 }
 
 /*

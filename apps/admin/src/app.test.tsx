@@ -93,3 +93,37 @@ describe('preferences', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
   })
 })
+
+describe('starting a document from the rail', () => {
+  /*
+   * The fault reported: "Compose" is a group heading, not a link, so the rail
+   * offered nothing to click and the only way to begin writing was to reach a
+   * listing first and find the button there. Nobody opens a CMS to look at a
+   * listing.
+   */
+  it('offers a way to begin one, per type', async () => {
+    renderApp()
+    await signIn()
+
+    // One type in the fake, which is enough: the rail builds a row per type it
+    // is told about, so a second would be the same assertion twice.
+    const posts = await screen.findByRole('link', { name: /new posts/i })
+
+    expect(posts.getAttribute('href')).toBe('/content/post/new')
+  })
+
+  /*
+   * Offering it to somebody the server would refuse is offering a form that
+   * cannot be saved. The answer comes from the server, like every other one.
+   */
+  it('offers nothing to somebody who may not create', async () => {
+    api = fakeApi({ creationPermissions: { create: false, statuses: [] } })
+    vi.stubGlobal('fetch', api.fetchMock)
+
+    renderApp()
+    await signIn()
+
+    await screen.findByRole('link', { name: /dashboard/i })
+    expect(screen.queryByRole('link', { name: /new posts/i })).toBeNull()
+  })
+})
