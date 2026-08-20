@@ -6,7 +6,7 @@
   "type": "module",
   "//": "The public site. It reads Postgres through packages/db rather than calling the API: one installation serving one site, and tag collection has to happen where the reading does.",
   "scripts": {
-    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev --force",
     "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
     "start": "node --env-file-if-exists=../../.env dist/server/entry.mjs",
     "typecheck": "ASTRO_TELEMETRY_DISABLED=1 astro sync && tsc --noEmit",
@@ -23,6 +23,7 @@
     "astro": "catalog:",
     "zod": "catalog:"
   },
+  "//dev": "--force because Astro 7 keeps one dev server per project and refuses a second. Under turbo that refusal fails the whole `pnpm dev` pipeline — the API and the admin go down with it — over a server left running by an earlier session. Replacing it is what a person means by running dev again.",
   "//telemetry": "Astro phones home with anonymous build data by default. A self-hosted CMS whose whole argument is that it keeps what it runs does not do that, so every script here opts out rather than relying on a per-machine `astro telemetry disable`.",
   "//typecheck": "tsc rather than `astro check`: the Astro language server needs the TypeScript programmatic API, which the native TS 7 compiler this repository runs does not ship (withastro/roadmap#1321). tsc covers the .ts modules; `astro build` is what compiles and rejects a broken .astro template, which is why CI runs it.",
   "devDependencies": {

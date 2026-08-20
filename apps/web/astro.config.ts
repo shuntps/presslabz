@@ -30,6 +30,15 @@ const port = Number(process.env.WEB_PORT ?? 4321)
 
 export default defineConfig({
   output: 'server',
+  /*
+   * A port here is a preference, not a guarantee: when it is taken, Astro
+   * moves to the next free one, and there is no option to refuse. There is no
+   * `strictPort` on Astro's server config — the type rejects it — so nothing
+   * below can stop a second dev server from landing on 4322 while the proxy
+   * and the person watching are both pointed at 4321. The `--force` in the
+   * dev script is the answer that does work: it replaces the server holding
+   * the port instead of starting beside it.
+   */
   server: { host, port },
   adapter: node({ mode: 'standalone' }),
   /** Absolute URLs in canonical tags, hreflang and the sitemap need this. */

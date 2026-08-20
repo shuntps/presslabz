@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
 import { media } from '../schema/media.ts'
 import { users } from '../schema/users.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import { createScratchDatabase, gate, hasIntegrationEnv, held, settle } from '../testing.ts'
 import {
   createMedia,
   findMediaById,
@@ -178,17 +178,6 @@ describe.skipIf(!ready)('media metadata', () => {
   })
 
   describe('ownership survives a concurrent write', () => {
-    /** Lets a test hold a transaction open at a chosen point. */
-    function gate() {
-      let open: () => void = () => {}
-      const opened = new Promise<void>((resolve) => {
-        open = resolve
-      })
-      return { open, opened }
-    }
-
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 250))
-
     it('orphans an asset when the account that uploaded it goes', async () => {
       // The premise of the test below, asserted rather than assumed: this is
       // the ON DELETE SET NULL on media.uploaded_by_id, and it is the reason
@@ -219,25 +208,29 @@ describe.skipIf(!ready)('media metadata', () => {
       const release = gate()
 
       // Exactly what deleting the uploader's account does, held open.
-      const orphaning = db.transaction(async (tx) => {
-        await tx.update(media).set({ uploadedById: null }).where(eq(media.id, row.id))
-        holding.open()
-        await release.opened
-      })
+      const orphaning = held(
+        db.transaction(async (tx) => {
+          await tx.update(media).set({ uploadedById: null }).where(eq(media.id, row.id))
+          holding.open()
+          await release.opened
+        }),
+      )
 
       await holding.opened
 
       let sawOwner: string | null | undefined
-      const editing = patchMediaAlt(
-        db,
-        row.id,
-        { fr: 'Décrite' },
-        {
-          authorize: (current: MediaRow) => {
-            sawOwner = current.uploadedById
-            return current.uploadedById === owner
+      const editing = held(
+        patchMediaAlt(
+          db,
+          row.id,
+          { fr: 'Décrite' },
+          {
+            authorize: (current: MediaRow) => {
+              sawOwner = current.uploadedById
+              return current.uploadedById === owner
+            },
           },
-        },
+        ),
       )
 
       try {
