@@ -114,6 +114,14 @@ Those two readings came apart the moment editing a live document started costing
 
 **Reading a translation is exactly as hard as reading the document.** `canReadDocument` is the single decision, applied to the anchor and independently to every sibling returned. Writing it twice is what let the two drift: reading a document directly checked status and authorship, while reading its translations checked only `content:read` — which every role holds — and returned the whole group. A sibling that fails is omitted, never counted or described, because reporting how many were withheld is the same disclosure.
 
+**What the software can speak and what the site serves are two questions.** `packages/i18n` holds the catalogue — the languages PressLabz has messages for — and `SUPPORTED_LOCALES` holds what one installation publishes in. Both were declared and only one was enforced: every route validated against the catalogue, so a site configured for English alone accepted French documents, stored them, and left them unreachable — the public site has no route for a language it does not serve and does not announce it in `hreflang`. Content routes now validate against the configured list; the refusal names it, because "unsupported locale" tells nobody which ones are.
+
+The **interface's** language is deliberately not narrowed by that list. An English-only site can be administered in French, and what decides that is whether a catalogue exists. So the language switcher offers the catalogue, while the document's language and the translations that may be started offer what the installation serves — two lists, two questions.
+
+**`GET /config` is how a client learns the second one.** Unauthenticated, because the sign-in screen has a language switcher and no session, and because none of it is a secret: the public site announces the same languages in its `hreflang` links. Without it the admin was compiling the catalogue into its bundle and offering languages the API would refuse on save.
+
+**The interface's language is a cookie**, like the theme and for the same reason: it has to be honoured before anything is fetched. It used to live in React state alone, so every load started from `navigator.languages` and the stored preference arrived a moment later with the session — a visible flip on every reload, and nothing at all for a visitor who is not signed in.
+
 Consequences that are easy to get wrong: every content query is locale-scoped by default, cache tags include the locale, and routing resolves locale before content. Retrofitting locale into a content model touches every query, route, and cache key — which is why it is present from the first migration rather than added after phase 3.
 
 ## Theming and dark mode
@@ -135,6 +143,10 @@ The deciding question is not cookie versus `localStorage`, it is whether the HTM
 The rule that follows: **the theme cookie must never influence cacheable HTML.** The client script reads it before first paint; the server reads it only on routes that are not shared-cached — preview, admin API, and syncing with `users.theme_preference` at sign-in so the choice follows the user across devices.
 
 A cookie is chosen over `localStorage` because the server can read it at all, because it survives private browsing with storage disabled, and because it distinguishes an explicit "follow the system" from never having chosen. It is deliberately not `httpOnly` — the pre-paint script must read it, and a display preference is not a credential.
+
+**One path in, whatever the source.** A choice made here and a preference arriving from the server go through the same function: state, cookie and document attribute together. The server's used to arrive by a path of its own that set the attribute and nothing else — the page went dark while the control still read "System", and the next load undid it, because the cookie is what survives and had never been told.
+
+**A cookie is a string anything on the host can write, and reading one must never be able to stop the interface.** `decodeURIComponent` throws on a malformed escape, and the preference is read inside a state initialiser: `presslabz-theme=%E0%A4%A` did not give somebody the wrong theme, it stopped the admin from rendering at all — after the pre-paint script, which has its own `try/catch`, had already drawn the page. Unreadable is answered like unrecognised, with "nothing was chosen", and a stored value that cannot be read is rewritten so the next load does not start from it again. Asserted in both places it matters: in unit tests for the reader, and in the browser, where the module graph is blocked so that what is on screen is the inline script's work and nothing else.
 
 `THEME_INIT_SCRIPT` is a static string literal. Building it by interpolating the cookie name would be a code-construction sink, which CodeQL correctly flags: harmless while the name is hardcoded, an injection point as soon as it becomes configurable. Tests assert the literal and the constants cannot drift apart.
 

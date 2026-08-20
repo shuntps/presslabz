@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./dom": "./src/dom.ts",
     "./messages/*": "./src/messages/*.ts"
   },
   "scripts": {

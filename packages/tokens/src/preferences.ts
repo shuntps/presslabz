@@ -37,11 +37,31 @@ export function readThemeCookie(cookieHeader: string | undefined | null): ThemeP
   for (const part of cookieHeader.split(';')) {
     const [name, ...rest] = part.trim().split('=')
     if (name !== THEME_COOKIE_NAME) continue
-    const value = decodeURIComponent(rest.join('='))
-    return isThemePreference(value) ? value : null
+    return decodePreference(rest.join('='))
   }
 
   return null
+}
+
+/**
+ * A cookie value is a string anybody can write: another application on the
+ * same host, an extension, a proxy, or a person with the developer tools open.
+ * `decodeURIComponent` throws on a malformed escape, and this is read while
+ * the interface is initialising — so `presslabz-theme=%E0%A4%A` did not give
+ * somebody the wrong theme, it stopped the admin from rendering at all.
+ *
+ * Unreadable and unrecognised are both answered with null, which callers
+ * already treat as "nothing was chosen".
+ */
+function decodePreference(raw: string): ThemePreference | null {
+  let value: string
+  try {
+    value = decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+
+  return isThemePreference(value) ? value : null
 }
 
 /**

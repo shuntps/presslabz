@@ -6,6 +6,7 @@ import {
   FULL_CREATION_PERMISSIONS,
   fakeApi,
   fakeDocument,
+  forgetPreferences,
   getInput,
   renderApp,
   signIn,
@@ -24,6 +25,7 @@ let api: ReturnType<typeof fakeApi>
 const dialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototype)
 
 beforeEach(() => {
+  forgetPreferences()
   window.history.pushState({}, '', '/')
   HTMLDialogElement.prototype.showModal = function showModal() {
     this.open = true
@@ -613,5 +615,54 @@ describe('work that has not been saved', () => {
       expect(sent.route).toBe('PATCH /content/post/doc-1')
       expect((sent.body as { title: string }).title).toBe('A live document and then some')
     })
+  })
+})
+
+describe('the languages this installation writes in', () => {
+  /*
+   * The admin used to offer every language PressLabz has a catalogue for,
+   * which is a fact about the software rather than about the site. An
+   * installation configured for English alone still invited somebody to start
+   * a French translation, and the API accepted it — content the public site
+   * has no route for and does not announce.
+   */
+  /**
+   * The document's language, not the interface's. Both are labelled
+   * "Language" and they answer different questions — one is what this site
+   * publishes in, the other is what PressLabz is being read in — so the query
+   * is scoped to the editor rather than made ambiguous.
+   */
+  function documentLanguages(): string[] {
+    const editor = document.querySelector('fieldset.editor') as HTMLElement
+    const select = within(editor).getByLabelText(/language/i, { selector: 'select' })
+    return [...(select as HTMLSelectElement).options].map((option) => option.value)
+  }
+
+  it('offers the configured languages when starting a document', async () => {
+    serverSays({ locales: ['en'] })
+    await openNewDocument()
+
+    await waitFor(() => expect(documentLanguages()).toEqual(['en']))
+  })
+
+  it('offers all of them when the installation serves both', async () => {
+    serverSays({ locales: ['en', 'fr'] })
+    await openNewDocument()
+
+    await waitFor(() => expect(documentLanguages()).toEqual(['en', 'fr']))
+  })
+
+  it('does not offer to translate into a language the site does not serve', async () => {
+    serverSays({
+      locales: ['en'],
+      documents: [fakeDocument({ id: 'doc-1', locale: 'en', title: 'Only in English' })],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('Only in English')
+
+    await waitFor(() => {
+      expect(screen.getByText(/translations/i)).toBeDefined()
+    })
+    expect(screen.queryByRole('link', { name: /français/i })).toBeNull()
   })
 })

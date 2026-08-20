@@ -1391,4 +1391,42 @@ describe.skipIf(!ready)('content routes', () => {
       expect(response.json().content.parentId).toBe(parent.json().content.id)
     })
   })
+  describe('what this installation serves', () => {
+    /*
+     * SUPPORTED_LOCALES was configuration nothing consulted: the routes asked
+     * whether PressLabz has a catalogue for a language, which is a question
+     * about the software rather than about the site. A site configured for one
+     * language therefore stored documents in the other — content its public site
+     * has no route for and does not announce in its hreflang links, discoverable
+     * only by whoever went looking in the database.
+     *
+     * This suite runs with both languages configured, so what can be asserted
+     * here is the shape of the answer: a language outside the configured list is
+     * refused, with a message that says what the list is. The narrowing itself
+     * is asserted in the environment suite, which can set the variable.
+     */
+    it('answers what it serves, without being asked to sign in', async () => {
+      const response = await app.inject({ url: '/config' })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().locales).toEqual(['en', 'fr'])
+      expect(response.json().defaultLocale).toBe('en')
+    })
+
+    it('refuses a listing in a language it does not serve', async () => {
+      const response = await app.inject({ url: '/content/post?locale=de', cookies: as('editor') })
+
+      expect(response.statusCode).toBe(400)
+      expect(JSON.stringify(response.json().issues)).toMatch(/serves en, fr/i)
+    })
+
+    it('refuses to write a document in one either', async () => {
+      const response = await post('editor', { ...draft('german'), locale: 'de' })
+
+      expect(response.statusCode).toBe(400)
+      // The type schema and the installation both refuse it; what matters is
+      // that the answer names the languages this site actually writes.
+      expect(JSON.stringify(response.json())).toMatch(/en, fr|Unsupported locale/i)
+    })
+  })
 })

@@ -1,7 +1,14 @@
 import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { type FakeApiOptions, fakeApi, fakeDocument, renderApp, signIn } from '../test-utils.tsx'
+import {
+  type FakeApiOptions,
+  fakeApi,
+  fakeDocument,
+  forgetPreferences,
+  renderApp,
+  signIn,
+} from '../test-utils.tsx'
 
 /*
  * The listing offers one action, and offering it to somebody the server would
@@ -12,6 +19,7 @@ import { type FakeApiOptions, fakeApi, fakeDocument, renderApp, signIn } from '.
 let api: ReturnType<typeof fakeApi>
 
 beforeEach(() => {
+  forgetPreferences()
   /*
    * The router is a module singleton, so where the previous test left it is
    * where this one starts. Telling it about the reset — rather than only

@@ -3,6 +3,7 @@ import { en, type MessageKey, type Messages } from './messages/en.ts'
 import { fr } from './messages/fr.ts'
 
 export * from './config.ts'
+export * from './cookie.ts'
 export * from './locales.ts'
 export type { MessageKey, Messages } from './messages/en.ts'
 

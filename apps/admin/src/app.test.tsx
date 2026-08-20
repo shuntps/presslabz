@@ -1,8 +1,21 @@
+/*
+ * These tests write cookies directly because that is what a browser arrives
+ * with: a value from a previous visit, or from something else on the host.
+ * The rule this suppresses exists for application code, which has helpers.
+ */
+// biome-ignore-all lint/suspicious/noDocumentCookie: standing in for a browser
 import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { API_URL } from './lib/api.ts'
-import { fakeApi, findInput, getInput, renderApp, signIn } from './test-utils.tsx'
+import {
+  fakeApi,
+  findInput,
+  forgetPreferences,
+  getInput,
+  renderApp,
+  signIn,
+} from './test-utils.tsx'
 
 /*
  * The admin had no behaviour test at all, and the fault that shipped from it
@@ -14,6 +27,7 @@ import { fakeApi, findInput, getInput, renderApp, signIn } from './test-utils.ts
 let api: ReturnType<typeof fakeApi>
 
 beforeEach(() => {
+  forgetPreferences()
   // The router is a module singleton, so a previous test's navigation would
   // otherwise decide where this one starts.
   window.history.pushState({}, '', '/')
@@ -236,5 +250,80 @@ describe('what the sign-in screen says went wrong', () => {
     )
 
     expect(alert.textContent).toMatch(/nothing you did/i)
+  })
+})
+
+describe('preferences that outlive the tab', () => {
+  /*
+   * The language used to live in React state alone: every load started from
+   * `navigator.languages`, and the choice arrived a moment later with the
+   * session — a visible flip on every reload, and nothing at all for somebody
+   * who is not signed in.
+   */
+  it('remembers the language it was told, without being signed in', async () => {
+    api = fakeApi()
+    vi.stubGlobal('fetch', api.fetchMock)
+    renderApp()
+
+    await findInput(/email/i)
+    await userEvent.selectOptions(getInput(/language/i, 'select'), 'fr')
+
+    expect(document.cookie).toContain('presslabz-locale=fr')
+    expect(document.documentElement.lang).toBe('fr')
+  })
+
+  it('starts in the language the cookie names', async () => {
+    document.cookie = 'presslabz-locale=fr; Path=/'
+    api = fakeApi()
+    vi.stubGlobal('fetch', api.fetchMock)
+
+    renderApp()
+
+    expect(await screen.findByText(/composer, traduire/i)).toBeDefined()
+  })
+
+  /*
+   * The fault this closes: a cookie value is a string anybody on the host can
+   * write, decodeURIComponent throws on a malformed escape, and this is read
+   * inside a state initialiser. The pre-paint script has its own try/catch, so
+   * the page was drawn and then React died on top of it — a blank screen with
+   * an explanation in the console.
+   */
+  it('renders with a cookie nothing can decode, and repairs it', async () => {
+    document.cookie = 'presslabz-theme=%E0%A4%A; Path=/'
+    document.cookie = 'presslabz-locale=%E0%A4%A; Path=/'
+    api = fakeApi()
+    vi.stubGlobal('fetch', api.fetchMock)
+
+    renderApp()
+
+    expect(await findInput(/email/i)).toBeDefined()
+    // Repaired rather than left to fail on every load from now on.
+    await waitFor(() => expect(document.cookie).toContain('presslabz-theme=system'))
+  })
+
+  /**
+   * What the server holds wins, because it followed the person from another
+   * machine — and it has to arrive through the same door a local choice uses.
+   * The theme used to come through a door of its own that touched the document
+   * and neither the state nor the cookie: the page went dark while the control
+   * still read "System", and the next load undid it.
+   */
+  it('takes the stored preferences, and keeps the control agreeing with them', async () => {
+    api = fakeApi()
+    api.state.themePreference = 'dark'
+    api.state.locale = 'fr'
+    vi.stubGlobal('fetch', api.fetchMock)
+
+    renderApp()
+    await signIn()
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    })
+    expect(document.cookie).toContain('presslabz-theme=dark')
+    expect(screen.getByRole('button', { name: /sombre/i }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
   })
 })

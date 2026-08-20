@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { API_URL, ApiError, NO_RESPONSE } from './lib/api.ts'
 import { useLocale } from './lib/i18n.tsx'
 import { useSession } from './lib/session.ts'
-import { syncThemeFromServer } from './lib/theme.tsx'
+import { useTheme } from './lib/theme.tsx'
 import { router } from './router.tsx'
 import { LoginPage } from './routes/login.tsx'
 
@@ -15,15 +15,22 @@ import { LoginPage } from './routes/login.tsx'
  */
 export function App() {
   const { t, locale, setLocale } = useLocale()
+  const { syncFromServer } = useTheme()
   const { data: user, isPending, isError, error, refetch } = useSession()
 
-  // The signed-in user's stored preferences win over what the browser or the
-  // cookie guessed, so a choice made on one machine follows them to another.
+  /*
+   * The stored preferences win over what the browser or a cookie guessed, so a
+   * choice made on one machine follows the person to another. Both go through
+   * the same functions a local choice uses — state, cookie and document
+   * together — because the theme used to arrive by a path of its own that
+   * touched the document and nothing else: the page went dark while the
+   * control still read "System", and the next load undid it.
+   */
   useEffect(() => {
     if (!user) return
     if (user.locale !== locale) setLocale(user.locale)
-    syncThemeFromServer(user.themePreference)
-  }, [user, locale, setLocale])
+    syncFromServer(user.themePreference)
+  }, [user, locale, setLocale, syncFromServer])
 
   if (isPending) {
     return (

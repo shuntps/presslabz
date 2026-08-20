@@ -3,6 +3,9 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
+    // dom.ts writes a cookie and a lang attribute; everything else here is
+    // deliberately free of DOM types so the API can import it.
+    "lib": ["ES2024", "DOM"],
     "types": ["node"]
   },
   "include": ["src/**/*.ts"]

@@ -1,7 +1,14 @@
 import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { type FakeApiOptions, fakeApi, fakeMedia, renderApp, signIn } from '../test-utils.tsx'
+import {
+  type FakeApiOptions,
+  fakeApi,
+  fakeMedia,
+  forgetPreferences,
+  renderApp,
+  signIn,
+} from '../test-utils.tsx'
 
 /*
  * Alt text is the one thing about an asset a person edits after upload, and
@@ -24,6 +31,7 @@ const dialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototy
 let opened = 0
 
 beforeEach(() => {
+  forgetPreferences()
   window.history.pushState({}, '', '/')
   window.dispatchEvent(new PopStateEvent('popstate'))
   opened = 0

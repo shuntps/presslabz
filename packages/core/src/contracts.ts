@@ -121,6 +121,22 @@ export const contentPageSchema = z.object({
 
 export type ContentPage = z.infer<typeof contentPageSchema>
 
+/**
+ * What the installation serves, as `GET /config` answers it.
+ *
+ * The languages a site is configured for, which is not the same question as
+ * the languages PressLabz has catalogues for: an installation may ship three
+ * and serve one. Content is written in these; the interface is translated into
+ * the catalogue, which is why the language switcher and the document's
+ * language are two different lists.
+ */
+export const installationConfigSchema = z.object({
+  locales: z.array(locale).min(1),
+  defaultLocale: locale,
+})
+
+export type InstallationConfig = z.infer<typeof installationConfigSchema>
+
 export const contentTypeSummarySchema = z.object({
   name: z.string(),
   hierarchical: z.boolean(),

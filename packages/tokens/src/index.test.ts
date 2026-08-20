@@ -80,6 +80,27 @@ describe('readThemeCookie', () => {
   it('does not match a cookie whose name merely ends with ours', () => {
     expect(readThemeCookie(`not-${THEME_COOKIE_NAME}=dark`)).toBeNull()
   })
+
+  /*
+   * A cookie value is a string anybody on the host can write, and
+   * decodeURIComponent throws on a malformed escape. This is read while the
+   * interface is initialising, so the throw did not give somebody the wrong
+   * theme — it stopped the admin from rendering at all, after the pre-paint
+   * script had already drawn the page.
+   */
+  it.for([
+    ['a truncated escape', '%E0%A4%A'],
+    ['a lone percent', '%'],
+    ['a half-written pair', 'da%rk'],
+    ['nothing but escapes', '%%%'],
+  ])('answers null rather than throwing on %s', ([, value]) => {
+    expect(() => readThemeCookie(`${THEME_COOKIE_NAME}=${value}`)).not.toThrow()
+    expect(readThemeCookie(`${THEME_COOKIE_NAME}=${value}`)).toBeNull()
+  })
+
+  it('still reads a properly escaped value', () => {
+    expect(readThemeCookie(`${THEME_COOKIE_NAME}=${encodeURIComponent('dark')}`)).toBe('dark')
+  })
 })
 
 describe('resolveTheme', () => {

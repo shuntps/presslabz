@@ -356,6 +356,26 @@ export async function buildApp(options: BuildAppOptions = {}) {
     timeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
   })
 
+  /**
+   * What this installation serves, for a client that has to draw it.
+   *
+   * Unauthenticated on purpose: the sign-in screen offers a language switcher
+   * and has no session to ask with, and none of this is a secret — the public
+   * site announces the same languages in its `hreflang` links.
+   *
+   * It exists because `SUPPORTED_LOCALES` was configuration nothing consulted.
+   * The admin listed the whole message catalogue, so an installation serving
+   * one language still offered to write documents in the other, and the API
+   * accepted them: content nobody could reach, in a language the site does not
+   * route.
+   */
+  app.get('/config', async (_request, reply) =>
+    reply.send({
+      locales: env.SUPPORTED_LOCALES,
+      defaultLocale: env.DEFAULT_LOCALE,
+    }),
+  )
+
   /*
    * Rate limited like everything else. It reaches two dependencies, so leaving
    * it open would be an unmetered way to make the API work — the single-flight

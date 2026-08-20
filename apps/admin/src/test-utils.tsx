@@ -1,3 +1,5 @@
+// biome-ignore-all lint/suspicious/noDocumentCookie: the fixture clears what a
+// previous test left in the document, which is what a fresh browser would be.
 import {
   CONTENT_STATUSES,
   type CreationPermissions,
@@ -5,11 +7,14 @@ import {
   contentPageSchema,
   contentTypesSchema,
   type DocumentPermissions,
+  installationConfigSchema,
   type MediaSummary,
   mediaDocumentSchema,
   mediaPageSchema,
   translationSetSchema,
 } from '@presslabz/core'
+import { LOCALE_COOKIE_NAME } from '@presslabz/i18n'
+import { THEME_COOKIE_NAME } from '@presslabz/tokens'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -114,6 +119,8 @@ export interface FakeApiOptions {
   /** What it says about a document this session creates. */
   documentPermissions?: DocumentPermissions
   media?: FakeMedia[]
+  /** What this installation says it serves. Defaults to both languages. */
+  locales?: ('en' | 'fr')[]
   /** How many rows a page holds, so a test can force a second one. */
   pageSize?: number
   /** Whether this actor may add to the library. */
@@ -132,7 +139,12 @@ export interface RequestRecord {
 }
 
 export function fakeApi(options: FakeApiOptions = {}) {
-  const state = { signedIn: false, locale: 'en' }
+  /*
+   * What the server holds for this account. A test changes it to stand for
+   * "chosen on another machine", which is the only way that path can be
+   * exercised from here.
+   */
+  const state = { signedIn: false, locale: 'en', themePreference: 'system' }
   const requests: RequestRecord[] = []
   /*
    * Copied, not referenced. The fake writes to these on PATCH, the way the
@@ -184,22 +196,37 @@ export function fakeApi(options: FakeApiOptions = {}) {
     const body = init.body === undefined ? undefined : JSON.parse(String(init.body))
     requests.push({ route, body })
 
+    const currentUser = () => ({
+      ...testUser,
+      locale: state.locale,
+      themePreference: state.themePreference,
+    })
+
     if (route === 'GET /auth/me') {
-      return state.signedIn ? json({ user: { ...testUser, locale: state.locale } }) : json({}, 401)
+      return state.signedIn ? json({ user: currentUser() }) : json({}, 401)
     }
     if (route === 'POST /auth/login') {
       state.signedIn = true
-      return json({ user: { ...testUser, locale: state.locale } })
+      return json({ user: currentUser() })
     }
     if (route === 'POST /auth/logout') {
       state.signedIn = false
       return Promise.resolve(new Response(null, { status: 204 }))
     }
     if (route === 'PATCH /auth/preferences') {
-      const patch = body as { locale?: string }
+      const patch = body as { locale?: string; themePreference?: string }
       if (patch?.locale) state.locale = patch.locale
+      if (patch?.themePreference) state.themePreference = patch.themePreference
       return json(patch)
     }
+    if (route === 'GET /config') {
+      return json(
+        { locales: options.locales ?? ['en', 'fr'], defaultLocale: options.locales?.[0] ?? 'en' },
+        200,
+        installationConfigSchema,
+      )
+    }
+
     if (route === 'GET /content-types') {
       return state.signedIn
         ? json(
@@ -348,6 +375,24 @@ export function fakeApi(options: FakeApiOptions = {}) {
   })
 
   return { state, requests, documents, media, fetchMock }
+}
+
+/**
+ * Forgets the preferences a previous test left in the document.
+ *
+ * The language and the theme are cookies now, which is the point — they
+ * survive a reload — and jsdom keeps one document for a whole file, so
+ * "survives a reload" becomes "survives into the next test". A test that
+ * switched the interface to French would otherwise hand the next one an
+ * interface in French, and its failure would be about a label it could not
+ * find rather than about what it was testing.
+ */
+export function forgetPreferences() {
+  for (const name of [THEME_COOKIE_NAME, LOCALE_COOKIE_NAME]) {
+    document.cookie = `${name}=; Path=/; Max-Age=0`
+  }
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('lang')
 }
 
 export function renderApp(children?: ReactNode) {

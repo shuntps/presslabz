@@ -40,12 +40,12 @@ import {
   stateOfRevision,
   updateContent,
 } from '@presslabz/db'
-import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
 
 import { env } from '../env.ts'
+import { servedLocale, servesLocale } from '../locales.ts'
 
 /**
  * One set of handlers for every content type. The type is a path segment
@@ -67,7 +67,7 @@ interface ContentRoutesOptions {
  * locale-scoped anyway.
  */
 const listQuery = z.object({
-  locale: z.string().refine(isLocale, { message: 'Unsupported locale' }),
+  locale: servedLocale,
   status: z
     .union([z.string(), z.array(z.string())])
     .optional()
@@ -581,6 +581,30 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       locale: string
       translationGroupId?: string
     } & ContentState
+
+    /*
+     * The type's schema answers whether PressLabz has a catalogue for this
+     * language; this answers whether this installation serves it. They are
+     * different questions, and only the second one can be configured — a site
+     * narrowed to English used to store French documents that its public site
+     * has no route for and does not announce.
+     *
+     * Checked here rather than inside the content type, because a content type
+     * is a description of what this software can hold and knows nothing about
+     * one deployment's variables.
+     */
+    if (!servesLocale(locale)) {
+      return reply.code(400).send({
+        error: 'invalid_request',
+        reason: 'locale-not-served',
+        issues: [
+          {
+            path: 'locale',
+            message: `This installation serves ${env.SUPPORTED_LOCALES.join(', ')}`,
+          },
+        ],
+      })
+    }
 
     /*
      * The status decides which operations this write needs. Checking only

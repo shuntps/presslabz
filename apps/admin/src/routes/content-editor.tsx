@@ -1,12 +1,13 @@
 import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
-import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
+import { LOCALE_LABELS, type Locale, type MessageKey } from '@presslabz/i18n'
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { BlockEditor } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
 import { BLOCK_LABELS, CREATABLE_BLOCKS, emptyBlock, imageBlock } from '../lib/blocks.ts'
+import { servedLocales, useInstallationConfig } from '../lib/config.ts'
 import {
   type ContentSummary,
   useContent,
@@ -83,6 +84,10 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
    * move one between languages.
    */
   const [documentLocale, setDocumentLocale] = useState<Locale>(search.locale ?? locale)
+
+  // What this site publishes in, which is configuration and therefore the
+  // server's answer rather than a list compiled into this bundle.
+  const served = servedLocales(useInstallationConfig().data)
 
   const existing = useContent(type, id ?? '')
   const siblings = useTranslations(type, id ?? '')
@@ -383,7 +388,12 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
               value={documentLocale}
               onChange={(event) => setDocumentLocale(event.target.value as Locale)}
             >
-              {LOCALES.map((option) => (
+              {/*
+                What this installation writes, not what PressLabz can speak.
+                Offering the whole catalogue meant offering a language the API
+                refuses, discovered on save.
+              */}
+              {served.map((option) => (
                 <option key={option} value={option}>
                   {LOCALE_LABELS[option]}
                 </option>
@@ -414,6 +424,7 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
              * It is withheld instead.
              */
             canCreate={siblings.data?.permissions.create ?? false}
+            served={served}
           />
         )}
 
@@ -552,12 +563,15 @@ function TranslationPanel({
   siblings,
   canCreate,
   failed,
+  served,
 }: {
   type: string
   current: ContentSummary
   siblings: ContentSummary[]
   canCreate: boolean
   failed: boolean
+  /** The languages this installation serves, in its own order. */
+  served: readonly Locale[]
 }) {
   const { t } = useLocale()
   /*
@@ -567,7 +581,7 @@ function TranslationPanel({
    * offer produces a 409 for a rule the interface already knew.
    */
   const present = new Set<string>([current.locale, ...siblings.map((row) => row.locale)])
-  const missing = canCreate ? LOCALES.filter((option) => !present.has(option)) : []
+  const missing = canCreate ? served.filter((option) => !present.has(option)) : []
 
   return (
     <div className="translations">
