@@ -846,6 +846,59 @@ button.quiet:hover:not(:disabled) {
 }
 
 /*
+ * Leaving a document that holds unsaved work.
+ *
+ * A panel, not an alarm: the colour that marks urgency in this design is the
+ * rubric, and it is spent on the heading rather than on a red field. Three
+ * answers, in the order somebody wants them — keep the work, stay, throw it
+ * away — with the destructive one last and quiet.
+ */
+.leaving {
+  max-width: 34rem;
+  padding: var(--pl-space-4);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-raised);
+  color: var(--pl-color-text);
+}
+
+.leaving::backdrop {
+  background: var(--pl-color-scrim);
+}
+
+.leaving h2 {
+  margin: 0 0 var(--pl-space-2);
+  color: var(--pl-color-rubric);
+}
+
+.leaving p {
+  margin: 0 0 var(--pl-space-4);
+}
+
+.leaving-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-2);
+}
+
+.leaving-actions button:not(.primary) {
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-subtle);
+  color: var(--pl-color-text);
+  font-size: var(--pl-text-sm);
+  cursor: pointer;
+}
+
+/* The unsaved marker beside the save button: a word, not a dot. */
+.unsaved {
+  color: var(--pl-color-rubric);
+  font-size: var(--pl-text-xs);
+}
+
+/*
  * The end of a page, which is a place and not an edge.
  *
  * A button rather than a scroll listener: everything below the rows — the

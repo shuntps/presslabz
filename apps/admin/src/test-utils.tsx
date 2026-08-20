@@ -134,8 +134,14 @@ export interface RequestRecord {
 export function fakeApi(options: FakeApiOptions = {}) {
   const state = { signedIn: false, locale: 'en' }
   const requests: RequestRecord[] = []
-  const documents: Record<string, unknown>[] = [...(options.documents ?? [])]
-  const media: FakeMedia[] = [...(options.media ?? [])]
+  /*
+   * Copied, not referenced. The fake writes to these on PATCH, the way the
+   * server writes to rows, and a test's fixture is usually a module-level
+   * constant shared with every other test in the file — so without this, one
+   * test's edit is the next test's starting state.
+   */
+  const documents: Record<string, unknown>[] = structuredClone(options.documents ?? [])
+  const media: FakeMedia[] = structuredClone(options.media ?? [])
   const creationPermissions = options.creationPermissions ?? FULL_CREATION_PERMISSIONS
   const documentPermissions = options.documentPermissions ?? FULL_DOCUMENT_PERMISSIONS
   const mediaPermissions = options.mediaPermissions ?? { upload: true }
@@ -230,9 +236,40 @@ export function fakeApi(options: FakeApiOptions = {}) {
       documents.push(created)
       return json({ content: created }, 201, contentDocumentSchema)
     }
+    /*
+     * An edit lands on the stored document and comes back as the server would
+     * send it: merged, with the version moved on. It used to fall through to
+     * the listing branch and answer a page — which every test accepted,
+     * because nothing looked at what came back.
+     */
+    if (method === 'PATCH' && url.pathname.startsWith('/content/')) {
+      const id = url.pathname.split('/').pop()
+      const found = documents.find((document) => document.id === id)
+      if (!found) return json({ error: 'not_found' }, 404)
+
+      const { expectedVersion, ...changes } = (body ?? {}) as Record<string, unknown>
+      if (typeof expectedVersion === 'number' && expectedVersion !== found.version) {
+        return json({ error: 'conflict', reason: 'stale-version' }, 409)
+      }
+
+      Object.assign(found, changes, {
+        version: (found.version as number) + 1,
+        updatedAt: '2026-08-16T10:00:00.000Z',
+      })
+      return json({ content: found }, 200, contentDocumentSchema)
+    }
+
     if (method === 'GET' && url.pathname.endsWith('/translations')) {
+      // The whole group, the way the real endpoint answers it: the document
+      // asked about is in the list, and so are its other languages.
+      const id = url.pathname.split('/').at(-2)
+      const anchor = documents.find((document) => document.id === id)
+      const group = anchor
+        ? documents.filter((document) => document.translationGroupId === anchor.translationGroupId)
+        : []
+
       return json(
-        { translations: [], permissions: translationPermissions },
+        { translations: group, permissions: translationPermissions },
         200,
         translationSetSchema,
       )

@@ -48,14 +48,47 @@ const contentNewRoute = createRoute({
     ...(isLocale(search.locale) ? { locale: search.locale } : {}),
     ...(typeof search.group === 'string' ? { group: search.group } : {}),
   }),
-  component: () => <ContentEditorPage mode="new" />,
+  component: ComposeDocument,
 })
 
 const contentEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/content/$type/$id',
-  component: () => <ContentEditorPage mode="edit" />,
+  component: EditDocument,
 })
+
+/**
+ * The editor's identity is the document, and React is told so with a `key`.
+ *
+ * The router keeps a route's component mounted when only a parameter changes,
+ * which is right for a listing and wrong for an editor: the draft is seeded
+ * once, from whichever document was open first, while the save mutation
+ * follows the id in the URL. Moving between two translations therefore wrote
+ * the document being left over the one being opened — under a title bar that
+ * had already changed to the new one, so nothing looked wrong until the
+ * damage was read back.
+ *
+ * A key is the whole fix. Everything the screen holds — the draft, the
+ * selected block, the picker, the state of the last save — is remounted with
+ * it, so nothing added to this screen later has to remember to reset itself.
+ * The alternative, an effect that clears each piece of state on id change, is
+ * a list that the next state to be added will not be on.
+ */
+function EditDocument() {
+  const { id } = contentEditRoute.useParams()
+  return <ContentEditorPage key={id} mode="edit" />
+}
+
+/**
+ * The same rule for a document that does not exist yet. Its identity is the
+ * language it is being written in and the group it joins, both of which live
+ * in the URL: starting the French translation while composing an English post
+ * is a navigation between two different pieces of work.
+ */
+function ComposeDocument() {
+  const { locale, group } = contentNewRoute.useSearch()
+  return <ContentEditorPage key={`new:${locale ?? ''}:${group ?? ''}`} mode="new" />
+}
 
 const routeTree = rootRoute.addChildren([
   dashboardRoute,

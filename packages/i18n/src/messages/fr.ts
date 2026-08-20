@@ -134,6 +134,13 @@ export const fr: Messages = {
   'error.staleVersion':
     'Quelqu’un a enregistré ce document pendant que vous l’éditiez. Rien n’a été écrasé — rechargez pour voir l’état actuel.',
   'editor.reload': 'Recharger',
+  'editor.unsaved': 'Pas encore enregistré',
+  'editor.leaveTitle': 'Ce document contient des modifications non enregistrées',
+  'editor.leaveBody':
+    'Elles n’existent que dans ce navigateur. Quitter maintenant est la seule façon de les perdre.',
+  'editor.leaveStay': 'Rester ici',
+  'editor.leaveDiscard': 'Quitter sans enregistrer',
+  'editor.leaveSave': 'Enregistrer, puis quitter',
   'error.notFound': 'Introuvable',
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',

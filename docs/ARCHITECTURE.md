@@ -186,6 +186,12 @@ Reads are **public**, not signed. A signed URL expires, and a page cached at the
 
 A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text does not mean rewriting every document that uses it. Alt text is a per-locale JSONB map on the media row rather than one row per language — the objections that rule out per-field translation for documents do not apply to a short string that never publishes on its own. The caption belongs to one *use* of an image, so it lives on the block. Who may write that alt text is covered under permissions below: it belongs to whoever uploaded the asset.
 
+## Unsaved work, and the screen that holds it
+
+**The editor's identity is the document, and React is told so with a key.** A router keeps a route's component mounted when only a parameter changes — right for a listing, wrong for an editor. The draft was seeded once, from whichever document was opened first, while the save mutation followed the id in the URL: moving between two translations wrote the document being left over the one being opened, under a title bar that had already changed to the new one, so nothing looked wrong until the damage was read back. The key remounts everything the screen holds — draft, selected block, picker, the state of the last save — so nothing added here later has to remember to reset itself. A "new" document is keyed by the language and group in its URL, because starting a translation while composing is a move between two pieces of work.
+
+**A screen that holds unsaved work says so, and does not let go of it quietly.** `dirty` is set by the one function that changes the draft and cleared by a save that landed; "Saved" is a statement about what the server holds, so it disappears at the first keystroke rather than lingering through a paragraph of new writing. Leaving is intercepted with the router's blocker — internal navigation and closing the tab both — and the dialog offers three answers, not two: stay, leave without saving, or save and then leave. Two answers make the author responsible for remembering to press save first; the third is what people actually want, and the leaving waits for the save to land rather than navigating away from the screen that is making the request.
+
 ## Pagination
 
 **Every listing is a page, and the page is asked for by cursor.** `GET /content/:type` and `GET /media` take `limit` (25 by default, 100 at most) and an opaque `cursor`, and answer with the rows, `nextCursor`, and — for content — `total` and `drafts` for the heading. `nextCursor` is `null` on the last page, which is how a client knows to stop. Nothing takes an offset.
@@ -530,6 +536,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |
+| `pnpm seed:bulk` | Volume instead of particulars: twenty-five posts across every status, some translated, six to twenty-three blocks each, and real images through the real pipeline. Deterministic, and idempotent by slug |
 | `pnpm db:generate` | Write a migration from the schema diff |
 | `pnpm db:migrate` | Apply pending migrations |
 | `pnpm db:studio` | Browse the database |

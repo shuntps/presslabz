@@ -5,6 +5,7 @@ import {
   type FakeApiOptions,
   FULL_CREATION_PERMISSIONS,
   fakeApi,
+  fakeDocument,
   getInput,
   renderApp,
   signIn,
@@ -19,8 +20,18 @@ import {
 
 let api: ReturnType<typeof fakeApi>
 
+/** jsdom has <dialog> but not its modal methods; the leaving dialog needs them. */
+const dialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototype)
+
 beforeEach(() => {
   window.history.pushState({}, '', '/')
+  HTMLDialogElement.prototype.showModal = function showModal() {
+    this.open = true
+  }
+  HTMLDialogElement.prototype.close = function close() {
+    this.open = false
+    this.dispatchEvent(new Event('close'))
+  }
   api = fakeApi()
   vi.stubGlobal('fetch', api.fetchMock)
   // Node's webcrypto is present in jsdom, but block ids must be uuids and a
@@ -35,7 +46,19 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  Object.defineProperties(HTMLDialogElement.prototype, dialogMethods)
 })
+
+/**
+ * The edit that was sent, or a failure that says none was. Reading it as
+ * `find(...)?.body` and casting hides the difference between "sent the wrong
+ * thing" and "sent nothing at all", which are not the same defect.
+ */
+function patchRequest() {
+  const sent = api.requests.find((request) => request.route.startsWith('PATCH'))
+  if (!sent) throw new Error('no PATCH was sent')
+  return sent
+}
 
 /** Replaces the default fake, for a test that needs the server to say no. */
 function serverSays(options: FakeApiOptions) {
@@ -411,5 +434,184 @@ describe('editing content that came from somewhere else', () => {
     expect(sent.blocks).toHaveLength(2)
     expect(sent.blocks[0]?.id).toBe(duplicate.id)
     expect(sent.blocks[1]?.id).not.toBe(duplicate.id)
+  })
+})
+
+describe('moving from one document to another', () => {
+  /** A pair: the same work in two languages, as the panel offers them. */
+  const english = fakeDocument({
+    id: 'doc-en',
+    locale: 'en',
+    slug: 'the-english-one',
+    title: 'The English one',
+    translationGroupId: 'group-1',
+  })
+
+  const french = fakeDocument({
+    id: 'doc-fr',
+    locale: 'fr',
+    slug: 'la-version-francaise',
+    title: 'La version française',
+    translationGroupId: 'group-1',
+  })
+
+  async function openThenFollowTheTranslation() {
+    serverSays({ documents: [english, french] })
+    await open('/content/post/doc-en')
+    await screen.findByDisplayValue('The English one')
+
+    await userEvent.click(screen.getByRole('link', { name: /la version française/i }))
+    await screen.findByDisplayValue('La version française')
+  }
+
+  /*
+   * The fault this closes, and the reason it was invisible: the router keeps
+   * the component mounted when only `$id` changes, so the draft stayed the one
+   * seeded from the English document while the save mutation had already moved
+   * to the French id. Pressing save wrote the English document over the French
+   * one, under a title bar that read "La version française" the whole time.
+   */
+  it('never saves the document it came from onto the one it arrived at', async () => {
+    await openThenFollowTheTranslation()
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(true)
+    })
+
+    const sent = patchRequest()
+    expect(sent.route).toBe('PATCH /content/post/doc-fr')
+    expect((sent.body as { title: string; slug: string }).title).toBe('La version française')
+    expect((sent.body as { slug: string }).slug).toBe('la-version-francaise')
+  })
+
+  it('shows the document it arrived at, down to the fields nobody looks at', async () => {
+    await openThenFollowTheTranslation()
+
+    expect((getInput(/slug/i) as HTMLInputElement).value).toBe('la-version-francaise')
+  })
+
+  /*
+   * The version travels with the document. Sending the one from the previous
+   * screen is how an edit gets refused as stale — or worse, accepted, because
+   * the number happened to match.
+   */
+  it('states the version of the document it is actually editing', async () => {
+    serverSays({
+      documents: [english, { ...french, version: 7 }],
+    })
+    await open('/content/post/doc-en')
+    await screen.findByDisplayValue('The English one')
+
+    await userEvent.click(screen.getByRole('link', { name: /la version française/i }))
+    await screen.findByDisplayValue('La version française')
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(true)
+    })
+
+    expect((patchRequest().body as { expectedVersion: number }).expectedVersion).toBe(7)
+  })
+})
+
+describe('work that has not been saved', () => {
+  const document_ = fakeDocument({ id: 'doc-1', title: 'A live document', version: 3 })
+
+  async function openAndType(text = ' and then some') {
+    serverSays({ documents: [document_] })
+    await open('/content/post/doc-1')
+    const title = await screen.findByDisplayValue('A live document')
+
+    await userEvent.type(title, text)
+    return title
+  }
+
+  it('says so, beside the button that would fix it', async () => {
+    await openAndType()
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+  })
+
+  /*
+   * "Saved" is a statement about what the server holds. Read straight off the
+   * mutation, it stayed on screen through a paragraph of new writing and said
+   * the opposite of the truth.
+   */
+  it('stops calling itself saved the moment somebody types', async () => {
+    await openAndType()
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    expect(await screen.findByText(/^saved$/i)).toBeDefined()
+
+    await userEvent.type(screen.getByDisplayValue(/a live document/i), '!')
+
+    await waitFor(() => expect(screen.queryByText(/^saved$/i)).toBeNull())
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+  })
+
+  it('lets somebody leave a document they have not touched', async () => {
+    serverSays({ documents: [document_] })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+
+    await userEvent.click(screen.getByRole('link', { name: /dashboard/i }))
+
+    await screen.findByRole('heading', { name: /dashboard/i })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  describe('and somebody tries to leave', () => {
+    async function leave() {
+      await openAndType()
+      await userEvent.click(screen.getByRole('link', { name: /dashboard/i }))
+      return screen.findByRole('dialog')
+    }
+
+    it('asks, rather than letting the writing go', async () => {
+      const dialog = await leave()
+
+      expect(dialog.textContent).toMatch(/have not saved/i)
+      // Still here: the navigation is held, not finished.
+      expect(screen.getByDisplayValue(/a live document/i)).toBeDefined()
+    })
+
+    it('stays when asked to stay', async () => {
+      await leave()
+
+      await userEvent.click(screen.getByRole('button', { name: /stay here/i }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(screen.getByDisplayValue(/a live document and then some/i)).toBeDefined()
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(false)
+    })
+
+    it('leaves, and sends nothing, when the writing is abandoned on purpose', async () => {
+      await leave()
+
+      await userEvent.click(screen.getByRole('button', { name: /leave without saving/i }))
+
+      await screen.findByRole('heading', { name: /dashboard/i })
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(false)
+    })
+
+    /*
+     * The answer people actually want, and the reason this is a dialog of our
+     * own rather than the browser's two-button one: leaving is deferred until
+     * the save has landed, so the request is not made from a screen that is
+     * being torn down.
+     */
+    it('saves first, then leaves, when asked for both', async () => {
+      await leave()
+
+      await userEvent.click(screen.getByRole('button', { name: /save, then leave/i }))
+
+      await screen.findByRole('heading', { name: /dashboard/i })
+
+      const sent = patchRequest()
+      expect(sent.route).toBe('PATCH /content/post/doc-1')
+      expect((sent.body as { title: string }).title).toBe('A live document and then some')
+    })
   })
 })

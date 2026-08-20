@@ -1,8 +1,8 @@
 import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
 import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import { useEffect, useRef, useState } from 'react'
 import { BlockEditor } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
@@ -15,6 +15,7 @@ import {
   useTranslations,
 } from '../lib/content.ts'
 import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '../lib/datetime.ts'
+import { messageForError } from '../lib/errors.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -109,7 +110,39 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [pickingImage, setPickingImage] = useState(false)
 
+  /*
+   * Whether this screen holds work the server has not been told about.
+   *
+   * A flag set by the one function that changes the draft, rather than a
+   * comparison against the loaded document: it is exact about the thing that
+   * matters — somebody typed — and costs nothing on a document of twenty
+   * blocks. Its one inaccuracy is conservative: typing a character and taking
+   * it back leaves the screen marked as changed, which over-asks rather than
+   * under-warns.
+   */
+  const [dirty, setDirty] = useState(false)
+
+  /**
+   * What to run once a save asked for by the leaving dialog has landed. A ref
+   * rather than state: it is read inside the mutation's callback, which would
+   * otherwise close over whatever the value was when the save started.
+   */
+  const leaveAfterSaving = useRef<(() => void) | null>(null)
+
   const save = useSaveContent(type, id)
+
+  /*
+   * Nothing leaves this screen quietly while it holds unsaved work — neither a
+   * link in the rail, nor the back button, nor closing the tab.
+   * `enableBeforeUnload` is what covers that last one, and it is the browser's
+   * own dialog rather than ours: a page cannot draw over the moment it is
+   * being closed, and no library changes that.
+   */
+  const blocker = useBlocker({
+    shouldBlockFn: () => dirty,
+    enableBeforeUnload: () => dirty,
+    withResolver: true,
+  })
 
   /*
    * What the field's value actually means, spelled out. The number in the
@@ -136,7 +169,10 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
   }
   if (!draft) return <main className="content muted">{t('common.loading')}</main>
 
-  const patch = (changes: Partial<Draft>) => setDraft({ ...draft, ...changes })
+  const patch = (changes: Partial<Draft>) => {
+    setDirty(true)
+    setDraft({ ...draft, ...changes })
+  }
 
   const setTitle = (title: string) =>
     patch({ title, ...(draft.slugTouched ? {} : { slug: slugify(title) }) })
@@ -178,9 +214,18 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
       },
       {
         onSuccess: (content) => {
+          // Told, so the guard below stops asking and the indicator can say
+          // something true.
+          setDirty(false)
+
           if (id === null) {
             void navigate({ to: '/content/$type/$id', params: { type, id: content.id } })
+            return
           }
+
+          // Somebody chose "save and leave"; this is the leaving.
+          leaveAfterSaving.current?.()
+          leaveAfterSaving.current = null
         },
       },
     )
@@ -397,9 +442,102 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
           {save.isPending ? t('editor.saving') : t('editor.save')}
         </button>
 
-        {save.isSuccess && !save.isPending && <p className="muted saved">{t('editor.saved')}</p>}
+        {/*
+          "Saved" is a statement about what the server holds, so it stops being
+          true the moment somebody types. It used to be read straight off the
+          mutation, which meant it stayed on screen through a paragraph of new
+          writing and said the opposite of the truth.
+        */}
+        {save.isSuccess && !save.isPending && !dirty && (
+          <p className="muted saved">{t('editor.saved')}</p>
+        )}
+        {dirty && !save.isPending && <p className="muted unsaved">{t('editor.unsaved')}</p>}
       </aside>
+
+      <LeavingDialog
+        blocked={blocker.status === 'blocked'}
+        saving={save.isPending}
+        onStay={() => blocker.reset?.()}
+        onDiscard={() => blocker.proceed?.()}
+        /*
+         * The third answer, and the one people actually want. Leaving is
+         * deferred until the save lands: proceeding first would navigate away
+         * from the screen holding the request.
+         */
+        onSaveThenLeave={() => {
+          leaveAfterSaving.current = () => blocker.proceed?.()
+          onSave()
+        }}
+      />
     </fieldset>
+  )
+}
+
+/**
+ * What happens when somebody leaves a document holding unsaved work.
+ *
+ * Three answers rather than two. "Leave or stay" makes the author responsible
+ * for remembering to press save first, and a person who meant to keep their
+ * writing has to cancel, find the button, and start the navigation again.
+ *
+ * A native `<dialog>`, like the media picker: modality, focus trapping and
+ * Escape come with the element. It is opened from an effect, never during
+ * render — a dialog opened while rendering is a DOM side effect in a function
+ * React may call twice and may throw away.
+ */
+function LeavingDialog({
+  blocked,
+  saving,
+  onStay,
+  onDiscard,
+  onSaveThenLeave,
+}: {
+  blocked: boolean
+  saving: boolean
+  onStay: () => void
+  onDiscard: () => void
+  onSaveThenLeave: () => void
+}) {
+  const { t } = useLocale()
+  const dialog = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    const element = dialog.current
+    if (!element) return
+
+    if (blocked && !element.open) element.showModal()
+    if (!blocked && element.open) element.close()
+  }, [blocked])
+
+  return (
+    <dialog
+      ref={dialog}
+      className="leaving"
+      aria-labelledby="leaving-title"
+      /*
+       * Escape and the backdrop close a native dialog on their own, and both
+       * mean "I did not mean to leave" — so the navigation is cancelled rather
+       * than left pending, which would strand the router.
+       */
+      onClose={onStay}
+    >
+      <h2 id="leaving-title" className="panel-heading">
+        {t('editor.leaveTitle')}
+      </h2>
+      <p className="muted">{t('editor.leaveBody')}</p>
+
+      <div className="leaving-actions">
+        <button type="button" className="primary" onClick={onSaveThenLeave} disabled={saving}>
+          {saving ? t('editor.saving') : t('editor.leaveSave')}
+        </button>
+        <button type="button" onClick={onStay}>
+          {t('editor.leaveStay')}
+        </button>
+        <button type="button" className="quiet" onClick={onDiscard}>
+          {t('editor.leaveDiscard')}
+        </button>
+      </div>
+    </dialog>
   )
 }
 
@@ -490,14 +628,22 @@ function isConflict(error: unknown): boolean {
 }
 
 function messageFor(error: unknown, t: (key: MessageKey) => string): string {
-  if (!(error instanceof ApiError)) return t('error.unexpected')
-
   // The reason first: the server names exactly what went wrong, and the status
   // alone cannot tell a refused publication from a refused translation group —
   // both are 403.
-  const named = error.reason === undefined ? undefined : REASON_MESSAGES[error.reason]
+  const named =
+    error instanceof ApiError && error.reason !== undefined
+      ? REASON_MESSAGES[error.reason]
+      : undefined
   if (named) return t(named)
 
-  if (error.status === 403) return t('error.cannotPublish')
-  return t('error.unexpected')
+  /*
+   * Everything else through the shared table, which knows the difference
+   * between a refusal, an absence, a rate limit, a server that broke and one
+   * that never answered. This used to answer "you do not have permission to
+   * publish" to every 403 — a guess that was wrong for a document somebody
+   * else owns — and "something went wrong" to all the rest, including a save
+   * that never left the browser.
+   */
+  return t(messageForError(error))
 }

@@ -136,6 +136,12 @@ export const en = {
   'error.staleVersion':
     'Somebody else saved this document while you were editing it. Nothing was overwritten — reload to see what is there now.',
   'editor.reload': 'Reload',
+  'editor.unsaved': 'Not saved yet',
+  'editor.leaveTitle': 'This document has changes you have not saved',
+  'editor.leaveBody': 'They exist only in this browser. Leaving now is the one way to lose them.',
+  'editor.leaveStay': 'Stay here',
+  'editor.leaveDiscard': 'Leave without saving',
+  'editor.leaveSave': 'Save, then leave',
   'error.notFound': 'Not found',
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',
