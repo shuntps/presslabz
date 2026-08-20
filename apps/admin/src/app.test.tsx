@@ -1,6 +1,7 @@
 import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { API_URL } from './lib/api.ts'
 import { fakeApi, findInput, getInput, renderApp, signIn } from './test-utils.tsx'
 
 /*
@@ -125,5 +126,53 @@ describe('starting a document from the rail', () => {
 
     await screen.findByRole('link', { name: /dashboard/i })
     expect(screen.queryByRole('link', { name: /new posts/i })).toBeNull()
+  })
+})
+
+describe('when the API does not answer', () => {
+  /*
+   * Reported from a real machine: every screen of the admin sat on "Loading…"
+   * through reload after reload, with the request to /auth/me shown as pending
+   * in the network panel and nothing at all in the API's log — something
+   * between the two accepted the connection and never carried it through. A
+   * fetch has no deadline of its own, so the query never settled and the
+   * interface had nothing to say.
+   *
+   * The deadline itself is asserted in lib/api.test.ts, where a timeout can be
+   * measured in milliseconds instead of the fifteen seconds this screen waits.
+   * What is asserted here is the other half: that "nothing answered" reaches
+   * the screen as an address that did not answer, and not as "something went
+   * wrong" — which is advice to look at the wrong thing.
+   */
+  it('names the address instead of loading forever', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    renderApp()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(API_URL)
+    expect(screen.getByRole('button', { name: /try again/i })).toBeDefined()
+  })
+
+  it('offers to try again, and does', async () => {
+    const failing = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', failing)
+
+    renderApp()
+    await screen.findByRole('alert')
+    const attempts = failing.mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+
+    await waitFor(() => {
+      expect(failing.mock.calls.length).toBeGreaterThan(attempts)
+    })
   })
 })

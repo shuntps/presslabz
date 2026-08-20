@@ -138,4 +138,8 @@ export const fr: Messages = {
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',
   'error.unexpected': 'Une erreur est survenue',
+  'error.apiUnreachable': 'L’API à l’adresse {url} n’a pas répondu.',
+  'error.apiUnreachableHint':
+    'Elle n’est peut-être pas démarrée, ou une autre chose occupe cette adresse. Lancez pnpm dev, puis réessayez.',
+  'common.retry': 'Réessayer',
 }

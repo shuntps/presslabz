@@ -109,3 +109,83 @@ describe('where configuration comes from', () => {
     expect(existsSync(join(root, '.env.example'))).toBe(true)
   })
 })
+
+describe('a request nothing answers', () => {
+  /**
+   * A fetch that behaves like the network does: it settles only when its
+   * signal aborts. `vi.fn(() => new Promise(() => {}))` would hang the test
+   * instead of the request.
+   */
+  function neverAnswers() {
+    const fetchSpy = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          )
+        }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    return fetchSpy
+  }
+
+  /*
+   * The state this exists to end: a server that accepts the connection and
+   * never answers left the promise pending for as long as the tab was open,
+   * so the query never settled and the admin sat on "Loading…" — no error, no
+   * retry, nothing to act on, and nothing in the log either, because the
+   * request never reached the API at all.
+   */
+  it('gives up, and says nothing answered rather than staying pending', async () => {
+    neverAnswers()
+    const { ApiError, apiFetch, NO_RESPONSE } = await import('./api.ts')
+
+    const failure = await apiFetch('/auth/me', { timeoutMs: 20 }).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(ApiError)
+    expect((failure as InstanceType<typeof ApiError>).status).toBe(NO_RESPONSE)
+    expect((failure as InstanceType<typeof ApiError>).code).toBe('timeout')
+  })
+
+  it('says the same about an address with nothing behind it', async () => {
+    // What fetch does when the connection is refused or CORS blocks the
+    // answer: it rejects with a TypeError that says nothing useful.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+    const { ApiError, apiFetch, NO_RESPONSE } = await import('./api.ts')
+
+    const failure = await apiFetch('/auth/me').catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(ApiError)
+    expect((failure as InstanceType<typeof ApiError>).status).toBe(NO_RESPONSE)
+    expect((failure as InstanceType<typeof ApiError>).code).toBe('unreachable')
+  })
+
+  it('lets a caller who cancelled deliberately have their own abort back', async () => {
+    // A component that unmounts is not a failure to report, and dressing its
+    // cancellation as "the API did not answer" would put that on screen.
+    neverAnswers()
+    const { ApiError, apiFetch } = await import('./api.ts')
+
+    const controller = new AbortController()
+    const pending = apiFetch('/auth/me', { signal: controller.signal }).catch(
+      (error: unknown) => error,
+    )
+    controller.abort()
+
+    expect(await pending).not.toBeInstanceOf(ApiError)
+  })
+
+  it('waits longer for an upload than for anything else', async () => {
+    // An upload is sent over the wire and then decoded and re-encoded twice,
+    // behind a queue; fifteen seconds would refuse a large photo on a slow
+    // connection.
+    const { REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } = await import('./api.ts')
+
+    expect(UPLOAD_TIMEOUT_MS).toBeGreaterThan(REQUEST_TIMEOUT_MS)
+  })
+})

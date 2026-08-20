@@ -140,6 +140,10 @@ export const en = {
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',
   'error.unexpected': 'Something went wrong',
+  'error.apiUnreachable': 'The API at {url} did not answer.',
+  'error.apiUnreachableHint':
+    'It may not be running, or something else may be holding that address. Start it with pnpm dev, then try again.',
+  'common.retry': 'Try again',
 } as const
 
 export type MessageKey = keyof typeof en

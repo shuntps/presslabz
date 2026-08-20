@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiFetch } from './api.ts'
+import { apiFetch, UPLOAD_TIMEOUT_MS } from './api.ts'
 
 export interface MediaRendition {
   name: string
@@ -60,7 +60,15 @@ export function useUploadMedia() {
     mutationFn: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      const body = await apiFetch<{ media: MediaSummary }>('/media', { method: 'POST', body: form })
+      const body = await apiFetch<{ media: MediaSummary }>('/media', {
+        method: 'POST',
+        body: form,
+        // The one request whose length is the file rather than the server:
+        // sent over the wire, then decoded and re-encoded twice behind a
+        // queue. The ordinary fifteen seconds would refuse a large photo on
+        // a slow connection.
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+      })
       return body.media
     },
     onSuccess: (uploaded) => {
