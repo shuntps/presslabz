@@ -7,7 +7,14 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
-      "env": ["SITE_URL", "DEFAULT_LOCALE", "SUPPORTED_LOCALES", "WEB_HOST", "WEB_PORT"]
+      "env": [
+        "SITE_URL",
+        "SITE_NAME",
+        "DEFAULT_LOCALE",
+        "SUPPORTED_LOCALES",
+        "WEB_HOST",
+        "WEB_PORT"
+      ]
     },
     "dev": {
       "cache": false,
@@ -29,6 +36,7 @@
         "S3_SECRET_ACCESS_KEY",
         "MEDIA_BASE_URL",
         "SITE_URL",
+        "SITE_NAME",
         "WEB_HOST",
         "WEB_PORT",
         "ADMIN_ORIGIN",

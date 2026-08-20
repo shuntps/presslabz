@@ -1,0 +1,22 @@
+---
+import type { InlineContent } from '@presslabz/blocks'
+import { renderInline } from '@presslabz/blocks'
+
+interface Props {
+  content: InlineContent
+}
+
+const { content } = Astro.props
+
+/*
+ * Marked text — bold, links, code spans — rendered by the whitelist, not by
+ * the theme.
+ *
+ * Every theme would otherwise write this loop, and every one of them would be
+ * a place to get escaping wrong. What comes out here is the same markup the
+ * reference renderer produces, so a link's href is checked against the safe
+ * schemes and the text is escaped, whoever is rendering the page.
+ */
+---
+
+<Fragment set:html={renderInline(content)} />

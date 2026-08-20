@@ -1,0 +1,42 @@
+---
+import type { Blocks, ResolvedMedia } from '@presslabz/blocks'
+import { renderBlocksToHtml } from '@presslabz/blocks'
+import { blockComponentFor } from './define.ts'
+import type { BlockComponents } from './types.ts'
+
+interface Props {
+  blocks: Blocks
+  media: ReadonlyMap<string, ResolvedMedia>
+  components?: BlockComponents | undefined
+}
+
+const { blocks, media, components = {} } = Astro.props
+
+/*
+ * Per block, not per document: a theme that styles quotes and nothing else
+ * gets its quotes and the reference rendering for the rest. The alternative —
+ * all its components or none of them — makes the first useful theme a
+ * complete one, which is how theme ecosystems end up with seven forks of the
+ * same starter.
+ *
+ * The fallback is the whitelist renderer itself, not a copy of it. A theme
+ * can decide how a block looks; it cannot widen what a block may emit.
+ */
+const resolveMedia = (mediaId: string): ResolvedMedia | undefined => media.get(mediaId)
+---
+
+{
+  blocks.map((block) => {
+    const Component = blockComponentFor(components, block)
+    if (!Component) {
+      return <Fragment set:html={renderBlocksToHtml([block], { resolveMedia })} />
+    }
+
+    return (
+      <Component
+        block={block}
+        media={block.type === 'image' ? media.get(block.mediaId) : undefined}
+      />
+    )
+  })
+}

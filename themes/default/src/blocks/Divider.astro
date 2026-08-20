@@ -1,0 +1,15 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+
+const { block } = Astro.props as BlockProps
+---
+
+{block.type === 'divider' ? <hr /> : null}
+
+<style>
+  hr {
+    border: 0;
+    border-block-start: 1px solid var(--pl-color-border);
+    margin-block: var(--pl-space-12);
+  }
+</style>

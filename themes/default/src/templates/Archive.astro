@@ -1,0 +1,23 @@
+---
+import type { ArchiveProps } from '@presslabz/theme-kit'
+import EntryList from './EntryList.astro'
+import Layout from './Layout.astro'
+import Pagination from './Pagination.astro'
+
+const { site, archive } = Astro.props as ArchiveProps
+---
+
+<Layout site={site} title={archive.title}>
+  <h1>{archive.title}</h1>
+  <EntryList site={site} entries={archive.entries} />
+  <Pagination site={site} archive={archive} />
+</Layout>
+
+<style>
+  h1 {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-2xl);
+    line-height: var(--pl-line-tight);
+    margin: 0 0 var(--pl-section);
+  }
+</style>

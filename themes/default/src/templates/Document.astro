@@ -1,0 +1,48 @@
+---
+import { formatDate } from '@presslabz/i18n'
+import type { DocumentProps } from '@presslabz/theme-kit'
+import Blocks from '@presslabz/theme-kit/Blocks.astro'
+import theme from '../theme.ts'
+import Layout from './Layout.astro'
+
+const { site, document } = Astro.props as DocumentProps
+---
+
+<Layout site={site} title={document.title} description={document.excerpt ?? undefined}>
+  <article>
+    <header>
+      <h1>{document.title}</h1>
+      {
+        document.publishedAt ? (
+          <time datetime={document.publishedAt.toISOString()}>
+            {formatDate(document.publishedAt, site.locale, { dateStyle: 'long' })}
+          </time>
+        ) : null
+      }
+    </header>
+
+    <Blocks blocks={document.blocks} media={document.media} components={theme.blocks} />
+  </article>
+</Layout>
+
+<style>
+  header {
+    margin-block-end: var(--pl-section);
+  }
+
+  h1 {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-2xl);
+    line-height: var(--pl-line-tight);
+    margin: 0 0 var(--pl-space-2);
+    /* The document's own title is the reader's material, so it takes the
+       content face rather than the interface one. */
+    max-width: var(--pl-measure);
+  }
+
+  time {
+    font-size: var(--pl-text-sm);
+    color: var(--pl-color-text-muted);
+    font-family: var(--pl-font-data);
+  }
+</style>

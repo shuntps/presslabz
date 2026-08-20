@@ -8,9 +8,10 @@
     ".": "./src/index.ts",
     "./breakpoints": "./src/breakpoints.ts",
     "./preferences": "./src/preferences.ts",
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./testing": "./src/testing.ts"
   },
-  "//": "Import ./breakpoints or ./preferences from anything without a DOM — the root entry pulls in document and HTMLElement.",
+  "//": "Import ./breakpoints or ./preferences from anything without a DOM \u2014 the root entry pulls in document and HTMLElement.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

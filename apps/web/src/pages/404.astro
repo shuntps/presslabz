@@ -1,7 +1,9 @@
 ---
+import { createBuiltinRegistry } from '@presslabz/core'
 import { negotiateLocale } from '@presslabz/i18n'
-import NotFound from '../components/NotFound.astro'
 import { localeConfig } from '../env.ts'
+import { siteContext } from '../lib/view.ts'
+import { theme } from '../theme.ts'
 
 /*
  * Reached when no route matched at all, so there is no locale in the path to
@@ -11,6 +13,10 @@ import { localeConfig } from '../env.ts'
 const locale =
   Astro.locals.locale ??
   negotiateLocale(Astro.request.headers.get('accept-language'), [...localeConfig.locales])
+
+const site = siteContext({ locale, path: Astro.url.pathname, registry: createBuiltinRegistry() })
+
+const NotFound = theme.templates.notFound
 ---
 
-<NotFound locale={locale} />
+<NotFound site={site} />

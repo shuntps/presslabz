@@ -1,0 +1,31 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+import Inline from '@presslabz/theme-kit/Inline.astro'
+
+const { block } = Astro.props as BlockProps
+const Tag = block.type === 'list' && block.ordered ? 'ol' : 'ul'
+---
+
+{
+  block.type === 'list' ? (
+    <Tag>
+      {block.items.map((item) => (
+        <li><Inline content={item} /></li>
+      ))}
+    </Tag>
+  ) : null
+}
+
+<style>
+  :is(ul, ol) {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-lg);
+    max-width: var(--pl-measure);
+    margin-block: 0 var(--pl-space-6);
+    padding-inline-start: var(--pl-space-6);
+  }
+
+  li {
+    margin-block-end: var(--pl-space-2);
+  }
+</style>

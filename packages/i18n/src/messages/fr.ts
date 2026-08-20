@@ -114,6 +114,7 @@ export const fr: Messages = {
   'web.notFound.title': 'Page introuvable',
   'web.notFound.body': "Cette page n'existe pas, ou n'est pas encore publiée.",
   'web.notFound.home': "Aller à l'accueil",
+  'web.nav.label': 'Sections',
   'web.archive.title': 'Écrits',
   'web.archive.empty': 'Rien de publié pour le moment.',
   'web.archive.older': 'Plus ancien',

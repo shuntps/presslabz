@@ -1,0 +1,54 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+import Inline from '@presslabz/theme-kit/Inline.astro'
+
+const { block, media } = Astro.props as BlockProps
+
+/*
+ * A missing asset drops the figure rather than rendering a broken image. The
+ * reader sees a document without a picture; a reader served a broken icon sees
+ * a site that is falling apart, and the author sees nothing wrong in the
+ * editor, where the reference still resolves.
+ */
+---
+
+{
+  block.type === 'image' && media ? (
+    <figure>
+      <img
+        src={media.src}
+        alt={media.alt}
+        width={media.width}
+        height={media.height}
+        loading="lazy"
+        decoding="async"
+      />
+      {block.caption ? (
+        <figcaption><Inline content={block.caption} /></figcaption>
+      ) : null}
+    </figure>
+  ) : null
+}
+
+<style>
+  figure {
+    margin-block: var(--pl-space-8);
+    margin-inline: 0;
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+    /* Width and height are on the element, so the box is reserved before the
+       bytes arrive and nothing below it jumps. */
+    height: auto;
+    background: var(--pl-color-bg-subtle);
+  }
+
+  figcaption {
+    font-family: var(--pl-font-machine);
+    font-size: var(--pl-text-sm);
+    color: var(--pl-color-text-muted);
+    margin-block-start: var(--pl-space-2);
+  }
+</style>

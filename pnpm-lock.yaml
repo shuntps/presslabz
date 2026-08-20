@@ -277,6 +277,12 @@ importers:
       '@presslabz/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@presslabz/theme-default':
+        specifier: workspace:*
+        version: link:../../themes/default
+      '@presslabz/theme-kit':
+        specifier: workspace:*
+        version: link:../../packages/theme-kit
       '@presslabz/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
@@ -394,11 +400,64 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.2.0)(jsdom@30.0.1)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
+  packages/theme-kit:
+    dependencies:
+      '@presslabz/blocks':
+        specifier: workspace:*
+        version: link:../blocks
+      '@presslabz/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@presslabz/tokens':
+        specifier: workspace:*
+        version: link:../tokens
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+      astro:
+        specifier: 'catalog:'
+        version: 7.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(tsx@4.23.12)(yaml@2.9.0)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.2.0)(jsdom@30.0.1)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/tokens:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.2.0)(jsdom@30.0.1)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
+
+  themes/default:
+    dependencies:
+      '@presslabz/blocks':
+        specifier: workspace:*
+        version: link:../../packages/blocks
+      '@presslabz/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
+      '@presslabz/theme-kit':
+        specifier: workspace:*
+        version: link:../../packages/theme-kit
+      '@presslabz/tokens':
+        specifier: workspace:*
+        version: link:../../packages/tokens
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+      astro:
+        specifier: 'catalog:'
+        version: 7.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(tsx@4.23.12)(yaml@2.9.0)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

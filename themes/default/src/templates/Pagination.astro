@@ -1,0 +1,48 @@
+---
+import type { ArchiveView, SiteContext } from '@presslabz/theme-kit'
+
+interface Props {
+  site: SiteContext
+  archive: ArchiveView
+}
+
+const { site, archive } = Astro.props
+---
+
+{
+  archive.pageCount > 1 ? (
+    <nav class="pages" aria-label={site.t('web.archive.title')}>
+      {archive.newerHref ? (
+        <a rel="prev" href={archive.newerHref}>{site.t('web.archive.newer')}</a>
+      ) : (
+        <span />
+      )}
+      <span class="count">
+        {site.t('web.archive.page', { page: archive.page, pages: archive.pageCount })}
+      </span>
+      {archive.olderHref ? (
+        <a rel="next" href={archive.olderHref}>{site.t('web.archive.older')}</a>
+      ) : (
+        <span />
+      )}
+    </nav>
+  ) : null
+}
+
+<style>
+  .pages {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--pl-space-4);
+    margin-block-start: var(--pl-section);
+    border-block-start: 1px solid var(--pl-color-border);
+    padding-block-start: var(--pl-space-6);
+    font-size: var(--pl-text-sm);
+  }
+
+  .count {
+    color: var(--pl-color-text-muted);
+    font-family: var(--pl-font-data);
+  }
+</style>

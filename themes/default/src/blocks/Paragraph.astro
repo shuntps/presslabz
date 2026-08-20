@@ -1,0 +1,18 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+import Inline from '@presslabz/theme-kit/Inline.astro'
+
+const { block } = Astro.props as BlockProps
+---
+
+{block.type === 'paragraph' ? <p><Inline content={block.content} /></p> : null}
+
+<style>
+  p {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-lg);
+    line-height: var(--pl-line-normal);
+    max-width: var(--pl-measure);
+    margin-block: 0 var(--pl-space-6);
+  }
+</style>

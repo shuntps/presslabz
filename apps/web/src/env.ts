@@ -28,6 +28,12 @@ const schema = z.object({
   DATABASE_URL: z.url(),
   /** Absolute URLs — canonical tags, hreflang, the sitemap — are built on it. */
   SITE_URL: z.url().default('http://localhost:4321'),
+  /*
+   * The name a reader sees. An environment variable until settings are
+   * exposed: it belongs in the settings table, and putting it there now would
+   * mean a database read on every page for a string that changes once a year.
+   */
+  SITE_NAME: z.string().min(1).max(120).default('PressLabz'),
   S3_ENDPOINT: z.url(),
   S3_BUCKET: z.string().min(1),
   MEDIA_BASE_URL: z.url().optional(),

@@ -1,0 +1,27 @@
+---
+import type { NotFoundProps } from '@presslabz/theme-kit'
+import Layout from './Layout.astro'
+
+const { site } = Astro.props as NotFoundProps
+---
+
+<Layout site={site} title={site.t('web.notFound.title')}>
+  <h1>{site.t('web.notFound.title')}</h1>
+  <p>{site.t('web.notFound.body')}</p>
+  <p><a href={site.homeHref}>{site.t('web.notFound.home')}</a></p>
+</Layout>
+
+<style>
+  h1 {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-2xl);
+    line-height: var(--pl-line-tight);
+    margin: 0 0 var(--pl-space-4);
+  }
+
+  p {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-lg);
+    max-width: var(--pl-measure);
+  }
+</style>
