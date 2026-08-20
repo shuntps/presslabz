@@ -12,7 +12,7 @@ export const slugSchema = z
   .string()
   .min(1)
   .max(120)
-  .regex(SLUG_PATTERN, { message: 'Use lowercase letters, digits and single hyphens' })
+  .regex(SLUG_PATTERN, { error: 'Use lowercase letters, digits and single hyphens' })
 
 /**
  * Suggests a slug from a title. A suggestion only — the author owns the slug,

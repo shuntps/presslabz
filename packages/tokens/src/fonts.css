@@ -20,6 +20,12 @@
  * The token names are the roles, not the typefaces, so a theme author
  * overrides the value rather than learning what we happened to pick. See the
  * --pl-font-* tokens in tokens.css.
+ *
+ * Each face is declared twice over one file. `format(woff2) tech(variations)`
+ * is the current syntax; `format("woff2-variations")` is the deprecated one it
+ * replaced, kept second for engines that render variable fonts and do not
+ * understand `tech()` — variable fonts shipped years before it did. A browser
+ * takes the first source it understands, so no one downloads two files.
  */
 
 /* Machine: every label, button, column head and navigation word. */
@@ -29,7 +35,9 @@
   font-weight: 100 900;
   font-stretch: 62% 125%;
   font-display: swap;
-  src: url("./fonts/Archivo.woff2") format("woff2-variations");
+  src:
+    url("./fonts/Archivo.woff2") format(woff2) tech(variations),
+    url("./fonts/Archivo.woff2") format("woff2-variations");
 }
 
 /* Content: anything that is, or stands for, the reader's own writing. */
@@ -38,7 +46,9 @@
   font-style: normal;
   font-weight: 200 900;
   font-display: swap;
-  src: url("./fonts/PressLabzSerif.woff2") format("woff2-variations");
+  src:
+    url("./fonts/PressLabzSerif.woff2") format(woff2) tech(variations),
+    url("./fonts/PressLabzSerif.woff2") format("woff2-variations");
 }
 
 /* Data: slugs, capability names, locale codes, dates, counts. */
@@ -47,5 +57,7 @@
   font-style: normal;
   font-weight: 100 800;
   font-display: swap;
-  src: url("./fonts/JetBrainsMono.woff2") format("woff2-variations");
+  src:
+    url("./fonts/JetBrainsMono.woff2") format(woff2) tech(variations),
+    url("./fonts/JetBrainsMono.woff2") format("woff2-variations");
 }

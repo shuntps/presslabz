@@ -23,7 +23,7 @@ import { z } from 'zod'
 const localeList = z
   .string()
   .default(LOCALES.join(','))
-  .refine(isLocaleList, { message: SUPPORTED_LOCALES_MESSAGE })
+  .refine(isLocaleList, { error: SUPPORTED_LOCALES_MESSAGE })
   .transform(parseLocaleList)
 
 /**
@@ -149,6 +149,29 @@ const namespace = z
   .regex(/^[A-Za-z0-9:._-]{1,64}$/, 'must be 1-64 characters of A-Z a-z 0-9 : . _ -')
   .default('presslabz:rl:')
 
+/**
+ * A URL this API will actually fetch from or write to, so the scheme is
+ * checked rather than assumed.
+ *
+ * `z.url()` accepts any scheme — `ftp://`, `file://`, `javascript:` — and an
+ * endpoint setting that takes those is a setting that can point the object
+ * store somewhere it was never meant to go.
+ *
+ * Zod's own `z.httpUrl()` is the obvious answer and cannot be used here:
+ * measured against 4.4.3, it refuses `http://localhost:9000`,
+ * `http://127.0.0.1:9000` and `http://minio:9000` — every hostname without a
+ * public dotted suffix. That is development, Docker Compose, and any
+ * installation whose bucket is a service name on an internal network. So the
+ * scheme is checked and the hostname is left alone.
+ */
+const httpUrl = z.url().refine(
+  (value) => {
+    const scheme = URL.parse(value)?.protocol
+    return scheme === 'http:' || scheme === 'https:'
+  },
+  { error: 'must be an http:// or https:// URL' },
+)
+
 const milliseconds = z.coerce.number().int().positive()
 
 export const envSchema = z
@@ -161,7 +184,7 @@ export const envSchema = z
     /** Exact origins allowed to send credentialed requests. Never a wildcard. */
     ADMIN_ORIGIN: adminOrigins,
     /* Object storage. MinIO locally, any S3-compatible service in production. */
-    S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
+    S3_ENDPOINT: httpUrl.default('http://localhost:9000'),
     S3_REGION: z.string().default('us-east-1'),
     S3_BUCKET: z.string().min(1).default('presslabz-media'),
     S3_ACCESS_KEY_ID: z.string().min(1).default('presslabz'),
@@ -172,7 +195,7 @@ export const envSchema = z
      * go to the bucket and reads come off a CDN in front of it. Defaults to
      * path-style against the endpoint, which is what MinIO serves locally.
      */
-    MEDIA_BASE_URL: z.string().url().optional(),
+    MEDIA_BASE_URL: httpUrl.optional(),
 
     /*
      * The page cache the public site fills. Both processes must read the same

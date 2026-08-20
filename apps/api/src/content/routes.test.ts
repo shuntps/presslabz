@@ -479,6 +479,21 @@ describe.skipIf(!ready)('content routes', () => {
       const response = await patch('editor', id, { authorId: ids.contributor })
       expect(response.statusCode).toBe(400)
     })
+
+    /*
+     * The same rule on the way in. Creating used to strip an unknown key and
+     * answer 201, so the same mistake was an error on one route and invisible
+     * on the other — and a caller who thought they had set an author was told
+     * their write succeeded.
+     */
+    it('refuses one on the way in, too', async () => {
+      const response = await post('editor', {
+        ...draft('unknown-on-create'),
+        authorId: ids.contributor,
+      })
+
+      expect(response.statusCode).toBe(400)
+    })
   })
 
   describe('listings', () => {

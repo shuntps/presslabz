@@ -144,9 +144,13 @@ function renameSfnt(sfnt, { family, postScript }) {
 
   const encoded = records.map((record) =>
     record.utf16
-      ? Buffer.from(new Uint8Array(Buffer.from(record.value, 'utf16le').map((_, i, all) =>
-          i % 2 === 0 ? all[i + 1] : all[i - 1],
-        )))
+      ? Buffer.from(
+          new Uint8Array(
+            Buffer.from(record.value, 'utf16le').map((_, i, all) =>
+              i % 2 === 0 ? all[i + 1] : all[i - 1],
+            ),
+          ),
+        )
       : Buffer.from(record.value, 'latin1'),
   )
 
@@ -186,7 +190,8 @@ function rebuildSfnt(sfnt, directory, tag, replacement) {
   const tables = directory
     .map((entry) => ({
       ...entry,
-      data: entry.tag === tag ? replacement : sfnt.subarray(entry.offset, entry.offset + entry.length),
+      data:
+        entry.tag === tag ? replacement : sfnt.subarray(entry.offset, entry.offset + entry.length),
     }))
     .sort((a, b) => (a.tag < b.tag ? -1 : 1))
 

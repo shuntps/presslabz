@@ -548,6 +548,20 @@ Three families travel with the product: Archivo for the interface, JetBrains Mon
 
 The subset is why a reader whose *content* needs a letter outside Latin and the French diacritics gets it from their system's serif. That is a visible seam and a deliberate trade: the three files together are under 300 KB, where the unsubsetted originals are more than 2 MB.
 
+## Deprecated is a defect with a date on it
+
+The baseline is deprecation-free by intention, which only means anything if somebody checks. What was found and fixed, and the two that could not be:
+
+**Zod 4 speaks in top-level formats and one error parameter.** `z.string().url()` and `{ message: … }` still work and are the previous generation's shape; the schemas use `z.url()` and `{ error: … }`.
+
+**`z.httpUrl()` is the obvious answer for an endpoint setting and cannot be used here.** Measured against Zod 4.4.3, it refuses `http://localhost:9000`, `http://127.0.0.1:9000` and `http://minio:9000` — every hostname without a public dotted suffix, which is development, Docker Compose, and any installation whose bucket is a service name on an internal network. The endpoint settings therefore check the *scheme* — `http:` or `https:`, so `ftp://`, `file://` and `javascript:` are refused — and leave the hostname alone. Following the recommendation literally would have broken every local install.
+
+**Create is strict, like update.** `z.object()` strips unknown keys, so creating a post with a `parentId` succeeded and dropped it: the same mistake was an error on one route and invisible on the other, and the caller was told their write did what they asked. Both schemas refuse now.
+
+**Font sources use the current CSS syntax.** `format(woff2) tech(variations)` replaced `format("woff2-variations")`, with the deprecated form kept as a second source over the same file — variable fonts shipped years before `tech()` did, and a browser takes the first source it understands, so nobody downloads twice.
+
+**One deprecation is not ours to remove.** `drizzle-kit` pulls `@esbuild-kit/esm-loader`, replaced upstream by `tsx`, and with it an esbuild old enough to carry a known advisory. The pnpm override keeps that esbuild out of this repository; the upstream tickets are named in `pnpm-workspace.yaml` beside it, with the date they were last checked. It goes when drizzle-kit stops depending on the loader, not before.
+
 ## Nothing unused stays
 
 **An export nothing imports is not an API, it is a claim.** `pnpm lint:unused` reports files, exports and dependencies that nothing reaches — it needs no installation, and it is the check that found two functions nobody called, seventeen exports narrowed back to their own module, four dependencies declared and never imported, and ten message keys in two languages that no screen renders. A constant that names a policy stays where it is; what goes is the `export` in front of it, because the surface should say what is actually used and can widen again the day something needs it.

@@ -7,7 +7,15 @@ packages:
 # drizzle-kit still pulls the deprecated @esbuild-kit/esm-loader, which pins
 # esbuild 0.18 — vulnerable to GHSA dev-server request forgery. drizzle-kit
 # also depends on esbuild ^0.25.4 and tsx directly, so the old loader is
-# legacy baggage. Remove this override once drizzle-kit drops it.
+# legacy baggage.
+#
+# Not ours to remove: it is a transitive dependency of a tool we do not
+# control. Upstream is aware — drizzle-team/drizzle-orm#5304 asks for the
+# replacement by tsx, #5689 proposes dropping the loader, and #5481 tracks the
+# esbuild versions that come with it; all three were open when this was last
+# checked, on 2026-08-20. The override is what keeps the vulnerable esbuild out
+# of this repository until one of them lands, and it goes the day drizzle-kit
+# stops depending on the loader.
 overrides:
   esbuild@<0.25.0: '>=0.25.0'
 

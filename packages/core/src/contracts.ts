@@ -33,7 +33,7 @@ const instant = z.iso.datetime()
  */
 const id = z.string().min(1)
 
-const locale = z.string().refine(isLocale, { message: 'Unsupported locale' })
+const locale = z.string().refine(isLocale, { error: 'Unsupported locale' })
 
 const contentStatus = z.enum(CONTENT_STATUSES)
 

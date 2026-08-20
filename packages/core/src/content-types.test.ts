@@ -93,12 +93,18 @@ describe('defineContentType', () => {
 
   it('offers a parent only where nesting means something', () => {
     const withParent = { parentId: '00000000-0000-4000-8000-0000000000ff' }
-    const page = pageType.createSchema.safeParse(document(withParent))
+
+    expect(pageType.createSchema.safeParse(document(withParent)).success).toBe(true)
+
+    /*
+     * A post has no parent, so the key is not part of its shape — and being
+     * told so is the point. This used to be accepted and the key dropped,
+     * which meant a caller who nested a post was told their write succeeded
+     * and got a document with no parent. Create is strict now, like update.
+     */
     const post = postType.createSchema.safeParse(document(withParent))
-    expect(page.success).toBe(true)
-    // A post has no parent, so the key is not part of its shape and is dropped.
-    expect(post.success).toBe(true)
-    expect(post.success && 'parentId' in post.data).toBe(false)
+    expect(post.success).toBe(false)
+    expect(post.success ? '' : JSON.stringify(post.error.issues)).toMatch(/parentId/)
   })
 
   it('refuses a language move by name rather than dropping it', () => {

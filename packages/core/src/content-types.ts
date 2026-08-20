@@ -222,15 +222,22 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
 
   const stateSchema = z.object(stateShape).refine(scheduleHasDate, SCHEDULE_NEEDS_DATE)
 
+  /*
+   * Strict, like the update schema below and for the same reason: a caller
+   * that sent a field the server dropped has been told its write succeeded
+   * when part of it did not. The two disagreed — create stripped silently,
+   * update refused — which meant the same mistake was an error on one route
+   * and invisible on the other.
+   */
   const createSchema = z
-    .object({
+    .strictObject({
       /**
        * Locale is required on create and refused on update. Every document is
        * one translation, and moving an existing one between languages would
        * silently change which unique (type, locale, slug) row it collides
        * with — a rename dressed up as an edit.
        */
-      locale: z.string().refine(isLocale, { message: 'Unsupported locale' }),
+      locale: z.string().refine(isLocale, { error: 'Unsupported locale' }),
       /** Supplied to attach this document to an existing translation group. */
       translationGroupId: z.uuid().optional(),
       ...stateShape,
