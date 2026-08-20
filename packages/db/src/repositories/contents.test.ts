@@ -855,14 +855,26 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state({ slug: 'l-enfant', parentId: parent.id }),
       })
 
-      const renamed = await updateContent(db, nestingType, child.id, { title: 'Renommé' }, {
-        expectedVersion: 1,
-      })
+      const renamed = await updateContent(
+        db,
+        nestingType,
+        child.id,
+        { title: 'Renommé' },
+        {
+          expectedVersion: 1,
+        },
+      )
       expect(renamed?.parentId).toBe(parent.id)
 
-      const detached = await updateContent(db, nestingType, child.id, { parentId: null }, {
-        expectedVersion: 2,
-      })
+      const detached = await updateContent(
+        db,
+        nestingType,
+        child.id,
+        { parentId: null },
+        {
+          expectedVersion: 2,
+        },
+      )
       expect(detached?.parentId).toBeNull()
     })
   })
