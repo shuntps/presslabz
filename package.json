@@ -23,6 +23,7 @@
     "db:studio": "pnpm --filter @presslabz/db studio",
     "seed": "pnpm --filter @presslabz/api seed",
     "seed:demo": "pnpm --filter @presslabz/api seed:demo",
+    "seed:bulk": "pnpm --filter @presslabz/api seed:bulk",
     "services:up": "docker compose up -d --wait",
     "services:down": "docker compose down",
     "services:reset": "docker compose down -v && docker compose up -d --wait"

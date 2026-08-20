@@ -1,6 +1,6 @@
 import { createDb, createInitialAdministrator, findUserByEmail } from '@presslabz/db'
-import { hashPassword } from './auth/password.ts'
-import { env } from './env.ts'
+import { hashPassword } from '../../src/auth/password.ts'
+import { env } from '../../src/env.ts'
 
 /**
  * Creates the first administrator. Refuses to run once any user exists, so it

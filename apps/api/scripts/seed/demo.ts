@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Block, Blocks, InlineContent } from '@presslabz/blocks'
+import type { Blocks } from '@presslabz/blocks'
 import { pageType, postType } from '@presslabz/core'
 import {
   type ContentRow,
@@ -11,7 +11,8 @@ import {
   findUserByEmail,
   listUsers,
 } from '@presslabz/db'
-import { env } from './env.ts'
+import { env } from '../../src/env.ts'
+import { heading, paragraph, text } from './blocks.ts'
 
 /**
  * Fixture content for local development.
@@ -26,24 +27,6 @@ import { env } from './env.ts'
  */
 if (env.NODE_ENV === 'production') {
   throw new Error('seed:demo writes fixture content and refuses to run in production')
-}
-
-/*
- * Every block carries an id and every inline node names its type, because the
- * editor needs a stable key across reorders and the vocabulary has room for
- * more than text. The fixtures build them the same way the editor does rather
- * than through a shorthand that would only be correct here.
- */
-function text(value: string): InlineContent {
-  return [{ type: 'text', text: value }]
-}
-
-function paragraph(value: string): Block {
-  return { id: randomUUID(), type: 'paragraph', content: text(value) }
-}
-
-function heading(value: string, level: 2 | 3 = 2): Block {
-  return { id: randomUUID(), type: 'heading', level, content: text(value) }
 }
 
 const { db, close } = createDb(env.DATABASE_URL, { maxConnections: 2 })
