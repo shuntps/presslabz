@@ -28,7 +28,7 @@ These four rules are the point of the project. Designs that violate them should 
 
 3. **Plugins declare capabilities; they never hold ambient authority.** In WordPress any installed plugin gets full database, filesystem, network and `eval` access, which is why plugin vulnerabilities are consistently the most commonly reported route into a WordPress site. Here a plugin ships a manifest (`content:read`, `http:fetch:<host>`, …) and untrusted third-party code runs isolated.
 
-4. **Cache invalidation is native and tag-based.** Rendering collects tags (`post:123`, `term:5`) via `AsyncLocalStorage`, so themes declare nothing manually; publishing purges exactly the pages that read the changed content. Caching is core, not a bolt-on plugin.
+4. **Cache invalidation is native and tag-based.** Rendering collects tags (`content:<id>`, `list:post:en`) via `AsyncLocalStorage`, so themes declare nothing manually; publishing purges exactly the pages that read the changed content. Caching is core, not a bolt-on plugin.
 
 ## Scope decisions
 
@@ -59,6 +59,7 @@ apps/web           Astro public rendering, loads themes
 packages/core      domain: content model, hook API, capabilities
 packages/blocks    block schemas + whitelist renderers
 packages/db        Drizzle schema + migrations
+packages/cache     tag collection and the page cache Valkey holds
 packages/tokens    design tokens — the only place colors and theming exist
 packages/ui        shared UI primitives, built on tokens
 packages/i18n      locale config, message catalogues, formatting
@@ -255,6 +256,26 @@ When the store is unreachable the global limit **fails open** — it is a courte
 **`/health` answers for every dependency, including the limiter's store.** A degraded store used to be a line inside a body that still said `status: ok` behind a 200 — a health check reporting health while `/auth/login` refused everyone, telling a load balancer to keep sending traffic to an instance that could not authenticate anybody. Database, cache or store: any one of them degraded makes the whole report `degraded` and the response 503. `up` means every dependency answered, not that everything is perfect.
 
 **`/health` is bounded and does not accumulate.** Each dependency is probed under `HEALTH_CHECK_TIMEOUT_MS`, and at most one probe per dependency runs at a time: concurrent callers await the one already running instead of starting another, or a liveness check calling every few seconds against a wedged database would stack a query per call and exhaust the pool. The slot is released when the operation finally settles, so a later probe genuinely observes recovery. This bounds the **response**, not the work — the query that lost the race runs to completion inside the database. Postgres.js can cancel a query, but its own documentation warns that cancellation opens a new connection, is not guaranteed, and can race into cancelling a different one, so it is not used. `/health` stays subject to the rate limiter: it reaches two dependencies, and leaving it unmetered would be an unlimited way to make the API work.
+
+## Public rendering and caching
+
+The public site reads the database directly, through the same repositories the API uses. It is one installation serving one site, so an HTTP hop between two processes on the same host would buy a boundary nothing needs and cost a round trip per render — and the tag collection below has to happen where the reading happens, which a hop would put on the wrong side.
+
+**What is public is a domain rule, not a `where` clause.** `isPubliclyVisible` in `packages/core` answers it, and `packages/db/src/repositories/public-contents.ts` restates it in SQL because a listing has to be counted and paginated by the database. Two expressions of one rule is the duplication this project treats as a defect, so an integration test crosses every status with every relation a date can have to now and asserts the two select the same rows. When it fails, the SQL is the copy that is wrong.
+
+The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible however old its date. Nothing yet moves `scheduled` to `published` when its time comes, and answering that question in a read would be the scheduler implemented in the one place that cannot write the row, fire the hooks or purge the cache.
+
+**Pages nest, but the unique index is on `(type, locale, slug)`.** A slug therefore already identifies a row, and the ancestor chain is only needed to know which URL is canonical. The walk is one recursive query, restricted to the same type and locale — a parent in another language is not part of this language's path — and it is depth-capped, because `parentId` has no cycle check behind it yet and a recursive query over a cycle does not terminate.
+
+### The page cache
+
+`packages/cache` holds both halves: the site collects tags while it renders, the API purges them when content changes. A tag is built by that package or not at all, since a site writing `content:x` while the API purges `contents:x` is a cache that looks like it works — a miss is invisible and a stale page is only ever noticed by a reader.
+
+Collection is `AsyncLocalStorage`, so a theme declares nothing and cannot forget anything. Outside a render, collecting a tag does nothing rather than failing: the same read functions serve the cached site, the uncached preview and one-off scripts.
+
+Everything that touches more than one key is one Lua script, for the same reason the rate limiter's counter is. The interleaving that matters is a publish landing *between* a render and its store: the purge finds nothing to delete because the page is not written yet, and the render then stores what it read. Every lookup therefore returns Valkey's own clock, and a store is refused when a tag it carries was purged at or after that instant. A tie counts as the purge winning — that costs one uncached render, where the other reading keeps a page that is already wrong for a whole ttl.
+
+The ttl is a backstop for a purge that never arrived, not the invalidation. Caching is single-instance Valkey by design: purging fans out to keys the caller cannot name in advance, and a tag set has to live with its members.
 
 ## Hook API
 
