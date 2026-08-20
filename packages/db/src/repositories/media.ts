@@ -1,6 +1,7 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
-import { media } from '../schema/media.ts'
+import { contents } from '../schema/contents.ts'
+import { media, mediaOrphans } from '../schema/media.ts'
 
 export type MediaRow = typeof media.$inferSelect
 
@@ -70,9 +71,82 @@ export async function findMediaByIds(db: Database, ids: readonly string[]): Prom
  * The row goes first: an orphaned object costs storage, while an orphaned row
  * points at nothing and breaks every page that renders it.
  */
+/**
+ * Deletes the row and records every object it owned as an orphan, atomically.
+ *
+ * The two systems cannot share a transaction, so the delete is split: what
+ * Postgres can promise happens together, and the object store is dealt with
+ * afterwards by whoever called. Writing the orphans here rather than after the
+ * delete is what makes a crash in between survivable — the bytes are always
+ * listed somewhere before the row that named them is gone.
+ */
 export async function deleteMedia(db: Database, id: string): Promise<MediaRow | null> {
-  const rows = await db.delete(media).where(eq(media.id, id)).returning()
-  return rows[0] ?? null
+  return db.transaction(async (tx) => {
+    const rows = await tx.delete(media).where(eq(media.id, id)).returning()
+    const row = rows[0]
+    if (!row) return null
+
+    const keys = storageKeysOf(row)
+    if (keys.length > 0) {
+      await tx
+        .insert(mediaOrphans)
+        .values(keys.map((storageKey) => ({ storageKey, mediaId: row.id })))
+        // A key already listed is one a previous delete failed to remove; the
+        // sweep owns it either way, and its attempt count is worth keeping.
+        .onConflictDoNothing({ target: mediaOrphans.storageKey })
+    }
+
+    return row
+  })
+}
+
+export type MediaOrphanRow = typeof mediaOrphans.$inferSelect
+
+/** The oldest orphans, for a sweep. */
+export async function listOrphans(db: Database, limit = 100): Promise<MediaOrphanRow[]> {
+  return db
+    .select()
+    .from(mediaOrphans)
+    .orderBy(asc(mediaOrphans.createdAt))
+    .limit(Math.min(500, Math.max(1, Math.trunc(limit))))
+}
+
+/** The object is gone; the record of it should be too. */
+export async function forgetOrphan(db: Database, storageKey: string): Promise<void> {
+  await db.delete(mediaOrphans).where(eq(mediaOrphans.storageKey, storageKey))
+}
+
+/**
+ * The store refused. The count and the message stay on the row so a sweep that
+ * never succeeds explains itself to whoever eventually looks.
+ */
+export async function recordOrphanFailure(
+  db: Database,
+  storageKey: string,
+  reason: string,
+): Promise<void> {
+  await db
+    .update(mediaOrphans)
+    .set({
+      attempts: sql`${mediaOrphans.attempts} + 1`,
+      lastError: reason.slice(0, 500),
+      updatedAt: new Date(),
+    })
+    .where(eq(mediaOrphans.storageKey, storageKey))
+}
+
+/** Objects written but never claimed by a row, so an upload can undo itself. */
+export async function recordOrphans(
+  db: Database,
+  mediaId: string,
+  keys: readonly string[],
+): Promise<void> {
+  if (keys.length === 0) return
+
+  await db
+    .insert(mediaOrphans)
+    .values(keys.map((storageKey) => ({ storageKey, mediaId })))
+    .onConflictDoNothing({ target: mediaOrphans.storageKey })
 }
 
 /** Every object key an asset owns, primary rendition included. */
@@ -154,4 +228,60 @@ export async function patchMediaAlt(
 
     return rows[0] ?? null
   })
+}
+
+export interface MediaReference {
+  readonly id: string
+  readonly type: string
+  readonly locale: string
+  readonly slug: string
+  readonly title: string
+  /** Where it is used: in the document's blocks, in its metadata, or both. */
+  readonly where: readonly ('blocks' | 'meta')[]
+}
+
+/**
+ * Which documents use an asset.
+ *
+ * Deleting media used to check nothing, so a page could lose its illustration
+ * because somebody tidied the library — and the loss showed up as a hole in a
+ * published article, not as an error anybody saw.
+ *
+ * Containment against the GIN indexes rather than reading every document: the
+ * question is asked before every deletion, and an installation with ten
+ * thousand documents should not scan them to answer it. Two predicates, since
+ * an image block names the asset in `blocks` and a featured image names it in
+ * `meta`.
+ */
+export async function findMediaReferences(
+  db: Database,
+  mediaId: string,
+  limit = 20,
+): Promise<MediaReference[]> {
+  const inBlocks = sql`${contents.blocks} @> ${JSON.stringify([{ mediaId }])}::jsonb`
+  const inMeta = sql`${contents.meta} @> ${JSON.stringify({ featuredMediaId: mediaId })}::jsonb`
+
+  const rows = await db
+    .select({
+      id: contents.id,
+      type: contents.type,
+      locale: contents.locale,
+      slug: contents.slug,
+      title: contents.title,
+      blocks: sql<boolean>`${inBlocks}`,
+      meta: sql<boolean>`${inMeta}`,
+    })
+    .from(contents)
+    .where(or(inBlocks, inMeta))
+    .orderBy(asc(contents.title))
+    .limit(Math.min(100, Math.max(1, Math.trunc(limit))))
+
+  return rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    locale: row.locale,
+    slug: row.slug,
+    title: row.title,
+    where: [...(row.blocks ? (['blocks'] as const) : []), ...(row.meta ? (['meta'] as const) : [])],
+  }))
 }

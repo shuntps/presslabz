@@ -6,13 +6,18 @@ import {
   type Role,
 } from '@presslabz/core'
 import {
+  createContent,
   createDb,
   createMedia,
   createSession,
   createUser,
   type Database,
+  deleteContent,
   deleteMedia,
   findMediaById,
+  forgetOrphan,
+  listOrphans,
+  type MediaRow,
   storageKeysOf,
 } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
@@ -130,9 +135,23 @@ describe.skipIf(!ready)('media routes', () => {
   afterEach(async () => {
     for (const id of created.splice(0)) {
       const row = await deleteMedia(db, id)
-      if (row) await storage.deleteObjects(storageKeysOf(row))
+      if (!row) continue
+      // The same three steps the route takes, in the same order: the row, the
+      // objects it named, then the record that says they were still owed.
+      // Skipping the last one leaves this suite's own cleanup listed as a leak.
+      await storage.deleteObjects(storageKeysOf(row))
+      for (const key of storageKeysOf(row)) await forgetOrphan(db, key)
     }
   })
+
+  /** Which objects the sweep still owes, out of a set this test knows about. */
+  async function stillOwed(keys: readonly string[]): Promise<string[]> {
+    const listed = new Set((await listOrphans(db, 500)).map((orphan) => orphan.storageKey))
+    return keys.filter((key) => listed.has(key)).sort()
+  }
+
+  /** The object key behind a served URL: the row's id is not the key's. */
+  const keyOf = (url: string) => `media/${url.split('/').pop() as string}`
 
   afterAll(async () => {
     await handle.close()
@@ -560,6 +579,201 @@ describe.skipIf(!ready)('media routes', () => {
         .json()
         .media.find((item: { id: string }) => item.id === response.json().media.id)
       expect(row.permissions.update).toBe(false)
+    })
+  })
+
+  describe('what the pipeline will not take', () => {
+    /*
+     * Both of these were accepted before, in the way that is worse than a
+     * refusal: an animation was stored as its first frame, so the upload
+     * appeared to work and was not what the author sent, and a header claiming
+     * nine hundred megapixels was refused by the decoder with "that file is
+     * not an image", about a file that is.
+     */
+
+    /** Eighty-five bytes of real GIF89a: two frames, one pixel each. */
+    const ANIMATED_GIF = Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAACAkQBACH5BAAKAAAALAAAAAABAAEAAAICRAEAOw==',
+      'base64',
+    )
+
+    it('refuses an animation, and says that is what it was', async () => {
+      const response = await upload(ANIMATED_GIF, 'loop.gif', 'image/gif')
+
+      expect(response.statusCode).toBe(415)
+      expect(response.json().reason).toBe('animated')
+    })
+
+    it('refuses a header that claims more pixels than the bytes will decode', async () => {
+      // A byte count bounds the download and says nothing about what the bytes
+      // decode to; this is a few hundred bytes claiming 30000×30000.
+      const bomb = await samplePng(4, 4)
+      bomb.writeUInt32BE(30_000, 16)
+      bomb.writeUInt32BE(30_000, 20)
+
+      const response = await upload(bomb, 'bomb.png', 'image/png')
+
+      expect(response.statusCode).toBe(415)
+      expect(response.json().reason).toBe('too-many-pixels')
+    })
+
+    it('leaves nothing behind when it refuses', async () => {
+      const before = (await library('administrator')).json().media.length
+      const owed = (await listOrphans(db, 500)).length
+
+      await upload(ANIMATED_GIF, 'loop.gif', 'image/gif')
+
+      expect((await library('administrator')).json().media.length).toBe(before)
+      expect(owed).toBe((await listOrphans(db, 500)).length)
+    })
+  })
+
+  describe('deleting an asset a document uses', () => {
+    /**
+     * A document that puts the asset in a block, which is where a picker puts
+     * it. `meta.featuredMediaId` is the other half, and the reference query
+     * answers for both.
+     */
+    async function documentUsing(media: string, where: 'blocks' | 'meta', title: string) {
+      return createContent(db, {
+        type: 'post',
+        locale: 'en',
+        authorId: null,
+        state: {
+          slug: `uses-${crypto.randomUUID()}`,
+          title,
+          status: 'published',
+          blocks:
+            where === 'blocks'
+              ? [{ id: crypto.randomUUID(), type: 'image' as const, mediaId: media }]
+              : [],
+          meta: where === 'meta' ? { featuredMediaId: media } : {},
+          publishedAt: new Date(),
+        },
+      })
+    }
+
+    /*
+     * The failure this closes is not an error anybody saw: a published article
+     * lost its illustration because somebody tidied the library, and the hole
+     * appeared on the site.
+     */
+    it('refuses, and names the documents that would break', async () => {
+      const uploaded = await upload(await samplePng(), 'used.png', 'image/png')
+      const media = uploaded.json().media
+      await documentUsing(media.id, 'blocks', 'An article with a picture')
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/media/${media.id}`,
+        cookies: as('administrator'),
+      })
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().reason).toBe('media-in-use')
+      // Named, because "in use" is not actionable and "in use by this" is.
+      expect(response.json().references).toHaveLength(1)
+      expect(response.json().references[0]).toMatchObject({
+        title: 'An article with a picture',
+        type: 'post',
+        locale: 'en',
+        where: ['blocks'],
+      })
+    })
+
+    it('counts a featured image too', async () => {
+      const uploaded = await upload(await samplePng(), 'featured.png', 'image/png')
+      const media = uploaded.json().media
+      await documentUsing(media.id, 'meta', 'An article with a cover')
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/media/${media.id}`,
+        cookies: as('administrator'),
+      })
+
+      expect(response.json().references[0]?.where).toEqual(['meta'])
+    })
+
+    it('keeps the row and the bytes exactly where they were', async () => {
+      const uploaded = await upload(await samplePng(), 'kept.png', 'image/png')
+      const media = uploaded.json().media
+      await documentUsing(media.id, 'blocks', 'Still using it')
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/media/${media.id}`,
+        cookies: as('administrator'),
+      })
+
+      expect(await findMediaById(db, media.id)).not.toBeNull()
+      for (const rendition of media.renditions) {
+        expect((await fetch(rendition.url)).status).toBe(200)
+      }
+      // A refusal is not a deletion, so nothing is owed to the sweep.
+      expect(await stillOwed(media.renditions.map((r: { url: string }) => keyOf(r.url)))).toEqual(
+        [],
+      )
+    })
+
+    it('accepts once nothing uses it any more', async () => {
+      const uploaded = await upload(await samplePng(), 'freed.png', 'image/png')
+      const media = uploaded.json().media
+      const document = await documentUsing(media.id, 'blocks', 'Temporarily using it')
+
+      await deleteContent(db, document.id)
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/media/${media.id}`,
+        cookies: as('administrator'),
+      })
+
+      expect(response.statusCode).toBe(204)
+    })
+  })
+
+  describe('what a delete owes the object store', () => {
+    it('owes nothing once the store has answered', async () => {
+      const uploaded = await upload(await samplePng(), 'clean.png', 'image/png')
+      const media = uploaded.json().media
+
+      const removed = await app.inject({
+        method: 'DELETE',
+        url: `/media/${media.id}`,
+        cookies: as('administrator'),
+      })
+
+      expect(removed.statusCode).toBe(204)
+      // The row named two objects; both are gone, so neither is still owed.
+      const keys = media.renditions.map((r: { url: string }) => keyOf(r.url))
+      expect(keys).toHaveLength(2)
+      expect(await stillOwed(keys)).toEqual([])
+      for (const rendition of media.renditions) {
+        expect((await fetch(rendition.url)).status).toBe(404)
+      }
+    })
+
+    /*
+     * The store is a separate system and the transaction cannot include it, so
+     * the record of what it still owns is written where it is atomic — with
+     * the row's deletion. This asserts that half directly, because a store
+     * that fails is not something this suite can arrange against a real MinIO.
+     */
+    it('lists every object when the store is not reachable', async () => {
+      const uploaded = await upload(await samplePng(), 'stranded.png', 'image/png')
+      const media = uploaded.json().media
+
+      const row = await deleteMedia(db, media.id)
+      expect(row).not.toBeNull()
+
+      expect(await stillOwed(storageKeysOf(row as MediaRow))).toEqual(
+        storageKeysOf(row as MediaRow).sort(),
+      )
+
+      // And this suite still owns the bytes.
+      await storage.deleteObjects(storageKeysOf(row as MediaRow))
+      for (const key of storageKeysOf(row as MediaRow)) await forgetOrphan(db, key)
     })
   })
 })

@@ -194,6 +194,13 @@ export const contents = pgTable(
     index('contents_translation_group_idx').on(t.translationGroupId),
     index('contents_listing_idx').on(t.type, t.locale, t.status, t.publishedAt),
     index('contents_meta_gin').using('gin', t.meta),
+    /*
+     * So "is this asset used anywhere" is a question the database can answer.
+     * Deleting media used to check nothing, which meant a page could lose its
+     * illustration because somebody tidied the library — and finding the uses
+     * without this index means reading every document in the installation.
+     */
+    index('contents_blocks_gin').using('gin', t.blocks),
     index('contents_search_gin').using('gin', t.searchVector),
   ],
 )

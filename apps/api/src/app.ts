@@ -22,6 +22,7 @@ import { createApiHooks } from './hooks.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
+import { startOrphanSweep } from './media/orphans.ts'
 import { mediaRoutes } from './media/routes.ts'
 import { ensureBucket } from './media/storage.ts'
 import { createValkeyStore, StoreHealth } from './rate-limit/valkey-store.ts'
@@ -299,6 +300,19 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), hooks })
   await app.register(multipart)
   await app.register(mediaRoutes, { db, hooks })
+
+  /*
+   * Media lives in two systems that cannot share a transaction, so a failed
+   * delete or an abandoned upload leaves bytes with no row. They are recorded
+   * where that is atomic; this is what eventually removes them, and what makes
+   * the difference between a leak that is survivable and one that is
+   * recoverable.
+   */
+  const orphanSweep = startOrphanSweep({ db, log: app.log })
+
+  app.addHook('onClose', () => {
+    orphanSweep.stop()
+  })
 
   /*
    * A fresh clone plus `pnpm services:up` should leave a working installation.

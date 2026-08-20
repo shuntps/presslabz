@@ -43,6 +43,13 @@
       "when": 1787249583927,
       "tag": "0005_unusual_mordo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787251705112,
+      "tag": "0006_lumpy_changeling",
+      "breakpoints": true
     }
   ]
 }

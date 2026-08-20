@@ -10,6 +10,8 @@ import {
   createMedia,
   type Database,
   deleteMedia,
+  findMediaReferences,
+  forgetOrphan,
   listMedia,
   MediaForbiddenError,
   type MediaMeta,
@@ -22,7 +24,7 @@ import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
-
+import { abandonObjects } from './orphans.ts'
 import {
   isAcceptedInputType,
   MAX_UPLOAD_BYTES,
@@ -32,6 +34,41 @@ import {
   UnsupportedImageError,
 } from './process.ts'
 import { deleteObjects, mediaUrl, putObject } from './storage.ts'
+
+/**
+ * How many uploads may be decoded and re-encoded at once.
+ *
+ * Each one decodes a full-size image and encodes two more, and libvips uses
+ * its own threads for that — so concurrent uploads multiply the memory a
+ * single one costs, and nothing about this route bounded it. Two is enough to
+ * keep a single slow encode from stalling everyone and low enough that a burst
+ * is slow rather than fatal.
+ */
+const MAX_CONCURRENT_ENCODES = 2
+
+/**
+ * A queue, not a rejection. An upload that arrives during a burst waits its
+ * turn; answering 503 to somebody who did nothing wrong would push the problem
+ * into their hands, and the request timeout already bounds the wait.
+ */
+function createQueue(limit: number) {
+  let running = 0
+  const waiting: (() => void)[] = []
+
+  return async function run<T>(work: () => Promise<T>): Promise<T> {
+    if (running >= limit) await new Promise<void>((resolve) => waiting.push(resolve))
+    running += 1
+
+    try {
+      return await work()
+    } finally {
+      running -= 1
+      waiting.shift()?.()
+    }
+  }
+}
+
+const encodingQueue = createQueue(MAX_CONCURRENT_ENCODES)
 
 interface MediaRoutesOptions {
   db: Database
@@ -159,10 +196,17 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
 
     let processed: Awaited<ReturnType<typeof processImage>>
     try {
-      processed = await processImage(input)
+      /*
+       * One re-encode at a time beyond a small number of them. Each upload
+       * decodes a full-size image and encodes two more, and libvips does that
+       * with its own threads — so a handful of concurrent uploads is a
+       * multiple of the memory a single one costs, and nothing about the
+       * route bounded it. The queue makes a burst slow instead of fatal.
+       */
+      processed = await encodingQueue(() => processImage(input))
     } catch (error) {
       if (error instanceof UnsupportedImageError) {
-        return reply.code(415).send({ error: 'unsupported_media_type' })
+        return reply.code(415).send({ error: 'unsupported_media_type', reason: error.refusal })
       }
       throw error
     }
@@ -174,31 +218,51 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
      */
     const id = crypto.randomUUID()
     const renditions: Record<string, Rendition> = {}
+    const written: string[] = []
 
-    await Promise.all(
-      (Object.keys(RENDITIONS) as RenditionName[]).map(async (name) => {
-        const spec = RENDITIONS[name]
-        const key = `media/${id}.${spec.extension}`
-        const body = processed.renditions[name]
-        await putObject(key, body, spec.contentType)
-        renditions[name] = { key, contentType: spec.contentType, byteSize: body.byteLength }
-      }),
-    )
+    /*
+     * The objects go first because the row has to name them, and that order is
+     * what leaves bytes behind when the insert fails. Every key written is
+     * remembered so the failure can be undone: deleted straight away if the
+     * store answers, and recorded as an orphan if it does not, so the sweep
+     * finishes what this request could not.
+     */
+    try {
+      await Promise.all(
+        (Object.keys(RENDITIONS) as RenditionName[]).map(async (name) => {
+          const spec = RENDITIONS[name]
+          const key = `media/${id}.${spec.extension}`
+          const body = processed.renditions[name]
+          await putObject(key, body, spec.contentType)
+          written.push(key)
+          renditions[name] = { key, contentType: spec.contentType, byteSize: body.byteLength }
+        }),
+      )
 
-    const primary = renditions.avif as Rendition
+      const primary = renditions.avif as Rendition
 
-    const row = await createMedia(db, {
-      storageKey: primary.key,
-      mimeType: primary.contentType,
-      byteSize: primary.byteSize,
-      width: processed.width,
-      height: processed.height,
-      alt: {},
-      meta: { renditions, originalName: file.filename },
-      uploadedById: request.user.id,
-    })
+      const row = await createMedia(db, {
+        storageKey: primary.key,
+        mimeType: primary.contentType,
+        byteSize: primary.byteSize,
+        width: processed.width,
+        height: processed.height,
+        alt: {},
+        meta: { renditions, originalName: file.filename },
+        uploadedById: request.user.id,
+      })
 
-    return reply.code(201).send({ media: serializeMedia(actorOf(request.user), row) })
+      await hooks.emit(
+        'media:uploaded',
+        { id: row.id, mimeType: row.mimeType, uploadedById: row.uploadedById },
+        { actorId: request.user.id },
+      )
+
+      return reply.code(201).send({ media: serializeMedia(actorOf(request.user), row) })
+    } catch (error) {
+      await abandonObjects(db, id, written, app.log)
+      throw error
+    }
   })
 
   /**
@@ -258,6 +322,36 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
       const params = z.object({ id: z.uuid() }).safeParse(request.params)
       if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
 
+      /*
+       * Asked before anything is removed, because the alternative is a page
+       * losing its illustration because somebody tidied the library — and the
+       * loss shows up as a hole in a published article rather than as an error
+       * anybody saw. The documents are named in the answer: "in use" is not
+       * actionable, "in use by these three" is.
+       */
+      const references = await findMediaReferences(db, params.data.id)
+
+      if (references.length > 0) {
+        return reply.code(409).send({
+          error: 'conflict',
+          reason: 'media-in-use',
+          references: references.map((reference) => ({
+            id: reference.id,
+            type: reference.type,
+            locale: reference.locale,
+            slug: reference.slug,
+            title: reference.title,
+            where: reference.where,
+          })),
+        })
+      }
+
+      /*
+       * The row and the orphan records go together, in one transaction. The
+       * object store cannot join it, so the bytes are always listed somewhere
+       * before the row that named them disappears — that is what makes a crash
+       * between the two recoverable instead of a silent leak.
+       */
       const row = await deleteMedia(db, params.data.id)
       if (!row) return reply.code(404).send({ error: 'not_found' })
 
@@ -268,12 +362,17 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
         { actorId: request.user?.id ?? null },
       )
 
-      /*
-       * The row went first. An object with no row costs storage; a row with no
-       * object breaks every page that renders it, so if one of the two has to
-       * be left behind it is the cheap one.
-       */
-      await deleteObjects(storageKeysOf(row))
+      const keys = storageKeysOf(row)
+
+      try {
+        await deleteObjects(keys)
+        for (const key of keys) await forgetOrphan(db, key)
+      } catch (error) {
+        // The delete succeeded as far as anybody asking is concerned; the
+        // bytes are listed and the sweep owns them now.
+        app.log.warn({ err: error, id: row.id }, 'left media objects for the sweep')
+      }
+
       return reply.code(204).send()
     },
   )

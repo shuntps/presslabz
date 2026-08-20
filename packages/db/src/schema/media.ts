@@ -28,3 +28,35 @@ export const media = pgTable(
   },
   (t) => [index('media_created_idx').on(t.createdAt)],
 )
+
+/**
+ * Objects whose row is gone and whose bytes are not.
+ *
+ * Deleting an asset touches two systems that cannot share a transaction: the
+ * row lives in Postgres and the bytes in an object store. Something has to be
+ * left behind when one of them fails, and it is the cheap one — an object with
+ * no row costs storage, while a row with no object breaks every page that
+ * renders it.
+ *
+ * What was missing is that the leak was invisible. A failed delete left bytes
+ * nothing referenced, nothing listed and nothing would ever try again. The
+ * orphan is written in the same transaction as the row deletion, so it cannot
+ * be lost, and removed once the object is actually gone; a sweep retries what
+ * is left. That makes a partial failure recoverable rather than merely
+ * survivable.
+ */
+export const mediaOrphans = pgTable(
+  'media_orphans',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    /** One row per object, not per asset: a delete can lose some renditions. */
+    storageKey: text().notNull().unique(),
+    /** The asset it came from, for a human reading this table during an incident. */
+    mediaId: uuid().notNull(),
+    attempts: integer().notNull().default(0),
+    /** The last thing the store said, so a stuck orphan explains itself. */
+    lastError: text(),
+    ...timestamps,
+  },
+  (t) => [index('media_orphans_created_idx').on(t.createdAt)],
+)
