@@ -11,9 +11,14 @@ import {
   type ContentState,
   createContent,
   deleteContent,
+  findContentById,
   findContentBySlug,
   listContents,
+  listRevisions,
   listTranslations,
+  MAX_HIERARCHY_DEPTH,
+  publishDueContent,
+  REVISION_LIMIT,
   updateContent,
 } from './contents.ts'
 
@@ -599,7 +604,7 @@ describe.skipIf(!ready)('contents repository', () => {
         release.open()
       }
       await holder
-      expect(await deletion).toBe(true)
+      expect((await deletion)?.id).toBe(first.id)
     })
   })
 
@@ -614,7 +619,15 @@ describe.skipIf(!ready)('contents repository', () => {
 
       // The patch alone says nothing about whether a date exists. Only the
       // merge with the stored row does.
-      const updated = await updateContent(db, testType, row.id, { status: 'scheduled' })
+      const updated = await updateContent(
+        db,
+        testType,
+        row.id,
+        { status: 'scheduled' },
+        {
+          expectedVersion: 'any',
+        },
+      )
       expect(updated?.status).toBe('scheduled')
     })
 
@@ -626,7 +639,9 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state(),
       })
 
-      await expect(updateContent(db, testType, row.id, { status: 'scheduled' })).rejects.toThrow()
+      await expect(
+        updateContent(db, testType, row.id, { status: 'scheduled' }, { expectedVersion: 'any' }),
+      ).rejects.toThrow()
 
       const after = await findContentBySlug(db, { type: TYPE, locale: 'fr', slug: 'first' })
       expect(after?.status).toBe('draft')
@@ -640,14 +655,22 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state({ excerpt: 'Un extrait', title: 'Titre' }),
       })
 
-      const updated = await updateContent(db, testType, row.id, { title: 'Nouveau titre' })
+      const updated = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Nouveau titre' },
+        { expectedVersion: 'any' },
+      )
       expect(updated?.title).toBe('Nouveau titre')
       expect(updated?.excerpt).toBe('Un extrait')
     })
 
     it('returns null rather than throwing for a document that is not there', async () => {
       const missing = '00000000-0000-4000-8000-0000000000ff'
-      expect(await updateContent(db, testType, missing, { title: 'x' })).toBeNull()
+      expect(
+        await updateContent(db, testType, missing, { title: 'x' }, { expectedVersion: 'any' }),
+      ).toBeNull()
     })
   })
 
@@ -660,7 +683,7 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state({ title: 'Avant' }),
       })
 
-      await updateContent(db, testType, row.id, { title: 'Après' })
+      await updateContent(db, testType, row.id, { title: 'Après' }, { expectedVersion: 'any' })
 
       const revisions = await db
         .select()
@@ -680,7 +703,16 @@ describe.skipIf(!ready)('contents repository', () => {
       })
 
       await expect(
-        updateContent(db, testType, row.id, { title: 'Après' }, { authorize: () => false }),
+        updateContent(
+          db,
+          testType,
+          row.id,
+          { title: 'Après' },
+          {
+            authorize: () => false,
+            expectedVersion: 'any',
+          },
+        ),
       ).rejects.toBeInstanceOf(ContentForbiddenError)
 
       const after = await findContentBySlug(db, { type: TYPE, locale: 'fr', slug: 'first' })
@@ -715,10 +747,412 @@ describe.skipIf(!ready)('contents repository', () => {
             sawTransition = [current.status, next.status]
             return true
           },
+          expectedVersion: 'any',
         },
       )
 
       expect(sawTransition).toEqual(['draft', 'published'])
+    })
+  })
+
+  describe('publishing what has come due', () => {
+    const at = (iso: string) => new Date(iso)
+    const NOW = at('2026-08-20T12:00:00.000Z')
+
+    async function scheduled(slug: string, when: Date) {
+      return createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug, status: 'scheduled', publishedAt: when }),
+      })
+    }
+
+    it('publishes what is due and leaves the rest alone', async () => {
+      const due = await scheduled('due-now', at('2026-08-20T11:00:00.000Z'))
+      const later = await scheduled('due-later', at('2026-08-21T11:00:00.000Z'))
+      const draft = await createContent(db, {
+        type: TYPE,
+        locale: 'en',
+        authorId: null,
+        state: state({ slug: 'still-drafting', status: 'draft' }),
+      })
+
+      const published = await publishDueContent(db, NOW)
+
+      expect(published.map((row) => row.id)).toEqual([due.id])
+      expect(published[0]?.status).toBe('published')
+      expect((await findContentById(db, later.id))?.status).toBe('scheduled')
+      expect((await findContentById(db, draft.id))?.status).toBe('draft')
+    })
+
+    /*
+     * A schedule is a promise about a moment. An installation that was down
+     * for an hour owes the documents that came due while it was gone, and
+     * publishing them late is what an author expects — silently skipping them
+     * is how a post never appears at all.
+     */
+    it('publishes what came due while nothing was running', async () => {
+      const missed = await scheduled('missed-it', at('2026-08-19T09:00:00.000Z'))
+
+      const published = await publishDueContent(db, NOW)
+
+      expect(published.map((row) => row.id)).toContain(missed.id)
+    })
+
+    it('publishes exactly at the moment named, not a moment later', async () => {
+      const exact = await scheduled('on-the-dot', NOW)
+
+      expect(await publishDueContent(db, at('2026-08-20T11:59:59.999Z'))).toEqual([])
+      expect((await publishDueContent(db, NOW)).map((row) => row.id)).toEqual([exact.id])
+    })
+
+    /*
+     * The property the whole design rests on: several API instances run this
+     * on their own timers, and a document must be claimed — and therefore
+     * announced to every hook handler — exactly once. Reading the due set and
+     * then updating it would hand the same rows to both.
+     */
+    it('hands each document to one caller when two run at once', async () => {
+      const ids = new Set<string>()
+      for (const slug of ['race-a', 'race-b', 'race-c', 'race-d']) {
+        ids.add((await scheduled(slug, at('2026-08-20T10:00:00.000Z'))).id)
+      }
+
+      const [first, second] = await Promise.all([
+        publishDueContent(db, NOW),
+        publishDueContent(db, NOW),
+      ])
+
+      const claimed = [...first, ...second].map((row) => row.id).filter((id) => ids.has(id))
+
+      expect(new Set(claimed).size).toBe(claimed.length)
+      expect(new Set(claimed)).toEqual(ids)
+    })
+
+    it('finds nothing to do twice in a row', async () => {
+      await scheduled('once-only', at('2026-08-20T10:00:00.000Z'))
+
+      expect((await publishDueContent(db, NOW)).length).toBeGreaterThan(0)
+      expect(await publishDueContent(db, NOW)).toEqual([])
+    })
+  })
+
+  describe('clearing a field', () => {
+    const NESTING = 'test-nesting'
+    const nestingType = defineContentType({ name: NESTING, hierarchical: true })
+
+    it('removes a parent when the patch says null, and keeps it when silent', async () => {
+      const parent = await createContent(db, {
+        type: NESTING,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'le-parent' }),
+      })
+      const child = await createContent(db, {
+        type: NESTING,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'l-enfant', parentId: parent.id }),
+      })
+
+      const renamed = await updateContent(
+        db,
+        nestingType,
+        child.id,
+        { title: 'Renommé' },
+        {
+          expectedVersion: 1,
+        },
+      )
+      expect(renamed?.parentId).toBe(parent.id)
+
+      const detached = await updateContent(
+        db,
+        nestingType,
+        child.id,
+        { parentId: null },
+        {
+          expectedVersion: 2,
+        },
+      )
+      expect(detached?.parentId).toBeNull()
+    })
+  })
+
+  describe('history a restore can use', () => {
+    it('snapshots every editorial field, not the three somebody thought of', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({
+          slug: 'complete-snapshot',
+          title: 'Avant',
+          excerpt: 'Le résumé',
+          status: 'draft',
+        }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Après' }, { expectedVersion: 1 })
+
+      const [snapshot] = await listRevisions(db, row.id)
+
+      expect(snapshot).toMatchObject({
+        slug: 'complete-snapshot',
+        title: 'Avant',
+        excerpt: 'Le résumé',
+        status: 'draft',
+        version: 1,
+      })
+      expect(snapshot?.publishedAt).toBeNull()
+    })
+
+    it('counts the version up on every write', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'counted' }),
+      })
+
+      expect(row.version).toBe(1)
+
+      const second = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Deux' },
+        {
+          expectedVersion: 1,
+        },
+      )
+      expect(second?.version).toBe(2)
+
+      const third = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Trois' },
+        {
+          expectedVersion: 2,
+        },
+      )
+      expect(third?.version).toBe(3)
+    })
+
+    /*
+     * The lock serializes the two writes; it does not notice that the second
+     * was composed against a version the first replaced. Without this the
+     * later save wins and the earlier author's work is gone with no error.
+     */
+    it('refuses a write composed against a version that has moved', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'contested-row' }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Premier' }, { expectedVersion: 1 })
+
+      await expect(
+        updateContent(db, testType, row.id, { title: 'Second' }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'stale-version' })
+
+      expect((await findContentById(db, row.id))?.title).toBe('Premier')
+    })
+
+    it('lets a caller say it does not care, and only if it says so', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'restores-and-migrations' }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Un' }, { expectedVersion: 1 })
+      const forced = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Deux' },
+        {
+          expectedVersion: 'any',
+        },
+      )
+
+      expect(forced?.title).toBe('Deux')
+    })
+
+    /*
+     * A cap rather than a duration: a document edited twice a year keeps its
+     * history, and one edited by an automation does not fill the table.
+     */
+    it('keeps a bounded history', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'much-edited' }),
+      })
+
+      for (let index = 0; index < REVISION_LIMIT + 5; index += 1) {
+        await updateContent(
+          db,
+          testType,
+          row.id,
+          { title: `Version ${index}` },
+          {
+            expectedVersion: index + 1,
+          },
+        )
+      }
+
+      const kept = await listRevisions(db, row.id, REVISION_LIMIT)
+
+      expect(kept.length).toBe(REVISION_LIMIT)
+      // The oldest went, not the newest.
+      expect(kept[0]?.title).toBe(`Version ${REVISION_LIMIT + 3}`)
+    })
+  })
+
+  describe('what a parent may be', () => {
+    const TREE = 'test-tree'
+    const treeType = defineContentType({ name: TREE, hierarchical: true })
+
+    async function page(slug: string, parentId?: string, locale = 'fr') {
+      return createContent(db, {
+        type: TREE,
+        locale,
+        authorId: null,
+        state: state({ slug, ...(parentId === undefined ? {} : { parentId }) }),
+      })
+    }
+
+    it('refuses a parent that does not exist', async () => {
+      await expect(page('orphan', '00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({
+        reason: 'parent-not-found',
+      })
+    })
+
+    /*
+     * The composite foreign key makes this impossible; the check is here so
+     * the answer names what is wrong instead of surfacing a driver error.
+     */
+    it('refuses a parent in another language', async () => {
+      const english = await page('english-parent', undefined, 'en')
+
+      await expect(page('french-child', english.id)).rejects.toMatchObject({
+        reason: 'parent-mismatch',
+      })
+    })
+
+    it('refuses a parent of another type', async () => {
+      const otherType = await createContent(db, {
+        type: 'test-other-tree',
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'not-a-page' }),
+      })
+
+      await expect(page('wrong-kind', otherType.id)).rejects.toMatchObject({
+        reason: 'parent-mismatch',
+      })
+    })
+
+    it('refuses a document that would be its own parent', async () => {
+      const alone = await page('itself')
+
+      await expect(
+        updateContent(db, treeType, alone.id, { parentId: alone.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-cycle' })
+    })
+
+    /*
+     * The case the read path had to defend against twice: a document under one
+     * of its own descendants has no root, so it has no path and no URL.
+     */
+    it('refuses a document placed under its own child', async () => {
+      const top = await page('grandparent')
+      const middle = await page('parent-page', top.id)
+      const bottom = await page('child-page', middle.id)
+
+      await expect(
+        updateContent(db, treeType, top.id, { parentId: bottom.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-cycle' })
+    })
+
+    it('refuses a tree deeper than a URL can express', async () => {
+      let parent = await page('depth-1')
+      for (let level = 2; level <= MAX_HIERARCHY_DEPTH; level += 1) {
+        parent = await page(`depth-${level}`, parent.id)
+      }
+
+      await expect(page(`depth-${MAX_HIERARCHY_DEPTH + 1}`, parent.id)).rejects.toMatchObject({
+        reason: 'parent-too-deep',
+      })
+    })
+
+    /*
+     * The document's own depth is not the whole question: everything under it
+     * moves down with it, and those leaves would have no URL either.
+     */
+    it('refuses a move that would take the children past the limit', async () => {
+      let deep = await page('graft-1')
+      for (let level = 2; level < MAX_HIERARCHY_DEPTH; level += 1) {
+        deep = await page(`graft-${level}`, deep.id)
+      }
+
+      const branchTop = await page('branch-top')
+      const branchLeaf = await page('branch-leaf', branchTop.id)
+      expect(branchLeaf.parentId).toBe(branchTop.id)
+
+      await expect(
+        updateContent(db, treeType, branchTop.id, { parentId: deep.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-too-deep' })
+    })
+
+    it('accepts an ordinary nesting, and lets it be undone', async () => {
+      const parent = await page('ordinary-parent')
+      const child = await page('ordinary-child')
+
+      const nested = await updateContent(
+        db,
+        treeType,
+        child.id,
+        { parentId: parent.id },
+        {
+          expectedVersion: 1,
+        },
+      )
+      expect(nested?.parentId).toBe(parent.id)
+
+      const detached = await updateContent(
+        db,
+        treeType,
+        child.id,
+        { parentId: null },
+        {
+          expectedVersion: 2,
+        },
+      )
+      expect(detached?.parentId).toBeNull()
+    })
+
+    /*
+     * Documented behaviour: children become roots rather than disappearing.
+     * Deleting an index page must not silently delete the pages under it.
+     */
+    it('turns children into roots when their parent is deleted', async () => {
+      const parent = await page('doomed-parent')
+      const child = await page('surviving-child', parent.id)
+
+      await deleteContent(db, parent.id, {})
+
+      const after = await findContentById(db, child.id)
+      expect(after).not.toBeNull()
+      expect(after?.parentId).toBeNull()
     })
   })
 })

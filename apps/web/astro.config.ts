@@ -1,4 +1,5 @@
 import node from '@astrojs/node'
+import { valkeyCache } from '@presslabz/cache/astro'
 import { resolveLocaleConfig } from '@presslabz/i18n'
 import { defineConfig } from 'astro/config'
 
@@ -28,8 +29,43 @@ const { locales, defaultLocale } = resolveLocaleConfig({
 const host = process.env.WEB_HOST ?? '127.0.0.1'
 const port = Number(process.env.WEB_PORT ?? 4321)
 
+/*
+ * The cache is declared when this installation says where Valkey is. Astro
+ * disables caching under `astro dev` by itself, so this only ever affects a
+ * built server — an editor reloading a page they just changed still sees it.
+ */
+const cacheUrl = process.env.PAGE_CACHE_ENABLED === 'false' ? undefined : process.env.VALKEY_URL
+
+const ttlSeconds = Number(process.env.PAGE_CACHE_TTL_SECONDS ?? 3600)
+
 export default defineConfig({
   output: 'server',
+  ...(cacheUrl
+    ? {
+        cache: {
+          provider: valkeyCache({
+            url: cacheUrl,
+            namespace: process.env.PAGE_CACHE_NAMESPACE ?? 'presslabz:web:',
+            ttlSeconds,
+          }),
+        },
+      }
+    : {}),
+  /*
+   * What may be cached, and for how long. Opt-in per route: `/` is absent
+   * because it answers differently per reader, and anything not named here is
+   * rendered fresh every time.
+   *
+   * These are the ttls, not the invalidation. A publish purges by tag within
+   * the second; the numbers below only bound how long a page could stay wrong
+   * if a purge never arrived at all.
+   */
+  routeRules: {
+    '/[locale]': { maxAge: ttlSeconds },
+    '/[locale]/[...path]': { maxAge: ttlSeconds },
+    '/[locale]/[base]/feed.xml': { maxAge: 600 },
+    '/sitemap.xml': { maxAge: 3600 },
+  },
   /*
    * A port here is a preference, not a guarantee: when it is taken, Astro
    * moves to the next free one, and there is no option to refuse. There is no

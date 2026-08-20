@@ -86,7 +86,30 @@ export const blockSchema = z.discriminatedUnion('type', [
 export type Block = z.infer<typeof blockSchema>
 export type BlockType = Block['type']
 
-export const blocksSchema = z.array(blockSchema)
+/**
+ * Every id distinct, enforced rather than assumed.
+ *
+ * The editor addresses blocks by id — replacing one, deleting one — so a
+ * document with two blocks sharing an id has operations that hit both. It was
+ * representable: nothing checked, and an import or a wholesale copy produces
+ * it easily. Refusing here means the state can never be stored; `withUniqueIds`
+ * is how a document that already holds duplicates is repaired on the way into
+ * the editor rather than being stuck unsavable.
+ */
+export const blocksSchema = z.array(blockSchema).superRefine((blocks, context) => {
+  const seen = new Set<string>()
+
+  for (const [index, block] of blocks.entries()) {
+    if (seen.has(block.id)) {
+      context.addIssue({
+        code: 'custom',
+        path: [index, 'id'],
+        message: 'Two blocks cannot share an id',
+      })
+    }
+    seen.add(block.id)
+  }
+})
 
 export type Blocks = z.infer<typeof blocksSchema>
 

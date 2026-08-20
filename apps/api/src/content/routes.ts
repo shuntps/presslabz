@@ -3,17 +3,22 @@ import {
   type AnyContentType,
   type ContentStatus,
   type ContentTypeRegistry,
+  type CoreHooks,
   canDelete,
   canJoinTranslationGroup,
   canPerform,
   canReadDocument,
   canWrite,
+  contentEventOf,
   isContentStatus,
   permissionsForCreation,
   permissionsForDocument,
+  transitionsFor,
 } from '@presslabz/core'
+import { previewPath, signPreviewToken } from '@presslabz/core/preview'
 import {
   ContentConflictError,
+  type ContentConflictReason,
   ContentForbiddenError,
   type ContentRow,
   type ContentState,
@@ -21,14 +26,19 @@ import {
   type Database,
   deleteContent,
   findContentById,
+  findRevision,
   listContents,
+  listRevisions,
   listTranslations,
+  stateOfRevision,
   updateContent,
 } from '@presslabz/db'
 import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
+
+import { env } from '../env.ts'
 
 /**
  * One set of handlers for every content type. The type is a path segment
@@ -40,6 +50,7 @@ import type { AuthenticatedUser } from '../auth/plugin.ts'
 interface ContentRoutesOptions {
   db: Database
   registry: ContentTypeRegistry
+  hooks: CoreHooks
 }
 
 /**
@@ -103,6 +114,12 @@ function serializeContent(type: AnyContentType, actor: Actor, row: ContentRow) {
     authorId: row.authorId,
     parentId: row.parentId,
     publishedAt: row.publishedAt,
+    /*
+     * Sent so it can be sent back. An update states the version it was
+     * composed against, and the write is refused if the document has moved
+     * since — which is only possible if the client was told what it read.
+     */
+    version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -119,14 +136,27 @@ async function replyForWriteError(error: unknown, reply: FastifyReply): Promise<
   }
   if (error instanceof ContentConflictError) {
     /*
-     * A group that does not exist is not a conflict with the state of this
-     * collection: the request is well formed and its instructions cannot be
-     * followed, which is what 422 is for. The other three are genuine
-     * conflicts with what is already there.
+     * 422 when the request names something that cannot be what it is being
+     * asked to be — a group that does not exist, a parent that does not or
+     * that is the wrong kind of thing. The request is well formed and its
+     * instructions cannot be followed, which is what 422 is for.
+     *
+     * 409 when it conflicts with the shape the collection currently has: a
+     * slug already taken, a language already translated, a document that has
+     * moved on, a placement that would make a loop or push a page deeper than
+     * a URL can express. Those are answers about the state, and they can
+     * change without the request changing.
      */
-    if (error.reason === 'group-not-found') {
+    const unprocessable: readonly ContentConflictReason[] = [
+      'group-not-found',
+      'parent-not-found',
+      'parent-mismatch',
+    ]
+
+    if (unprocessable.includes(error.reason)) {
       return reply.code(422).send({ error: 'unprocessable', reason: error.reason })
     }
+
     return reply.code(409).send({ error: 'conflict', reason: error.reason })
   }
   if (error instanceof z.ZodError) {
@@ -167,7 +197,7 @@ function actorOf(user: AuthenticatedUser) {
 
 export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
   app,
-  { db, registry },
+  { db, registry, hooks },
 ) => {
   /** What content types exist, so the admin builds its navigation from truth. */
   app.get('/content-types', { onRequest: [app.requireAuth] }, async (request, reply) => {
@@ -294,6 +324,176 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     },
   )
 
+  /**
+   * A link that opens an unpublished document on the public site.
+   *
+   * Authorized exactly as reading it is — the same function, the same answer —
+   * because a preview link *is* a read, delegated to another process for a few
+   * minutes. It is not a new permission and must never become one: anything
+   * looser would mean a contributor could hand out a link to a document they
+   * are not allowed to open themselves.
+   *
+   * The token names the document, not the actor. Whoever holds the link sees
+   * that one document until it expires, which is the trade being made in
+   * exchange for a link that can be sent to somebody who has no account at
+   * all — the reason previews exist.
+   */
+  /**
+   * A document's history, and putting it back.
+   *
+   * Revisions were written from the first migration and never read, which made
+   * them a record nobody could use — and, until this issue, an incomplete one:
+   * the slug, the excerpt, the status, the parent and the date were not in the
+   * snapshot, so restoring was impossible even by hand.
+   *
+   * Reading history costs exactly what reading the document costs. It contains
+   * earlier versions of the same text, so anything looser would be a way to
+   * read a document through its past.
+   */
+  app.get(
+    '/content/:type/:id/revisions',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = idParams.safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const actor = actorOf(request.user)
+      if (!canReadDocument(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
+      const revisions = await listRevisions(db, row.id)
+
+      return reply.send({
+        revisions: revisions.map((revision) => ({
+          id: revision.id,
+          version: revision.version,
+          slug: revision.slug,
+          title: revision.title,
+          excerpt: revision.excerpt,
+          status: revision.status,
+          authorId: revision.authorId,
+          publishedAt: revision.publishedAt,
+          createdAt: revision.createdAt,
+        })),
+      })
+    },
+  )
+
+  /**
+   * Restoring is an edit, not a rewind.
+   *
+   * It goes through the same write path as any other: the same authorization
+   * against the state it would produce, the same version precondition, and it
+   * leaves a revision of its own — so restoring the wrong one is itself
+   * undoable. A restore that bypassed those would be a way to publish, or to
+   * take a document down, without the permission either costs.
+   */
+  app.post(
+    '/content/:type/:id/revisions/:revisionId/restore',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = z.object({ id: z.uuid(), revisionId: z.uuid() }).safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      const body = (request.body ?? {}) as Record<string, unknown>
+      const version = z.number().int().min(1).safeParse(body.expectedVersion)
+      if (!version.success) {
+        return reply.code(400).send({
+          error: 'invalid_request',
+          reason: 'expected_version_required',
+        })
+      }
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const revision = await findRevision(db, params.data.revisionId)
+      // Belonging to this document is part of the identity, not a detail: a
+      // revision id from another document would otherwise overwrite this one
+      // with somebody else's text.
+      if (!revision || revision.contentId !== row.id) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+
+      const actor = actorOf(request.user)
+      let previousStatus: ContentStatus | undefined
+
+      try {
+        const restored = await updateContent(db, type, row.id, stateOfRevision(revision), {
+          expectedVersion: version.data,
+          authorize: (current, next) => {
+            previousStatus = current.status
+            return (
+              current.type === type.name &&
+              canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
+                authorId: current.authorId,
+              })
+            )
+          },
+        })
+
+        if (!restored) return reply.code(404).send({ error: 'not_found' })
+
+        const context = { locale: restored.locale, actorId: request.user.id }
+        for (const announcement of transitionsFor(
+          previousStatus ?? restored.status,
+          contentEventOf(restored),
+        )) {
+          await hooks.emit(announcement.name, announcement.payload, context)
+        }
+
+        return reply.send({ content: serializeContent(type, actor, restored) })
+      } catch (error) {
+        return replyForWriteError(error, reply)
+      }
+    },
+  )
+
+  app.post(
+    '/content/:type/:id/preview',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = idParams.safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      if (!env.PREVIEW_SECRET || !env.SITE_URL) {
+        return reply
+          .code(503)
+          .send({ error: 'preview_unavailable', reason: 'no-preview-configuration' })
+      }
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const actor = actorOf(request.user)
+      if (!canReadDocument(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
+      const expiresAt = Date.now() + env.PREVIEW_TTL_SECONDS * 1000
+      const token = signPreviewToken({ contentId: row.id, expiresAt }, env.PREVIEW_SECRET)
+
+      return reply.send({
+        preview: {
+          url: new URL(previewPath(row.locale, token), env.SITE_URL).toString(),
+          expiresAt: new Date(expiresAt).toISOString(),
+        },
+      })
+    },
+  )
+
   app.post('/content/:type', { onRequest: [app.requireAuth] }, async (request, reply) => {
     if (!request.user) return
     const type = resolveType(registry, request, reply)
@@ -353,6 +553,11 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
             },
       )
 
+      await hooks.emit('content:created', contentEventOf(row), {
+        locale: row.locale,
+        actorId: request.user.id,
+      })
+
       return reply.code(201).send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -367,13 +572,39 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     const params = idParams.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
 
-    const parsed = type.updateSchema.safeParse(request.body)
+    /*
+     * The precondition is not a field of the document, so it is taken off the
+     * body before the patch is validated — updateSchema is strict, and an
+     * unknown key is refused rather than ignored.
+     */
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const { expectedVersion, ...fields } = body
+    const version = z.number().int().min(1).safeParse(expectedVersion)
+
+    if (!version.success) {
+      return reply.code(400).send({
+        error: 'invalid_request',
+        reason: 'expected_version_required',
+        issues: issuesOf(version.error),
+      })
+    }
+
+    const parsed = type.updateSchema.safeParse(fields)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_request', issues: issuesOf(parsed.error) })
     }
 
     const actor = actorOf(request.user)
     const now = new Date()
+
+    /*
+     * Captured inside the transaction, from the locked row, because the
+     * authorizer is the only place that sees the document as it was. Reading
+     * it before the call would report a status another write may already have
+     * moved, and "did this just become public" would be answered about the
+     * wrong version.
+     */
+    let previousStatus: ContentStatus | undefined
 
     try {
       const row = await updateContent(
@@ -390,15 +621,38 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
            * the gap between the read and the write is exactly where a publish
            * slips past content:publish.
            */
-          authorize: (current, next) =>
-            current.type === type.name &&
-            canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
-              authorId: current.authorId,
-            }),
+          expectedVersion: version.data,
+          authorize: (current, next) => {
+            previousStatus = current.status
+            return (
+              current.type === type.name &&
+              canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
+                authorId: current.authorId,
+              })
+            )
+          },
         },
       )
 
       if (!row) return reply.code(404).send({ error: 'not_found' })
+
+      /*
+       * After the write, and whatever the write was. Announcing an edit to a
+       * draft costs a handler nothing to ignore, and asking here whether it
+       * "mattered" would put a second implementation of what is public in the
+       * route that can least afford one.
+       *
+       * An edit that also publishes is two events, decided by transitionsFor
+       * so that every caller means the same thing by "published".
+       */
+      const context = { locale: row.locale, actorId: request.user.id }
+      for (const announcement of transitionsFor(
+        previousStatus ?? row.status,
+        contentEventOf(row),
+      )) {
+        await hooks.emit(announcement.name, announcement.payload, context)
+      }
+
       return reply.send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -429,6 +683,15 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       })
 
       if (!deleted) return reply.code(404).send({ error: 'not_found' })
+
+      // The row that was deleted, which is the only version that can describe
+      // what is gone: reading it before the lock would have described a
+      // version this transaction may have replaced.
+      await hooks.emit('content:deleted', contentEventOf(deleted), {
+        locale: deleted.locale,
+        actorId: request.user.id,
+      })
+
       return reply.code(204).send()
     } catch (error) {
       return replyForWriteError(error, reply)

@@ -1,5 +1,5 @@
 import type { ResolvedMedia } from '@presslabz/blocks'
-import type { AnyContentType, ContentTypeRegistry } from '@presslabz/core'
+import { type AnyContentType, type ContentTypeRegistry, contentEventOf } from '@presslabz/core'
 import type { ContentRow } from '@presslabz/db'
 import { createTranslator, type Locale } from '@presslabz/i18n'
 import type {
@@ -7,9 +7,13 @@ import type {
   ArchiveView,
   DocumentView,
   NavLink,
+  PageHead,
   SiteContext,
+  TranslationLink,
 } from '@presslabz/theme-kit'
 import { env, localeConfig } from '../env.ts'
+import { hooks } from '../hooks.ts'
+import { filterBlocks, filterExcerpt } from './filters.ts'
 import { archivePageUrl, archivePath, documentPath, homePath } from './routes.ts'
 
 /**
@@ -42,6 +46,9 @@ export interface SiteContextInput {
   readonly locale: Locale
   readonly path: string
   readonly registry: ContentTypeRegistry
+  readonly head: PageHead
+  readonly translations?: readonly TranslationLink[]
+  readonly feedHref?: string | null
 }
 
 export function siteContext(input: SiteContextInput): SiteContext {
@@ -54,20 +61,27 @@ export function siteContext(input: SiteContextInput): SiteContext {
     nav: navFor(input.locale, input.registry, input.path),
     t: createTranslator(input.locale),
     /*
-     * Empty until the language switcher lands. It is declared now because
-     * which siblings a reader may be told about is an authorization question
-     * the site answers, and a theme that had to ask for them later would be a
-     * theme with a data need nobody had written down.
+     * Which siblings a reader may be told about is an authorization question,
+     * answered by the site: only what is published, and only what has a path
+     * that resolves.
      */
-    translations: [],
+    translations: input.translations ?? [],
+    head: input.head,
+    feedHref: input.feedHref ?? null,
   }
 }
 
-export function entryOf(row: ContentRow, type: AnyContentType, locale: Locale): ArchiveEntry {
+export async function entryOf(
+  row: ContentRow,
+  type: AnyContentType,
+  locale: Locale,
+): Promise<ArchiveEntry> {
   return {
     id: row.id,
     title: row.title,
-    excerpt: row.excerpt,
+    // Through the filter chain, so a document with no summary can be given one
+    // by a module rather than by this function knowing how.
+    excerpt: await filterExcerpt(hooks, row.excerpt, row.blocks, contentEventOf(row)),
     publishedAt: row.publishedAt,
     href: documentPath(locale, type, [row.slug]),
   }
@@ -82,12 +96,12 @@ export interface ArchiveViewInput {
   readonly title: string
 }
 
-export function archiveView(input: ArchiveViewInput): ArchiveView {
+export async function archiveView(input: ArchiveViewInput): Promise<ArchiveView> {
   const { locale, type, page, pageCount } = input
 
   return {
     title: input.title,
-    entries: input.rows.map((row) => entryOf(row, type, locale)),
+    entries: await Promise.all(input.rows.map((row) => entryOf(row, type, locale))),
     page,
     pageCount,
     // Null at the ends rather than a link that answers 404: the theme renders
@@ -97,19 +111,28 @@ export function archiveView(input: ArchiveViewInput): ArchiveView {
   }
 }
 
-export function documentView(
+export async function documentView(
   row: ContentRow,
   type: AnyContentType,
   slugs: readonly string[],
   media: ReadonlyMap<string, ResolvedMedia>,
-): DocumentView {
+): Promise<DocumentView> {
+  const event = contentEventOf(row)
+
   return {
     id: row.id,
     type: type.name,
     title: row.title,
-    excerpt: row.excerpt,
+    excerpt: await filterExcerpt(hooks, row.excerpt, row.blocks, event),
     publishedAt: row.publishedAt,
-    blocks: row.blocks,
+    /*
+     * The one filter that reaches the page, so what comes back is checked
+     * against the block schema before it is rendered: an extension may decide
+     * how a document reads, never what a block may be.
+     */
+    blocks: await filterBlocks(hooks, row.blocks, event, (error) => {
+      console.error('[hooks] content:blocks produced something that is not a document', error)
+    }),
     media,
     href: documentPath(row.locale as Locale, type, slugs),
   }

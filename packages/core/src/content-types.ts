@@ -160,10 +160,38 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
   const hierarchical = options.hierarchical ?? false
   const meta = (options.meta ?? metaDefault) as TMeta
 
+  /*
+   * The nullable fields, twice.
+   *
+   * A patch has to keep a null: it is how "clear this" is said, and it must
+   * survive as far as the merge. A state must not: the column stores absence,
+   * and the whole state is what the type's rules are checked against. Writing
+   * the transform into the state shape alone is what keeps `{ excerpt: null }`
+   * from quietly becoming `{}` before anything can act on it — which it did,
+   * and which made an excerpt impossible to remove.
+   */
+  const clearable = {
+    excerpt: z.string().max(1000).nullish(),
+    publishedAt: z.coerce.date().nullish(),
+    ...(hierarchical ? { parentId: z.uuid().nullish() } : {}),
+  }
+
+  const cleared = <TSchema extends z.ZodType>(schema: TSchema) =>
+    schema.transform((value) => value ?? undefined)
+
   const stateShape = {
     slug: slugSchema,
     title: z.string().min(1).max(300),
-    excerpt: z.string().max(1000).optional(),
+    /*
+     * Null clears, absent leaves alone.
+     *
+     * A patch omits what it does not touch, so without a way to say "clear
+     * this" an excerpt could be written and never removed: the admin sends no
+     * key for an empty field, the merge keeps the stored value, and the author
+     * watches their deletion have no effect. Null says it explicitly and
+     * normalises to the absence the column stores.
+     */
+    excerpt: cleared(clearable.excerpt),
     status: z.enum(CONTENT_STATUSES).default('draft'),
     blocks: blocksSchema.default([]),
     /*
@@ -184,8 +212,8 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
      * `scheduled` without a date is how a document ends up in a state that
      * nothing will ever move it out of.
      */
-    publishedAt: z.coerce.date().optional(),
-    ...(hierarchical ? { parentId: z.uuid().optional() } : {}),
+    publishedAt: cleared(clearable.publishedAt),
+    ...(hierarchical && clearable.parentId ? { parentId: cleared(clearable.parentId) } : {}),
   }
 
   const scheduleHasDate = (value: { status?: ContentStatus; publishedAt?: Date | undefined }) =>
@@ -220,6 +248,9 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
    */
   const updateSchema = z.strictObject({
     ...z.object(stateShape).partial().shape,
+    // After the partial, so a null reaches the merge instead of being
+    // normalised away before anything can tell it apart from an omission.
+    ...clearable,
     locale: z
       .never({ error: 'A document cannot change language; create the translation instead' })
       .optional(),

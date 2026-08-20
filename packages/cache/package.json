@@ -5,7 +5,9 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./astro": "./src/astro/config.ts",
+    "./astro/runtime": "./src/astro/runtime.ts"
   },
   "//": "Tag-based invalidation is core, not a plugin. The site collects tags while it renders and the API purges them when content changes; both halves are defined here so neither can invent a tag the other does not recognise.",
   "scripts": {

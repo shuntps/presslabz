@@ -1,6 +1,10 @@
+import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
+import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import type { Module } from '@presslabz/modules'
 import type { FastifyInstance } from 'fastify'
+import { Valkey } from 'iovalkey'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
 import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
@@ -31,6 +35,10 @@ const uniqueSlug = (name: string) => `rt-${name}-${Math.floor(Math.random() * 1e
 describe.skipIf(!ready)('content routes', () => {
   let scratch: Awaited<ReturnType<typeof createScratchDatabase>>
   let namespace: string
+  let cacheNamespace: string
+  const announced: { name: string; id: string }[] = []
+  let cacheClient: Valkey
+  let pageCache: PageCache
   let app: FastifyInstance
   let handle: ReturnType<typeof createDb>
   let db: Database
@@ -55,6 +63,15 @@ describe.skipIf(!ready)('content routes', () => {
     scratch = await createScratchDatabase('content-routes')
     namespace = testRateLimitNamespace('content-routes')
 
+    /*
+     * Set before app.ts is imported, because env.ts parses process.env once at
+     * import: an installation with no preview secret answers 503 to every
+     * preview request, which would make the authorization tests below assert
+     * nothing.
+     */
+    process.env.PREVIEW_SECRET = 'x'.repeat(48)
+    process.env.SITE_URL = 'http://127.0.0.1:4321'
+
     // env.ts throws at import time when the environment is incomplete, so the
     // app is imported only once the suite knows it can run.
     const [{ buildApp }, { SESSION_COOKIE }] = await Promise.all([
@@ -63,7 +80,44 @@ describe.skipIf(!ready)('content routes', () => {
     ])
     cookieName = SESSION_COOKIE
 
-    app = await buildApp({ databaseUrl: scratch.url, rateLimitNamespace: namespace })
+    cacheNamespace = `presslabz:test:api:${namespace}`
+    cacheClient = new Valkey(process.env.VALKEY_URL as string)
+    cacheClient.on('error', () => {})
+    pageCache = createPageCache({ client: cacheClient, namespace: cacheNamespace })
+
+    /*
+     * A module that records what the core announced. It is registered the same
+     * way any plugin will be, which is the point: if the events could only be
+     * observed from inside the routes, the hook API would not be an API.
+     */
+    const recorder: Module = {
+      name: 'recorder',
+      register(hooks) {
+        const off = (
+          [
+            'content:created',
+            'content:updated',
+            'content:published',
+            'content:unpublished',
+            'content:deleted',
+          ] as const
+        ).map((name) =>
+          hooks.action(name, (payload) => {
+            announced.push({ name, id: (payload as { id: string }).id })
+          }),
+        )
+        return () => {
+          for (const remove of off) remove()
+        }
+      },
+    }
+
+    app = await buildApp({
+      databaseUrl: scratch.url,
+      rateLimitNamespace: namespace,
+      pageCacheNamespace: cacheNamespace,
+      modules: [recorder],
+    })
     await app.ready()
 
     handle = createDb(scratch.url, { maxConnections: 5 })
@@ -85,6 +139,8 @@ describe.skipIf(!ready)('content routes', () => {
     await scratch.drop()
     // The scratch database goes with a DROP; Valkey keys do not.
     await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
+    await pageCache.clear()
+    await cacheClient.quit()
   })
 
   async function post(role: string, body: Record<string, unknown>) {
@@ -98,13 +154,29 @@ describe.skipIf(!ready)('content routes', () => {
     return response
   }
 
+  /**
+   * Reads the document's current version and sends it back with the patch.
+   *
+   * That is what a client does: it edits what it was shown. A test that
+   * hardcoded a version would stop exercising the precondition the moment the
+   * document was written to twice, and the tests that are *about* staleness
+   * say so by passing expectedVersion themselves.
+   */
   async function patch(role: string, id: string, body: Record<string, unknown>) {
+    const payload =
+      'expectedVersion' in body ? body : { ...body, expectedVersion: await versionOf(role, id) }
+
     return app.inject({
       method: 'PATCH',
       url: `/content/post/${id}`,
       cookies: as(role),
-      payload: body,
+      payload,
     })
+  }
+
+  async function versionOf(role: string, id: string): Promise<number> {
+    const response = await app.inject({ url: `/content/post/${id}`, cookies: as(role) })
+    return response.statusCode === 200 ? (response.json().content.version as number) : 1
   }
 
   async function remove(role: string, id: string) {
@@ -623,6 +695,523 @@ describe.skipIf(!ready)('content routes', () => {
     it('lists the declared types so the admin builds navigation from truth', async () => {
       const response = await app.inject({ url: '/content-types', cookies: as('editor') })
       expect(response.json().types.map((t: { name: string }) => t.name)).toEqual(['post', 'page'])
+    })
+  })
+
+  describe('publishing empties the page cache', () => {
+    /**
+     * The site collects tags while it renders and this process purges them.
+     * The two halves never meet: `cache.invalidate()` runs inside the Astro
+     * server, which is not this process and never hears about a write. What is
+     * asserted here is the seam — that a write reaches the same Valkey entries
+     * the site stored.
+     */
+    async function cacheAPage(key: string, tags: readonly string[]): Promise<void> {
+      /*
+       * Past the purge the creation just made. The store refuses an entry
+       * whose render began at or before a purge of one of its tags — a tie
+       * counts as the purge winning, by design — and creating a document
+       * purges its own tag in the same millisecond this fixture would
+       * otherwise be written.
+       */
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
+      const lookup = await pageCache.lookup(key)
+      const stored = await pageCache.store(
+        key,
+        { body: '<p>cached</p>', status: 200, headers: {} },
+        { tags: [...tags], renderedFrom: lookup.at },
+      )
+      expect(stored).toBe(true)
+    }
+
+    it('drops the document page when the document is edited', async () => {
+      const created = await post('editor', {
+        locale: 'en',
+        slug: 'cached-doc',
+        title: 'Cached document',
+        status: 'draft',
+      })
+      const id = created.json().content.id as string
+
+      await cacheAPage('/en/blog/cached-doc', [contentTag(id)])
+
+      const patched = await patch('editor', id, { title: 'Renamed' })
+
+      expect(patched.statusCode).toBe(200)
+      expect((await pageCache.lookup('/en/blog/cached-doc')).hit).toBe(false)
+    })
+
+    it('drops it when the document is deleted', async () => {
+      const created = await post('editor', {
+        locale: 'en',
+        slug: 'cached-gone',
+        title: 'Cached and gone',
+        status: 'draft',
+      })
+      const id = created.json().content.id as string
+
+      await cacheAPage('/en/blog/cached-gone', [contentTag(id)])
+
+      const deleted = await remove('editor', id)
+
+      expect(deleted.statusCode).toBe(204)
+      expect((await pageCache.lookup('/en/blog/cached-gone')).hit).toBe(false)
+    })
+  })
+
+  describe('preview links', () => {
+    /*
+     * A preview link is a read, delegated to another process for a few
+     * minutes. It is authorized by the same function that authorizes reading
+     * the document, and it must never become a permission of its own.
+     */
+    it('is refused to somebody who may not read the document', async () => {
+      const created = await post('contributor', draft('secret-draft'))
+      const id = created.json().content.id as string
+
+      const asOther = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('subscriber'),
+      })
+
+      expect(asOther.statusCode).toBe(403)
+    })
+
+    it('answers 404 for a document that is not of this type', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/content/post/00000000-0000-4000-8000-000000000000/preview',
+        cookies: as('editor'),
+      })
+
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('hands an editor a link that names the document and expires', async () => {
+      const created = await post('editor', draft('previewable'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('editor'),
+      })
+
+      expect(response.statusCode).toBe(200)
+
+      const { url, expiresAt } = response.json().preview
+      const locale = created.json().content.locale as string
+
+      // The link opens the document in its own language, whatever the actor's.
+      expect(url).toContain(`/${locale}/preview/`)
+      expect(url.startsWith('http://127.0.0.1:4321/')).toBe(true)
+      expect(verifyPreviewToken(url.split('/preview/')[1] as string, 'x'.repeat(48))).toEqual({
+        contentId: id,
+        expiresAt: Date.parse(expiresAt),
+      })
+    })
+
+    it('lets the author of a draft preview their own work', async () => {
+      const created = await post('contributor', draft('mine-to-preview'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('contributor'),
+      })
+
+      expect(response.statusCode).toBe(200)
+    })
+  })
+
+  describe('what a write announces', () => {
+    /*
+     * Phase 4's claim, asserted: a first-party feature hears about writes
+     * through the same API a third-party plugin will use, and the core
+     * announces enough for it to act on.
+     */
+    it('announces a creation, an edit and a deletion', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('announced-doc'))
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Renamed' })
+      await remove('editor', id)
+
+      expect(announced.filter((event) => event.id === id).map((event) => event.name)).toEqual([
+        'content:created',
+        'content:updated',
+        'content:deleted',
+      ])
+    })
+
+    /*
+     * "Did this just become visible" is the question every integration asks,
+     * and deriving it from a status pair in each of them is how they all get
+     * it slightly differently.
+     */
+    it('says when a document became public, and when it stopped', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('going-public'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { status: 'published' })
+      const afterPublish = announced.filter((event) => event.id === id).map((e) => e.name)
+
+      await patch('editor', id, { status: 'draft' })
+      const afterUnpublish = announced.filter((event) => event.id === id).map((e) => e.name)
+
+      expect(afterPublish).toContain('content:published')
+      expect(afterUnpublish).toContain('content:unpublished')
+      // An edit that publishes is both events, not one instead of the other.
+      expect(afterPublish.filter((name) => name === 'content:updated')).toHaveLength(1)
+    })
+
+    it('says nothing about a status that did not change', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('quiet-edit'))
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Still a draft' })
+
+      const names = announced.filter((event) => event.id === id).map((event) => event.name)
+
+      expect(names).not.toContain('content:published')
+      expect(names).not.toContain('content:unpublished')
+    })
+  })
+
+  describe('two editors on one document', () => {
+    /*
+     * The acceptance criterion of the issue this closes: the lock serialized
+     * the writes and neither of them was told anything, so the second author's
+     * save silently replaced the first author's work.
+     */
+    it('refuses a save composed against a version that has moved', async () => {
+      const created = await post('editor', draft('contested'))
+      const id = created.json().content.id as string
+      const opened = created.json().content.version as number
+
+      // Both editors opened version 1. The first one saves.
+      const first = await patch('editor', id, { title: 'First writer', expectedVersion: opened })
+      expect(first.statusCode).toBe(200)
+
+      // The second saves what they were looking at, which is now stale.
+      const second = await patch('editor', id, { title: 'Second writer', expectedVersion: opened })
+
+      expect(second.statusCode).toBe(409)
+      expect(second.json().reason).toBe('stale-version')
+
+      // And the first writer's work is still there.
+      const stored = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      expect(stored.json().content.title).toBe('First writer')
+    })
+
+    it('accepts the same save once the client has reloaded', async () => {
+      const created = await post('editor', draft('reloaded'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { title: 'One' })
+      const reloaded = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+
+      const again = await patch('editor', id, {
+        title: 'Two',
+        expectedVersion: reloaded.json().content.version,
+      })
+
+      expect(again.statusCode).toBe(200)
+      expect(again.json().content.title).toBe('Two')
+    })
+
+    it('counts up on every write, so the number means something', async () => {
+      const created = await post('editor', draft('counting'))
+      const id = created.json().content.id as string
+
+      expect(created.json().content.version).toBe(1)
+      expect((await patch('editor', id, { title: 'Second' })).json().content.version).toBe(2)
+      expect((await patch('editor', id, { title: 'Third' })).json().content.version).toBe(3)
+    })
+
+    /*
+     * Without a precondition a client is back to overwriting silently, so
+     * forgetting it is a refusal rather than a default.
+     */
+    it('refuses a save that states no version at all', async () => {
+      const created = await post('editor', draft('unversioned'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/content/post/${id}`,
+        cookies: as('editor'),
+        payload: { title: 'No precondition' },
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json().reason).toBe('expected_version_required')
+    })
+  })
+
+  describe('clearing a field rather than leaving it', () => {
+    /*
+     * A patch omits what it does not touch, so before this there was no way to
+     * remove an excerpt: the admin sent no key for an empty field, the merge
+     * kept the stored value, and the author watched their deletion do nothing.
+     */
+    it('removes an excerpt when the field is explicitly emptied', async () => {
+      const created = await post('editor', { ...draft('clearable'), excerpt: 'Written' })
+      const id = created.json().content.id as string
+
+      expect(created.json().content.excerpt).toBe('Written')
+
+      const cleared = await patch('editor', id, { excerpt: null })
+
+      expect(cleared.statusCode).toBe(200)
+      expect(cleared.json().content.excerpt).toBeNull()
+    })
+
+    it('leaves it alone when the field is simply absent', async () => {
+      const created = await post('editor', { ...draft('kept'), excerpt: 'Written' })
+      const id = created.json().content.id as string
+
+      const patched = await patch('editor', id, { title: 'Renamed' })
+
+      expect(patched.json().content.excerpt).toBe('Written')
+    })
+
+    it('removes a publication date the same way', async () => {
+      const created = await post('editor', {
+        ...draft('dated'),
+        publishedAt: '2026-09-01T09:00:00.000Z',
+      })
+      const id = created.json().content.id as string
+
+      const cleared = await patch('editor', id, { publishedAt: null })
+
+      expect(cleared.statusCode).toBe(200)
+      expect(cleared.json().content.publishedAt).toBeNull()
+    })
+  })
+
+  describe('history, and putting a document back', () => {
+    async function historyOf(role: string, id: string) {
+      const response = await app.inject({
+        url: `/content/post/${id}/revisions`,
+        cookies: as(role),
+      })
+      return response
+    }
+
+    /*
+     * The acceptance criterion: a revision has to carry enough to restore
+     * every editorial field. It used to hold the title, the blocks and the
+     * metadata, which reads like "the document" until somebody tries.
+     */
+    it('restores every field the editor could have changed', async () => {
+      const created = await post('editor', {
+        ...draft('restorable'),
+        excerpt: 'The first summary',
+      })
+      const id = created.json().content.id as string
+      const original = created.json().content
+
+      await patch('editor', id, {
+        title: 'Renamed',
+        slug: 'renamed-entirely',
+        excerpt: 'A different summary',
+        status: 'published',
+        publishedAt: '2026-09-01T09:00:00.000Z',
+      })
+
+      const history = await historyOf('editor', id)
+      expect(history.statusCode).toBe(200)
+
+      const first = history.json().revisions.at(-1)
+      expect(first.version).toBe(1)
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const restored = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${first.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect(restored.statusCode).toBe(200)
+
+      const document = restored.json().content
+      expect(document.title).toBe(original.title)
+      expect(document.slug).toBe(original.slug)
+      expect(document.excerpt).toBe('The first summary')
+      expect(document.status).toBe('draft')
+      expect(document.publishedAt).toBeNull()
+    })
+
+    /*
+     * A restore is an edit, so it leaves a revision of its own — restoring the
+     * wrong one has to be undoable too.
+     */
+    it('records the version it replaced, so a restore can itself be undone', async () => {
+      const created = await post('editor', draft('undoable'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { title: 'Second' })
+      const before = (await historyOf('editor', id)).json().revisions.length
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const first = (await historyOf('editor', id)).json().revisions.at(-1)
+
+      await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${first.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect((await historyOf('editor', id)).json().revisions.length).toBe(before + 1)
+    })
+
+    /*
+     * Reading history is reading earlier versions of the same text. Anything
+     * looser would be a way to read a document through its past.
+     */
+    it('costs exactly what reading the document costs', async () => {
+      const created = await post('contributor', draft('private-history'))
+      const id = created.json().content.id as string
+
+      expect((await historyOf('subscriber', id)).statusCode).toBe(403)
+      expect((await historyOf('contributor', id)).statusCode).toBe(200)
+    })
+
+    it('refuses a revision id that belongs to another document', async () => {
+      const mine = await post('editor', draft('mine-to-restore'))
+      const other = await post('editor', draft('someone-elses'))
+      const mineId = mine.json().content.id as string
+      const otherId = other.json().content.id as string
+
+      await patch('editor', otherId, { title: 'Changed' })
+      const otherRevision = (await historyOf('editor', otherId)).json().revisions[0]
+
+      const current = await app.inject({ url: `/content/post/${mineId}`, cookies: as('editor') })
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${mineId}/revisions/${otherRevision.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect(response.statusCode).toBe(404)
+    })
+
+    /*
+     * A restore that bypassed the write rules would be a way to publish — or
+     * to take a document down — without the permission either costs.
+     */
+    it('is refused when the state it would restore is one the actor may not write', async () => {
+      const created = await post('contributor', draft('contributor-history'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { status: 'published' })
+      const revisions = (await historyOf('editor', id)).json().revisions
+      const draftRevision = revisions.at(-1)
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${draftRevision.id}/restore`,
+        cookies: as('contributor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      // Taking a published document back to a draft costs content:publish,
+      // which a contributor does not have.
+      expect(response.statusCode).toBe(403)
+    })
+  })
+
+  describe('placing a page under another', () => {
+    /*
+     * Pages nest and posts do not, so this is the one type in the registry
+     * that can exercise the hierarchy through the API. What is asserted here
+     * is the mapping: the repository's reasons have to reach a client as
+     * statuses it can act on, and 422 and 409 mean different things — one is
+     * "that cannot be a parent", the other is "not with the tree as it is".
+     */
+    async function makePage(slug: string, body: Record<string, unknown> = {}) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: { locale: 'en', slug: uniqueSlug(slug), title: 'Une page', ...body },
+      })
+      if (response.statusCode === 201) created.push(response.json().content.id)
+      return response
+    }
+
+    async function movePage(id: string, parentId: string | null, version: number) {
+      return app.inject({
+        method: 'PATCH',
+        url: `/content/page/${id}`,
+        cookies: as('editor'),
+        payload: { parentId, expectedVersion: version },
+      })
+    }
+
+    it('answers 422 for a parent that does not exist', async () => {
+      const response = await makePage('lost-child', {
+        parentId: '00000000-0000-4000-8000-000000000000',
+      })
+
+      expect(response.statusCode).toBe(422)
+      expect(response.json().reason).toBe('parent-not-found')
+    })
+
+    it('answers 422 for a parent in another language', async () => {
+      const french = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: { locale: 'fr', slug: uniqueSlug('parent-francais'), title: 'Parent' },
+      })
+      created.push(french.json().content.id)
+
+      const response = await makePage('english-child', {
+        parentId: french.json().content.id,
+      })
+
+      expect(response.statusCode).toBe(422)
+      expect(response.json().reason).toBe('parent-mismatch')
+    })
+
+    it('answers 409 for a placement that would make a loop', async () => {
+      const top = await makePage('loop-top')
+      const topId = top.json().content.id as string
+
+      const under = await makePage('loop-under', { parentId: topId })
+      const underId = under.json().content.id as string
+
+      const response = await movePage(topId, underId, top.json().content.version)
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().reason).toBe('parent-cycle')
+    })
+
+    it('accepts an ordinary nesting', async () => {
+      const parent = await makePage('ordinary-top')
+      const child = await makePage('ordinary-below')
+
+      const response = await movePage(
+        child.json().content.id,
+        parent.json().content.id,
+        child.json().content.version,
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().content.parentId).toBe(parent.json().content.id)
     })
   })
 })

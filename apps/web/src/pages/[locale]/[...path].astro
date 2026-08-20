@@ -1,15 +1,30 @@
 ---
 import { createBuiltinRegistry } from '@presslabz/core'
-import type { ArchiveView, DocumentView } from '@presslabz/theme-kit'
-import { loadAncestry, loadArchive, loadDocument, loadMedia } from '../../data/content.ts'
-import { localeConfig } from '../../env.ts'
+import { createTranslator } from '@presslabz/i18n'
+import type { ArchiveView, DocumentView, PageHead, TranslationLink } from '@presslabz/theme-kit'
 import {
+  loadAncestry,
+  loadArchive,
+  loadDocument,
+  loadMedia,
+  loadTranslations,
+} from '../../data/content.ts'
+import { env, localeConfig } from '../../env.ts'
+import {
+  archivePath,
   documentPath,
   PAGE_PARAM,
   parsePageNumber,
   parseSegments,
   resolveRoute,
 } from '../../lib/routes.ts'
+import {
+  documentHead,
+  listingHead,
+  listingTranslations,
+  MISSING_HEAD,
+  translationLinks,
+} from '../../lib/seo.ts'
 import { archiveView, documentView, siteContext } from '../../lib/view.ts'
 import { theme } from '../../theme.ts'
 
@@ -21,18 +36,17 @@ import { theme } from '../../theme.ts'
 type View =
   | { readonly kind: 'missing' }
   | { readonly kind: 'archive'; readonly archive: ArchiveView }
-  | { readonly kind: 'document'; readonly document: DocumentView }
+  | {
+      readonly kind: 'document'
+      readonly document: DocumentView
+      readonly head: PageHead
+      readonly translations: readonly TranslationLink[]
+    }
 
 const registry = createBuiltinRegistry()
 const locale = Astro.locals.locale
 const segments = parseSegments(Astro.params.path ?? '')
 const route = locale && segments ? resolveRoute(registry, segments) : null
-
-const site = siteContext({
-  locale: locale ?? localeConfig.defaultLocale,
-  path: Astro.url.pathname,
-  registry,
-})
 
 let view: View = { kind: 'missing' }
 
@@ -49,13 +63,13 @@ if (locale && route?.kind === 'archive') {
     archive && archive.page <= archive.pageCount
       ? {
           kind: 'archive',
-          archive: archiveView({
+          archive: await archiveView({
             locale,
             type: route.type,
             rows: archive.rows,
             page: archive.page,
             pageCount: archive.pageCount,
-            title: site.t(`content.type.${route.type.name}.plural` as never),
+            title: createTranslator(locale)(`content.type.${route.type.name}.plural` as never),
           }),
         }
       : { kind: 'missing' }
@@ -87,15 +101,45 @@ if (locale && route?.kind === 'document') {
         return Astro.redirect(canonical, 301)
       }
 
+      const siblings = await loadTranslations(row, route.type)
+
       view = {
         kind: 'document',
-        document: documentView(row, route.type, path, await loadMedia(row, locale)),
+        document: await documentView(row, route.type, path, await loadMedia(row, locale)),
+        head: documentHead({ locale, type: route.type, path, meta: row.meta, siblings }),
+        translations: translationLinks(siblings, route.type, locale, env.SITE_NAME),
       }
     }
   }
 }
 
 if (view.kind === 'missing') Astro.response.status = 404
+
+const site = siteContext({
+  locale: locale ?? localeConfig.defaultLocale,
+  path: Astro.url.pathname,
+  registry,
+  head:
+    view.kind === 'document'
+      ? view.head
+      : view.kind === 'archive'
+        ? listingHead(Astro.url.pathname)
+        : MISSING_HEAD,
+  translations:
+    view.kind === 'document'
+      ? view.translations
+      : view.kind === 'archive' && locale
+        ? listingTranslations(Astro.url.pathname, locale)
+        : [],
+  /*
+   * A type at the locale root has no archive and therefore no feed; a page is
+   * not something a reader subscribes to.
+   */
+  feedHref:
+    locale && route && route.type.basePath !== ''
+      ? `${archivePath(locale, route.type)}/feed.xml`
+      : null,
+})
 
 const Archive = theme.templates.archive
 const Document = theme.templates.document

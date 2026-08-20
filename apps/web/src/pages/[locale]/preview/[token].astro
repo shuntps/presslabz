@@ -1,0 +1,62 @@
+---
+import { createBuiltinRegistry } from '@presslabz/core'
+import { verifyPreviewToken } from '@presslabz/core/preview'
+import { loadForPreview, loadMedia } from '../../../data/content.ts'
+import { env, localeConfig } from '../../../env.ts'
+import { MISSING_HEAD } from '../../../lib/seo.ts'
+import { documentView, siteContext } from '../../../lib/view.ts'
+import { theme } from '../../../theme.ts'
+
+/**
+ * An unpublished document, opened by whoever holds a live token.
+ *
+ * The token is the whole authorization. It is signed by the API with a secret
+ * this site also holds, it names one document, and it expires in minutes —
+ * which is what lets a preview be sent to a client with no account instead of
+ * requiring the session cookie, one the public site cannot read when it lives
+ * on a different host from the API.
+ *
+ * Everything about this response says "not part of the site": no caching, no
+ * indexing, no referrer. The last one matters most — the token is in the URL,
+ * so a link clicked from this page would hand it to whatever it points at.
+ */
+const registry = createBuiltinRegistry()
+const locale = Astro.locals.locale
+const token = Astro.params.token ?? ''
+
+const claims = env.PREVIEW_SECRET ? verifyPreviewToken(token, env.PREVIEW_SECRET) : null
+const row = claims && locale ? await loadForPreview(claims.contentId) : null
+const type = row ? registry.get(row.type) : undefined
+
+Astro.response.headers.set('cache-control', 'no-store, private')
+Astro.response.headers.set('x-robots-tag', 'noindex, nofollow')
+Astro.response.headers.set('referrer-policy', 'no-referrer')
+
+/*
+ * The token names the document, so the language in the path is decoration —
+ * and a wrong one would render French chrome around an English document.
+ * Redirecting keeps one address per preview rather than one per guess.
+ */
+if (row && type && locale && row.locale !== locale) {
+  return Astro.redirect(`/${row.locale}/preview/${token}`, 302)
+}
+
+const view =
+  row && type && locale
+    ? await documentView(row, type, [row.slug], await loadMedia(row, locale))
+    : null
+
+if (!view) Astro.response.status = 404
+
+const site = siteContext({
+  locale: locale ?? localeConfig.defaultLocale,
+  path: Astro.url.pathname,
+  registry,
+  head: MISSING_HEAD,
+})
+
+const Document = theme.templates.document
+const NotFound = theme.templates.notFound
+---
+
+{view ? <Document site={site} document={view} /> : <NotFound site={site} />}

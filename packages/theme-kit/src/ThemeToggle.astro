@@ -1,0 +1,121 @@
+---
+import { THEME_PREFERENCES } from '@presslabz/tokens/preferences'
+
+interface Props {
+  /** Names the group for a screen reader: "Theme", "Thème". */
+  label: string
+  /** One label per preference, in the order light, dark, system. */
+  options: { light: string; dark: string; system: string }
+}
+
+const { label, options } = Astro.props
+
+/**
+ * The control that writes the theme cookie.
+ *
+ * It ships with the kit rather than with each theme for the same reason the
+ * pre-paint script does: dark mode is a core feature, and the cookie contract
+ * — its name, its lifetime, the attribute it sets — is implemented once. A
+ * theme decides where the control sits and how it looks; it never decides what
+ * pressing it means.
+ *
+ * Three states, not two. "System" is a choice a reader can make, and it is not
+ * the same as never having chosen: it says "follow my machine", which keeps
+ * working when they change their machine's setting with the tab still open.
+ *
+ * Hidden until the script runs. A control that cannot work without JavaScript
+ * is worse than no control at all — a reader without it keeps their system
+ * preference, which the stylesheet already honours, and is not shown a button
+ * that does nothing.
+ */
+---
+
+<div class="pl-theme-toggle" role="group" aria-label={label} hidden data-theme-toggle>
+  {
+    THEME_PREFERENCES.map((preference) => (
+      <button type="button" value={preference} aria-pressed="false">
+        {options[preference]}
+      </button>
+    ))
+  }
+</div>
+
+<script>
+  import { readThemeCookie } from '@presslabz/tokens/preferences'
+  import { setThemePreference } from '@presslabz/tokens'
+
+  /*
+   * The reader's stated choice, or "system" when they have never made one.
+   * readThemeCookie distinguishes the two; the buttons only need the first.
+   */
+  function currentPreference() {
+    return readThemeCookie(document.cookie) ?? 'system'
+  }
+
+  for (const group of document.querySelectorAll('[data-theme-toggle]')) {
+    const buttons = [...group.querySelectorAll('button')]
+
+    const mark = (preference: string) => {
+      for (const button of buttons) {
+        button.setAttribute('aria-pressed', String(button.value === preference))
+      }
+    }
+
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        const preference = button.value as 'light' | 'dark' | 'system'
+        // Cookie and attribute together, so a caller cannot do one and forget
+        // the other — and so the choice survives the next page load.
+        setThemePreference(preference, document)
+        mark(preference)
+      })
+    }
+
+    mark(currentPreference())
+    group.removeAttribute('hidden')
+  }
+</script>
+
+<style>
+  .pl-theme-toggle {
+    display: flex;
+    /* A hairline and a step in background, never a shadow. */
+    border: 1px solid var(--pl-color-border);
+    background: var(--pl-color-bg-raised);
+  }
+
+  .pl-theme-toggle[hidden] {
+    display: none;
+  }
+
+  button {
+    font-family: var(--pl-font-machine);
+    font-size: var(--pl-text-xs);
+    color: var(--pl-color-text-muted);
+    background: none;
+    border: 0;
+    padding: var(--pl-space-1) var(--pl-space-3);
+    /* Never smaller than a finger, whatever the type size says. */
+    min-height: var(--pl-tap-target);
+    cursor: pointer;
+  }
+
+  button + button {
+    border-inline-start: 1px solid var(--pl-color-border);
+  }
+
+  /*
+   * The chosen one is marked, not filled: colour marks in this design, and a
+   * filled control would be the only solid thing on a page that reserves that
+   * for a primary action.
+   */
+  button[aria-pressed='true'] {
+    color: var(--pl-color-text);
+    box-shadow: inset 0 -2px 0 var(--pl-color-rubric);
+  }
+
+  button:focus-visible {
+    outline: 2px solid var(--pl-color-focus-ring);
+    outline-offset: -2px;
+  }
+</style>

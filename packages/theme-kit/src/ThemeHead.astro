@@ -1,13 +1,17 @@
 ---
+import { LOCALE_TAGS } from '@presslabz/i18n'
 import { THEME_INIT_SCRIPT } from '@presslabz/tokens/preferences'
 import '@presslabz/tokens/tokens.css'
+import type { SiteContext } from './types.ts'
 
 interface Props {
+  site: SiteContext
   title: string
   description?: string | undefined
 }
 
-const { title, description } = Astro.props
+const { site, title, description } = Astro.props
+const { canonical, alternates, defaultHref, noindex } = site.head
 
 /*
  * The head every theme gets, so that three things are implemented once rather
@@ -30,4 +34,28 @@ const { title, description } = Astro.props
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>{title}</title>
 {description ? <meta name="description" content={description} /> : null}
+{canonical ? <link rel="canonical" href={canonical} /> : null}
+{
+  /*
+   * hreflang is reciprocal or it is ignored: every language names all of them,
+   * itself included. Only translations that are actually published appear —
+   * announcing one that answers 404 is worse than announcing none, because a
+   * reader who switches language lands on nothing.
+   */
+  alternates.map((alternate) => (
+    <link rel="alternate" hreflang={LOCALE_TAGS[alternate.locale]} href={alternate.href} />
+  ))
+}
+{defaultHref ? <link rel="alternate" hreflang="x-default" href={defaultHref} /> : null}
+{noindex ? <meta name="robots" content="noindex" /> : null}
+{
+  site.feedHref ? (
+    <link
+      rel="alternate"
+      type="application/atom+xml"
+      title={site.siteName}
+      href={site.feedHref}
+    />
+  ) : null
+}
 <script is:inline set:html={THEME_INIT_SCRIPT}></script>

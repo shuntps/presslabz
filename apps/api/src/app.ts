@@ -3,18 +3,22 @@ import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import rateLimit, { normalizeIP } from '@fastify/rate-limit'
-import { createBuiltinRegistry } from '@presslabz/core'
-import { createDb, deleteExpiredSessions } from '@presslabz/db'
+import { contentEventOf, createBuiltinRegistry, transitionsFor } from '@presslabz/core'
+import { createDb, deleteExpiredSessions, publishDueContent } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
+import type { Module } from '@presslabz/modules'
 import Fastify from 'fastify'
 import { Valkey } from 'iovalkey'
 import { startSessionSweep } from './auth/cleanup.ts'
 import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
+import { createApiPageCache } from './cache/purge.ts'
 import { contentRoutes } from './content/routes.ts'
+import { startScheduler } from './content/scheduler.ts'
 import { env } from './env.ts'
 import { createProbe } from './health/probe.ts'
 import { summarizeHealth } from './health/status.ts'
+import { createApiHooks } from './hooks.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
@@ -62,6 +66,21 @@ export interface BuildAppOptions {
    * prove nothing about the difference.
    */
   readonly rateLimitValkeyUrl?: string
+  /**
+   * Overrides the page cache's key prefix.
+   *
+   * Same reasoning as the rate limiter's: a suite that purged under the
+   * configured namespace would empty the cache of whatever else is running
+   * against this Valkey — a developer's own site, another run. It is also what
+   * lets a test observe a purge without inventing one.
+   */
+  readonly pageCacheNamespace?: string
+  /**
+   * Extra hook modules. A suite installs one to observe what the core
+   * announces, which is the only way to assert that it announces anything at
+   * all without reaching inside the routes.
+   */
+  readonly modules?: readonly Module[]
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -221,9 +240,65 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(userRoutes, { db })
   // Declared in code, so the registry is built once at boot and passed in
   // rather than reached for from a module.
-  await app.register(contentRoutes, { db, registry: createBuiltinRegistry() })
+  /*
+   * The cache shares the health client. Purging runs after a write has already
+   * landed, so it is allowed to be slow and is not allowed to fail the
+   * request; a dedicated connection would buy nothing and cost one more thing
+   * to keep alive.
+   */
+  const pageCacheNamespace = options.pageCacheNamespace ?? env.PAGE_CACHE_NAMESPACE
+
+  const { hooks, uninstall } = createApiHooks({
+    cache: createApiPageCache({
+      client: valkey,
+      ...(pageCacheNamespace === undefined ? {} : { namespace: pageCacheNamespace }),
+      ...(env.PAGE_CACHE_TTL_SECONDS === undefined
+        ? {}
+        : { ttlSeconds: env.PAGE_CACHE_TTL_SECONDS }),
+    }),
+    logger: app.log,
+    ...(options.modules === undefined ? {} : { modules: options.modules }),
+  })
+
+  app.addHook('onClose', () => {
+    uninstall()
+  })
+
+  /*
+   * What makes `scheduled` mean anything. It announces each publication
+   * through the same hook a manual one uses, so the cache purge and every
+   * other handler treat a scheduled post exactly like one somebody pressed a
+   * button for — which is the point of routing invalidation through the hook
+   * API rather than calling it from the routes.
+   */
+  const scheduler =
+    env.SCHEDULER_INTERVAL_MS > 0
+      ? startScheduler({
+          publishDue: () => publishDueContent(db),
+          announce: async (row) => {
+            /*
+             * The same announcements a manual publication makes, decided by
+             * the same function, so that a handler cannot tell the two apart —
+             * which is the whole reason invalidation went through the hook API
+             * rather than staying in the write routes.
+             */
+            const context = { locale: row.locale, actorId: null }
+            for (const announcement of transitionsFor('scheduled', contentEventOf(row))) {
+              await hooks.emit(announcement.name, announcement.payload, context)
+            }
+          },
+          log: app.log,
+          intervalMs: env.SCHEDULER_INTERVAL_MS,
+        })
+      : null
+
+  app.addHook('onClose', () => {
+    scheduler?.stop()
+  })
+
+  await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), hooks })
   await app.register(multipart)
-  await app.register(mediaRoutes, { db })
+  await app.register(mediaRoutes, { db, hooks })
 
   /*
    * A fresh clone plus `pnpm services:up` should leave a working installation.

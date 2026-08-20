@@ -19,10 +19,12 @@
     "@presslabz/core": "workspace:*",
     "@presslabz/db": "workspace:*",
     "@presslabz/i18n": "workspace:*",
+    "@presslabz/modules": "workspace:*",
     "@presslabz/theme-default": "workspace:*",
     "@presslabz/theme-kit": "workspace:*",
     "@presslabz/tokens": "workspace:*",
     "astro": "catalog:",
+    "iovalkey": "catalog:",
     "zod": "catalog:"
   },
   "//dev": "--force because Astro 7 keeps one dev server per project and refuses a second. Under turbo that refusal fails the whole `pnpm dev` pipeline \u2014 the API and the admin go down with it \u2014 over a server left running by an earlier session. Replacing it is what a person means by running dev again.",

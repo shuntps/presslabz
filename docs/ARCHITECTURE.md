@@ -4,9 +4,9 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phases 0 to 2 landed, and phase 3 is under way.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, at a prefixed locale URL, rendered from its blocks. All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site, which is tested by starting what production starts and asking it questions over a socket.
+**Phases 0 to 4 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. An unpublished document opens through a signed, short-lived link. The extension API is exposed and validated: the cache invalidation the site depends on is itself a module registered on it, with no privileged path into the core.
 
-What phase 3 still owes: the theme contract and the default theme, so the site's appearance stops being the plain built-in layout; the page cache actually wired to responses and purged by the API when content changes; `hreflang`, the language switcher and the canonical metadata; the sitemap, `robots.txt` and the feeds; and preview of unpublished documents.
+All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site: the suite starts what production starts and asks it questions over a socket.
 
 Everything below is settled, not proposed.
 
@@ -63,6 +63,7 @@ apps/api           Fastify core
 apps/admin         React SPA (the wp-admin equivalent)
 apps/web           Astro public rendering, loads themes
 packages/core      domain: content model, hook API, capabilities
+packages/modules   first-party features, built on the public hook API
 packages/blocks    block schemas + whitelist renderers
 packages/db        Drizzle schema + migrations
 packages/cache     tag collection and the page cache Valkey holds
@@ -270,7 +271,75 @@ The public site reads the database directly, through the same repositories the A
 
 **What is public is a domain rule, not a `where` clause.** `isPubliclyVisible` in `packages/core` answers it, and `packages/db/src/repositories/public-contents.ts` restates it in SQL because a listing has to be counted and paginated by the database. Two expressions of one rule is the duplication this project treats as a defect, so an integration test crosses every status with every relation a date can have to now and asserts the two select the same rows. When it fails, the SQL is the copy that is wrong.
 
-The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible however old its date. Nothing yet moves `scheduled` to `published` when its time comes, and answering that question in a read would be the scheduler implemented in the one place that cannot write the row, fire the hooks or purge the cache.
+The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible whatever its date. A read is not where a schedule is resolved — it cannot write the row, announce it, or purge the cache — so the scheduler does that, and by the time a reader arrives the row says `published` like any other.
+
+### Editing text that carries marks
+
+The block vocabulary has always carried inline marks and the renderer has always whitelisted them; nothing in the editor can *create* one yet, because that arrives with Tiptap. What it could do — and did — was destroy them: every keystroke rebuilt the run as a single unmarked node, so a document imported with links and emphasis lost all of it the first time somebody fixed a typo, silently, with no way back short of a revision.
+
+An edit is now treated as what it is: **a splice**. The text either side of the change keeps its marks, and only the changed part is rewritten. What replaces the change inherits marks when the whole change happened inside one run — fixing a word in a bold sentence keeps it bold, which is what the author meant — and inherits none when it spans two differently marked runs, because it cannot inherit both and guessing is worse. Adjacent runs carrying the same marks are joined, or a paragraph edited fifty times becomes fifty nodes saying the same thing.
+
+**Block ids are unique, and the schema says so.** The editor addresses blocks by id — replacing one, deleting one — so two blocks sharing an id had operations that hit both. Nothing checked, and an import or a wholesale copy produces it easily. The schema now refuses it, which would leave such a document unsavable forever, so the editor repairs duplicates on the way in: the first occurrence keeps its id, later ones are renumbered in document order.
+
+**The palette comes from the vocabulary.** It used to be a hand-written list beside a comment claiming otherwise, so adding a block type left it out of the editor with nothing failing. It is derived now, and a type that cannot be created empty — an image needs a media id — is named as an exception rather than by being forgotten.
+
+An optional field on a block clears the same way an optional field on a document does: emptying it removes the key rather than spreading nothing over the previous value, which is why a quote's attribution and a code block's language could be written and never taken back.
+
+### Two editors, one document
+
+A row lock serializes writes; it does not notice that the second one was composed against a version the first has already replaced. Without a precondition the later save wins, the earlier author's work is gone, and nothing anywhere says so — which is what happened here until this was added.
+
+Every document carries a **`version` integer**, incremented on each write, and an update must state the version it was composed against. Stating it is not optional and there is no default: `expectedVersion` is `number | 'any'` in the repository, so a caller that genuinely cannot conflict — a restore, a migration, the scheduler — says so in the code rather than by omission. A mismatch is a `409` naming `stale-version`, and the admin offers the one action that helps: reload and look at what is there now. Nothing was half applied, because the check happens inside the transaction against the locked row.
+
+An integer rather than `updatedAt`: a moment survives a JSON round trip, a clock adjustment and a millisecond-truncating client only by luck.
+
+### Absent, cleared, replaced
+
+A patch omits what it does not touch, so *absent* has to mean "leave alone". That left no way to say "remove this": an excerpt could be written and never deleted, because the admin sent no key for an empty field and the merge kept the stored value.
+
+**Null clears.** The update schema keeps a null as far as the merge, and the state schema — which is what the type's rules are checked against — normalises it to the absence the column stores. Writing that normalisation into both is what made the bug: `{ excerpt: null }` became `{}` before anything could tell it apart from an omission.
+
+The same rule is why restoring a revision states every field including the empty ones. A restore built from a patch of only the non-empty fields would bring a document back with a summary written after the version being restored.
+
+### History that can restore
+
+Revisions were written from the first migration and never read, and the snapshot held the title, the blocks and the metadata — which reads like "the document" until somebody tries to restore one. The slug, the excerpt, the status, the parent and the publication date were all missing.
+
+The snapshot is now the whole editorial state, taken in the transaction that supersedes it, and `content_revisions` is capped per document rather than by age: a document edited twice a year keeps its history, and one edited every minute by an automation does not fill the table. The prune runs in the same transaction as the insert, so the table cannot grow between a write and a sweep that might never run.
+
+**Restoring is an edit, not a rewind.** It goes through the same write path: the same authorization against the state it would produce, the same version precondition, and it leaves a revision of its own, so restoring the wrong one is undoable. A restore that bypassed those would be a way to publish — or to take a document down — without the permission either costs.
+
+### Scheduled publication
+
+A timer in the API claims everything due in **one statement**: `UPDATE … WHERE status = 'scheduled' AND published_at <= now RETURNING *`. That is what makes several instances safe. Each row is locked by whichever instance touches it first, and the loser re-evaluates its condition after that commits, finds the row already published, and returns fewer rows — so a document is published once and, more importantly, *announced* once. Reading the due set and then updating it would hand the same rows to every instance and tell every hook handler about the same publication several times.
+
+It runs once at boot and then on an interval, because an instance starting after downtime owes whatever came due while it was gone. Anything overdue is published however overdue: a schedule is a promise about a moment, and publishing late is what an author expects where skipping silently is how a post never appears at all.
+
+What it publishes is announced through `transitionsFor`, the same function a manual write uses, so a scheduled post and one somebody pressed a button for are indistinguishable to every handler. That is the point of routing invalidation through the hook API rather than calling it from the routes — and it was not free: the cache module listened only to the broad events, so the first scheduled publication went live behind a cached page that still said it had not. The module now hears `content:published` on its own.
+
+`SCHEDULER_INTERVAL_MS=0` turns it off, for an installation that would rather run it elsewhere. The status then means what it meant before the scheduler existed, which is a choice rather than an accident.
+
+### Times an editor types
+
+A stored publication date is a UTC instant; a `datetime-local` field speaks the browser's local time. Converting between them is where this went wrong: the editor sliced the first sixteen characters off the ISO string, which the field then read as local, so opening a document in Toronto and saving it untouched moved its publication by four hours in summer and five in winter — with nothing in the interface to show it.
+
+The field shows the instant in the editor's own zone, and what they type means their own zone, with the zone named beside the field and the resulting UTC instant spelled out. Both conversions defer to the platform's zone rules, so daylight saving is handled by the same table the browser's clock uses; the tests cross both transitions, including the local hour that does not exist and the one that happens twice.
+
+One editorial timezone for the whole installation — the way WordPress does it — is the alternative, and it is a setting, a migration and a second conversion. It would be worth that for a newsroom scheduling to the minute across countries. Naming the zone is what keeps the current choice visible rather than assumed.
+
+### What a parent may be
+
+`parentId` used to guarantee one thing: that some row existed. A page could therefore name a post, a translation in another language, itself, or one of its own descendants — and the read path had to defend against all of it, capping its walk and reporting chains it could not resolve.
+
+Type and locale are now **structural**. `contents` carries a unique constraint on `(id, type, locale)` and the parent is a composite foreign key `(parent_id, type, locale) → (id, type, locale)` — the same pattern the translation group uses, and for the same reason: a check loses its race, because two concurrent writes can each read a compatible parent and then make it incompatible. A `CHECK` refuses a document that is its own parent.
+
+**Cycles cannot be a constraint** — no check can see a path — so the repository walks up from the proposed parent, taking each ancestor `for update` as it goes. That lock is what makes it safe against a concurrent write building the other half of the loop: two transactions placing A under B and B under A each need a row the other holds, so one waits, then reads the tree the first committed and finds itself in it.
+
+**Depth is a limit, not a guard.** A page may be at most eight levels deep — the same number the URL walk resolves — because a document deeper than that has no path, so no canonical URL and no place in the sitemap. The check counts the subtree as well as the document: everything under a page moves down with it, and grafting a two-level branch at the limit would put its leaves past it.
+
+**Deleting a parent makes its children roots**, and the repository does it explicitly rather than through `on delete set null`. On a composite key Postgres nulls *every* column of it, so deleting a parent tried to null the child's `type` and `locale` too and failed on the not-null constraint. The key is `restrict`, the children are detached in the same transaction, and nothing can delete a page and orphan a subtree by accident. Never cascade: removing an index page must not remove the pages under it.
+
+An unpublished parent does not hide its children. A child is published on its own terms and stays reachable at its full path, which may therefore contain a segment that answers 404 on its own — that is the same trade every CMS makes, and the alternative is a page disappearing because somebody unpublished something above it.
 
 **Pages nest, but the unique index is on `(type, locale, slug)`.** A slug therefore already identifies a row, and the ancestor chain is only needed to know which URL is canonical. The walk is one recursive query, restricted to the same type and locale — a parent in another language is not part of this language's path — and it is depth-capped, because `parentId` has no cycle check behind it yet and a recursive query over a cycle does not terminate.
 
@@ -287,6 +356,20 @@ Consequence worth stating: the locale list is fixed when the site is built, beca
 **The routes come from the declared content types, not from the pages directory.** There is one catch-all under `[locale]`, and it resolves a path against the registry: a type's `basePath` is part of its declaration — `blog` for posts, the locale root for pages — so moving a type moves its URLs, and a type declared by a plugin is routable without a file being added. `basePath` has to be declared because the unique index is `(type, locale, slug)`: a post and a page may both be called `about`, and without a segment to tell them apart one of them is unreachable. Two types claiming one segment is refused by the registry, since which one wins would otherwise depend on plugin load order.
 
 **A document has one URL.** `trailingSlash` is `never`, and a nested page reached by any other path — its bare slug, or a wrong ancestor — is answered with a 301 to its canonical path rather than rendered there. The slug identifies the document and the path presents it; serving both would mean two things to index, two cache entries, and two purges to get right. A page number past the end of an archive, or one that is not a positive integer, is a 404 for the same reason: an archive that answers 200 for every number has an unbounded set of URLs that all say nothing.
+
+### Discovery
+
+`hreflang` is reciprocal or it is ignored, so every language of a document names all of them, itself included, plus `x-default`. Only translations that are actually published appear: announcing one that answers 404 is worse than announcing none, because a search engine follows it and a reader who switches language lands on nothing. A document that exists in one language announces no alternates at all — one alternate pointing at the page itself tells a crawler nothing.
+
+**The language switcher is on every page, and never lies.** On a listing — a home page, an archive — the same route exists in every language by construction, so the path is rewritten with the other prefix. On a document, a real translation links to it; a language the document was never translated into is still offered, links to that language's home page, and is marked as going elsewhere. A switcher that disappears on an untranslated document leaves a reader with no way to change language at all, and one that pretends the page exists elsewhere sends them to a 404. Which siblings may be named is still the site's answer, not the theme's, because it is an authorization question.
+
+`packages/theme-kit` also ships the **theme control**, for the same reason it ships the pre-paint script: dark mode is a core feature, and the cookie contract — its name, its lifetime, the attribute it sets — is implemented once. A theme decides where the control sits and how it looks; it never decides what pressing it means. Three states, because "follow my system" is a choice a reader can make and is not the same as never having chosen. It is rendered hidden and unhidden by its own script: a control that cannot work without JavaScript is worse than no control, and a reader without it keeps the system preference the stylesheet already honours.
+
+`sitemap.xml` is one query, not one per page: a recursive walk that returns every publicly visible document with the path it is reachable at. Three things are left out of it — a document marked `noindex`, because that flag exists to keep a page out of results and a sitemap entry is the opposite; a document whose type is no longer registered, because there is no URL to name; and a page whose path cannot be resolved, since the walk starts at the roots and a row inside a `parentId` cycle is never reached.
+
+Feeds are Atom rather than RSS 2.0: it states its own language, requires a stable id per entry, and has one date format — three things a multilingual CMS needs and RSS leaves to convention. Content is escaped into the document rather than wrapped in CDATA, because a CDATA section ends at the first `]]>` and a code block can contain one.
+
+`robots.txt` is generated rather than served from a file, because the line that matters names this installation's own sitemap. Nothing is disallowed: there is no admin under this origin, and a robots file is a request to well-behaved crawlers rather than an access control — listing a path there is how people advertise the paths they meant to keep quiet.
 
 ### The theme contract
 
@@ -312,22 +395,62 @@ Everything that touches more than one key is one Lua script, for the same reason
 
 The ttl is a backstop for a purge that never arrived, not the invalidation. Caching is single-instance Valkey by design: purging fans out to keys the caller cannot name in advance, and a tag set has to live with its members.
 
-Astro 7 ships route caching of its own — `Astro.cache.set({ tags })`, `routeRules`, and a Cache Provider API — and `packages/cache` is what will back it rather than compete with it. The deciding fact is that `cache.invalidate()` runs inside the Astro process, and the process that knows a document was published is the API. The default in-memory provider dies with the process and is shared with nobody, so a store both processes can reach is required whatever the framework offers; using the provider seam means the framework keeps handling `Vary`, `swr` and revalidation.
+Astro's own route caching is what the site uses; `packages/cache` backs it through the Cache Provider API rather than competing with it, so `Vary`, `swr` and the route rules stay the framework's. The deciding fact is that `cache.invalidate()` runs inside the Astro process, and the process that knows a document was published is the API. The default in-memory provider dies with its process and is shared with nobody.
+
+The provider follows Astro's own protocol — read `CDN-Cache-Control` for the lifetime and `Cache-Tag` for the tags, both of which the framework strips before the response leaves — and adds the half a route rule cannot express: the render runs inside a tag collection, so every document, listing and asset the page actually read is recorded without a theme or a route listing anything.
+
+Four responses are never kept, each for a reason somebody else's cache has learned the hard way: one the route did not ask to cache; one that is not a document — a redirect or a 404 carries no content tag, so nothing would ever purge it; one carrying a cookie, which would be served to the next reader; and one that varies, which this store does not key on.
+
+**The namespace is read at runtime by both processes.** Astro serialises a provider's configuration into the build, which for a namespace is a trap: the API purges under the namespace it reads from the environment, and a site built elsewhere would hold its entries somewhere else — a cache nothing can purge. The baked value is a default; the environment overrides it. That is not theoretical either: the site's own test suite once served a page cached from a different database, which is exactly what a shared namespace does.
+
+### Preview
+
+An unpublished document opens through a **signed token in the URL**, not through the session cookie. The cookie is host-only and `SameSite=Lax`, so a public site on another host cannot read it, and the fix people reach for — widening it to `Domain=.example.com` — hands the session to every subdomain that exists now or later. A token names one document, expires in minutes, and works whether the two apps share a host or not.
+
+It is a bearer token in a URL, which is the honest cost: URLs reach logs, referrers and screenshots. So the lifetime is short, it names a document rather than an actor, and the page it opens sends `no-store`, `noindex` and `no-referrer` — that last one because a link clicked from a preview would otherwise hand the token to wherever it points.
+
+Issuing a link is authorized by the same function that authorizes reading the document, and must never become a permission of its own: anything looser would let somebody hand out a link to a document they cannot open themselves. An installation with no `PREVIEW_SECRET` has no previews, answers plainly, and is a coherent installation rather than a broken one.
 
 ### Tooling the public site cannot use yet
 
 `astro check` cannot run: the Astro language server needs the TypeScript programmatic API, and the native TS 7 compiler this repository runs does not ship it (withastro/roadmap#1321). `.ts` modules are checked with `tsc`, and `astro build` — which CI runs — is what rejects a broken `.astro` template. Reinstating `astro check` is a one-line change once that lands.
 
+**A running dev server caches a package's export conditions.** Adding an entry to a workspace package's `exports` map makes the new module resolve to *"is not exported under the conditions…"* until the dev server is restarted, and nothing in the message suggests that is the cause. `packages/theme-kit` therefore exports its components through one wildcard — `"./*.astro": "./src/*.astro"` — so adding a component never edits `package.json` and never trips it. Only components live in that directory, so the wildcard exposes exactly what it should.
+
 Biome reads only the frontmatter of an `.astro` file, so every import used solely in the template looks unused to it. `noUnusedImports` and `noUnusedVariables` are turned off for `**/*.astro` in `biome.json`; without that, `lint:fix` deletes imports the page needs. Nothing else about those files is exempt.
 
 ## Hook API
 
-Typed through a declaration map, so payload types are known at compile time:
+Two shapes, and the difference between them is the design. An **action** is told that something happened and can change nothing: it runs after the write has landed, its result is discarded, and its failure is reported rather than propagated. A **filter** is handed a value and returns one of the same type: it can change what the system produces, which is exactly why it may not change anything else.
 
 ```ts
-hooks.action('content:published', async (ctx, content) => { /* ... */ })
-hooks.filter('content:render', (blocks, ctx) => blocks)
+hooks.action('content:published', async (content, context) => { /* ... */ })
+hooks.filter('content:excerpt', (value) => ({ ...value, excerpt: derive(value.blocks) }))
 ```
+
+Typed through two declaration maps, so a payload's shape is known at compile time and a hook name that does not exist does not compile. The payloads are the smallest thing a handler could need rather than the row that happened to be in hand: a handler given the whole row would come to depend on columns that are nobody's business, and removing one would break plugins that had no reason to care. Nothing in a payload carries a database handle, a request, or a way back into the core — the manifest in phase 5 can only describe what a plugin needs if the code cannot quietly take more.
+
+Three rules, each of them a way somebody else's plugin system has taken a site down:
+
+**A handler cannot fail the operation.** By the time an action runs the document is saved, so a handler that throws has failed at its own job and not at the author's. A filter that throws keeps the value it was given, and one that returns nothing is reported rather than rendered — taking it at its word would replace a document with `undefined`.
+
+**A handler cannot hang the request.** Every one runs under a timeout, because a plugin awaiting a service that stopped answering would otherwise hold the response open for as long as the socket allows.
+
+**Order is decided, not discovered.** Priority first, registration second, so two plugins that filter the same value give the same answer on every installation rather than one that depends on load order. Actions start in that order but run concurrently: being told is independent of anybody else being told, and running them in sequence would make the slowest handler the cost of every write.
+
+`content:published` and `content:unpublished` exist beside `content:updated` because "did this just become visible" is the question almost every integration actually asks, and making each of them re-derive it from a status pair is how they all get it slightly differently. One write can be two events; which ones is decided in one function rather than per route.
+
+### First-party modules
+
+`packages/modules` holds features built **on** the API rather than beside it, which is the only way to know it is sufficient before phase 5 exposes it to code nobody here wrote. Two of them, one of each shape:
+
+**Cache invalidation** used to be called directly from the write routes. It now hears about writes exactly as a third-party plugin will, and purges the document's own page, every listing of its type in its language, and its translation group. If invalidation could not be expressed through actions, the API would be missing something — and that is much cheaper to discover here.
+
+**Automatic excerpts** give a document a summary when its author did not write one, through `content:excerpt`. It never overwrites one that exists: an author's own summary is what appears in a search result and in a feed, and a module that replaced it would be editing their work.
+
+A module is a name and a function that registers handlers, returning one that removes them. No lifecycle, no object the core keeps hold of — uninstalling is dropping its registrations.
+
+`content:blocks` is the one filter that reaches the page, so what comes back is validated against the block schema before it is rendered. A filter may decide how a document reads; it may never decide what a block is. When the result does not parse, the original blocks are rendered and the failure is logged: a broken extension costs its own feature, never the document.
 
 ## Roadmap
 

@@ -1,4 +1,4 @@
-import type { Blocks } from '@presslabz/blocks'
+import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
 import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
@@ -14,6 +14,7 @@ import {
   useSaveContent,
   useTranslations,
 } from '../lib/content.ts'
+import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '../lib/datetime.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -42,8 +43,21 @@ function draftFrom(content: ContentSummary | undefined): Draft {
     slugTouched: content !== undefined,
     excerpt: content?.excerpt ?? '',
     status: content?.status ?? 'draft',
-    publishedAt: content?.publishedAt?.slice(0, 16) ?? '',
-    blocks: content?.blocks ?? [],
+    /*
+     * Converted, never sliced. The stored value is a UTC instant, and cutting
+     * the first sixteen characters off it hands the field UTC digits that the
+     * browser then reads as local time — so opening a document and saving it
+     * untouched moved its publication by the zone's offset.
+     */
+    publishedAt: toLocalInput(content?.publishedAt),
+    /*
+     * Repaired on the way in. A document can arrive with repeated block ids —
+     * from an import, or a copy that duplicated one wholesale — and the editor
+     * addresses blocks by id, so it would replace or delete every copy at
+     * once. The schema refuses duplicates, so such a document could otherwise
+     * never be saved again; the first occurrence keeps its id.
+     */
+    blocks: withUniqueIds(content?.blocks ?? []),
   }
 }
 
@@ -97,6 +111,14 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
   const save = useSaveContent(type, id)
 
+  /*
+   * What the field's value actually means, spelled out. The number in the
+   * field is the editor's own wall clock; this is the instant it names, which
+   * is what everybody else — the scheduler, a colleague abroad, the site —
+   * will see.
+   */
+  const utcInstant = describeInstant(fromLocalInput(draft?.publishedAt ?? ''), locale)
+
   // Loaded once, then owned locally: an editor that re-seeds itself from a
   // refetch would throw away whatever was typed in the meantime.
   if (enabled && draft === null && existing.data) setDraft(draftFrom(existing.data))
@@ -129,10 +151,30 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         title: draft.title,
         status: draft.status,
         blocks: draft.blocks,
-        ...(draft.excerpt === '' ? {} : { excerpt: draft.excerpt }),
-        ...(draft.publishedAt === ''
-          ? {}
-          : { publishedAt: new Date(draft.publishedAt).toISOString() }),
+        /*
+         * Emptied means emptied. Sending nothing for a field the author just
+         * cleared tells the server to leave it alone, which is how an excerpt
+         * became impossible to remove — so an empty field is sent as null on
+         * an edit. On a creation there is nothing to clear, and null would
+         * only be noise.
+         */
+        ...(id === null
+          ? {
+              ...(draft.excerpt === '' ? {} : { excerpt: draft.excerpt }),
+              ...(fromLocalInput(draft.publishedAt) === null
+                ? {}
+                : { publishedAt: fromLocalInput(draft.publishedAt) as string }),
+            }
+          : {
+              excerpt: draft.excerpt === '' ? null : draft.excerpt,
+              publishedAt: fromLocalInput(draft.publishedAt),
+              /*
+               * What this edit was composed against. The server refuses it if
+               * the document has moved since, rather than letting this save
+               * replace work the editor never saw.
+               */
+              expectedVersion: existing.data?.version,
+            }),
       },
       {
         onSuccess: (content) => {
@@ -256,7 +298,19 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
               className="data"
               value={draft.publishedAt}
               onChange={(event) => patch({ publishedAt: event.target.value })}
+              aria-describedby="publish-at-zone"
             />
+            {/*
+              Whose nine o'clock it is. The field shows the editor's own zone,
+              and a colleague in another country opening the same document sees
+              a different number for the same instant — so the zone is named
+              rather than assumed, and the instant it resolves to is spelled
+              out beside it.
+            */}
+            <small id="publish-at-zone" className="data">
+              {localZoneName()}
+              {utcInstant === '' ? '' : ` · ${t('editor.publishAtUtc', { instant: utcInstant })}`}
+            </small>
           </label>
         )}
 
@@ -315,6 +369,21 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         {save.isError && (
           <p className="error" role="alert">
             {messageFor(save.error, t)}
+            {/*
+              A conflict is the one error the author can act on, and the action
+              is always the same: look at what is there now. Offering it here
+              means they do not have to work out that reloading is what "this
+              document changed" is asking for — and nothing is lost, because
+              the save was refused rather than half applied.
+            */}
+            {isConflict(save.error) && (
+              <>
+                {' '}
+                <button type="button" className="link" onClick={() => window.location.reload()}>
+                  {t('editor.reload')}
+                </button>
+              </>
+            )}
           </p>
         )}
 
@@ -397,6 +466,13 @@ const REASON_MESSAGES: Record<string, MessageKey> = {
   'group-not-found': 'error.groupNotFound',
   'group-type-mismatch': 'error.groupTypeMismatch',
   'group-forbidden': 'error.groupForbidden',
+  'stale-version': 'error.staleVersion',
+  expected_version_required: 'error.staleVersion',
+}
+
+/** A save refused because the document moved under the author. */
+function isConflict(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && error.reason === 'stale-version'
 }
 
 function messageFor(error: unknown, t: (key: MessageKey) => string): string {

@@ -1,0 +1,25 @@
+{
+  "name": "@presslabz/modules",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "//": "First-party features built on the public hook API, not beside it. That is the only way to know the API is sufficient before phase 5 exposes it to code nobody here wrote — a module that needed a private door would be a design flaw discovered by strangers instead.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@presslabz/blocks": "workspace:*",
+    "@presslabz/cache": "workspace:*",
+    "@presslabz/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

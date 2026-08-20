@@ -2,9 +2,10 @@ import type { Blocks } from '@presslabz/blocks'
 import { CONTENT_STATUSES } from '@presslabz/core'
 import { type SQL, sql } from 'drizzle-orm'
 import {
-  type AnyPgColumn,
+  check,
   foreignKey,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -90,7 +91,28 @@ export const contents = pgTable(
     /** Replaces wp_postmeta. Queried through the GIN index below. */
     meta: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
-    parentId: uuid().references((): AnyPgColumn => contents.id, { onDelete: 'set null' }),
+    /*
+     * The parent, constrained structurally rather than by hope. See the
+     * composite foreign key below: `parentId` alone only guaranteed that some
+     * row existed, so a page could name a post, a translation in another
+     * language, or itself.
+     */
+    parentId: uuid(),
+    /*
+     * What a client says it was editing, so two editors cannot silently
+     * overwrite each other.
+     *
+     * The row lock serializes the writes; it does not notice that the second
+     * one was composed against a version the first has already replaced. With
+     * only a lock, the later save wins and the earlier author's work is gone
+     * with no error anywhere — which is the failure this column exists to
+     * turn into a refusal.
+     *
+     * An integer rather than a timestamp: `updatedAt` is a moment, and a
+     * moment survives a JSON round trip, a clock adjustment and a
+     * millisecond-truncating client only by luck.
+     */
+    version: integer().notNull().default(1),
     publishedAt: timestamp({ withTimezone: true }),
     /**
      * Generated column, so it can never drift from the row it describes.
@@ -128,6 +150,47 @@ export const contents = pgTable(
       foreignColumns: [translationGroups.id, translationGroups.type],
     }).onDelete('restrict'),
     uniqueIndex('contents_group_locale_uq').on(t.translationGroupId, t.locale),
+    /*
+     * Redundant for uniqueness — id is the primary key — and required anyway,
+     * because Postgres will only let a composite foreign key reference columns
+     * carrying a unique constraint. Same reason the translation group has one.
+     */
+    unique('contents_id_type_locale_uq').on(t.id, t.type, t.locale),
+
+    /*
+     * "A parent is the same kind of thing, in the same language." Enforced by
+     * the database rather than checked by the application, because a check
+     * loses its race: two concurrent writes can each read a compatible parent
+     * and then make it incompatible.
+     *
+     * restrict, and the repository detaches the children first — the same
+     * shape as deleting a translation group.
+     *
+     * `set null` is what this wants to say and cannot: on a composite key
+     * Postgres nulls *every* column of it, so deleting a parent tried to set
+     * the child's `type` and `locale` to null as well and failed on the
+     * not-null constraint. Postgres 15 can name the column, but drizzle-kit
+     * cannot generate that, and a constraint the schema and the migrations
+     * disagree about is worse than an explicit UPDATE.
+     *
+     * Never cascade: deleting a page must not delete the pages under it. Its
+     * children become roots, which is visible and recoverable; the alternative
+     * silently removes a subtree because somebody deleted an index page.
+     */
+    foreignKey({
+      name: 'contents_parent_fk',
+      columns: [t.parentId, t.type, t.locale],
+      foreignColumns: [t.id, t.type, t.locale],
+    }).onDelete('restrict'),
+
+    /*
+     * A document is not its own parent. The cycle check in the repository
+     * would catch it, but a one-row cycle is cheap enough to refuse here and
+     * this holds for any path written later that forgets to look.
+     */
+    check('contents_parent_not_self', sql`${t.parentId} is distinct from ${t.id}`),
+
+    index('contents_parent_idx').on(t.parentId),
     index('contents_translation_group_idx').on(t.translationGroupId),
     index('contents_listing_idx').on(t.type, t.locale, t.status, t.publishedAt),
     index('contents_meta_gin').using('gin', t.meta),
@@ -142,10 +205,42 @@ export const contentRevisions = pgTable(
     contentId: uuid()
       .notNull()
       .references(() => contents.id, { onDelete: 'cascade' }),
+    /*
+     * The whole editorial state, not the parts somebody happened to think of.
+     *
+     * It used to hold the title, the blocks and the metadata, which reads like
+     * "the document" until a restore is attempted: the slug, the excerpt, the
+     * status, the parent and the publication date were all missing, so putting
+     * a document back the way it was was impossible from its own history. A
+     * revision that cannot restore is a record nobody can use.
+     */
+    slug: text().notNull(),
     title: text().notNull(),
+    excerpt: text(),
+    status: contentStatus().notNull(),
     blocks: jsonb().$type<Blocks>().notNull(),
     meta: jsonb().$type<Record<string, unknown>>().notNull(),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /*
+     * Unconstrained on purpose, unlike the live column.
+     *
+     * A revision records what the document was, and the page it hung under may
+     * since have been deleted. A foreign key here would quietly rewrite that
+     * history — `on delete set null` would erase the parent from every old
+     * revision — so the id is kept as recorded, and a restore that would
+     * recreate a parent which no longer exists is refused by the live table's
+     * own constraint instead.
+     */
+    parentId: uuid(),
+    /*
+     * withTimezone, not withTimeZone. Drizzle takes an options object and
+     * ignores a key it does not know, so the capitalised spelling produced a
+     * column with no time zone at all and said nothing — the generated SQL was
+     * the only place it showed.
+     */
+    publishedAt: timestamp({ withTimezone: true }),
+    /** The version this snapshot is of, so history reads in order. */
+    version: integer().notNull(),
     createdAt: timestamps.createdAt,
   },
   (t) => [index('content_revisions_content_idx').on(t.contentId, t.createdAt)],

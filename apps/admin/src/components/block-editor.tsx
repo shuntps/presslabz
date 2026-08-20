@@ -1,7 +1,7 @@
 import type { Block, Blocks } from '@presslabz/blocks'
-import { inlineToPlainText } from '@presslabz/blocks'
+import { inlineToPlainText, replaceInlineText } from '@presslabz/blocks'
 import { useState } from 'react'
-import { BLOCK_LABELS, inlineText } from '../lib/blocks.ts'
+import { BLOCK_LABELS, setOptionalText } from '../lib/blocks.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import { useMediaLibrary } from '../lib/media.ts'
 import { MediaPicker } from './media-picker.tsx'
@@ -12,11 +12,16 @@ import { MediaPicker } from './media-picker.tsx'
  * the inspector, the toolbar — is machine face on the recessed step, so which
  * of the two you are looking at never has to be worked out.
  *
- * Text is plain for now. The block vocabulary already carries inline marks and
- * the renderer already whitelists them, but nothing can produce one yet: that
- * arrives with Tiptap, and installing a document editor to serve a textarea
- * would be the wrong order. The consequence to know about is that editing a
- * block whose text came from elsewhere and carried marks would drop them.
+ * Text is plain for now: the vocabulary carries inline marks and the renderer
+ * whitelists them, but nothing here can create one yet — that arrives with
+ * Tiptap, and installing a document editor to serve a textarea would be the
+ * wrong order.
+ *
+ * Marks that already exist are another matter. Editing used to rebuild the run
+ * as one unmarked node, so a document imported with links and emphasis lost
+ * all of it the first time somebody fixed a typo. Every text field now splices
+ * through `replaceInlineText`: what the author did not touch keeps its marks,
+ * and only the changed part is rewritten.
  */
 
 interface BlockEditorProps {
@@ -119,7 +124,9 @@ function BlockBody({
           value={inlineToPlainText(block.content)}
           placeholder={t('block.paragraph')}
           onFocus={onFocus}
-          onChange={(value) => onChange({ ...block, content: inlineText(value) })}
+          onChange={(value) =>
+            onChange({ ...block, content: replaceInlineText(block.content, value) })
+          }
         />
       )
 
@@ -146,7 +153,9 @@ function BlockBody({
             value={inlineToPlainText(block.content)}
             placeholder={t('block.heading')}
             onFocus={onFocus}
-            onChange={(value) => onChange({ ...block, content: inlineText(value) })}
+            onChange={(value) =>
+              onChange({ ...block, content: replaceInlineText(block.content, value) })
+            }
           />
         </div>
       )
@@ -159,7 +168,9 @@ function BlockBody({
             value={inlineToPlainText(block.content)}
             placeholder={t('block.quote')}
             onFocus={onFocus}
-            onChange={(value) => onChange({ ...block, content: inlineText(value) })}
+            onChange={(value) =>
+              onChange({ ...block, content: replaceInlineText(block.content, value) })
+            }
           />
           <input
             className="data blk-attribution"
@@ -167,10 +178,7 @@ function BlockBody({
             placeholder={t('editor.attribution')}
             onFocus={onFocus}
             onChange={(event) =>
-              onChange({
-                ...block,
-                ...(event.target.value === '' ? {} : { attribution: event.target.value }),
-              })
+              onChange(setOptionalText(block, 'attribution', event.target.value))
             }
           />
         </div>
@@ -200,7 +208,7 @@ function BlockBody({
               onFocus={onFocus}
               onChange={(value) => {
                 const items = [...block.items]
-                items[index] = inlineText(value)
+                items[index] = replaceInlineText(items[index] ?? [], value)
                 onChange({ ...block, items })
               }}
             />
@@ -223,12 +231,7 @@ function BlockBody({
             value={block.language ?? ''}
             placeholder={t('editor.language.hint')}
             onFocus={onFocus}
-            onChange={(event) =>
-              onChange({
-                ...block,
-                ...(event.target.value === '' ? {} : { language: event.target.value }),
-              })
-            }
+            onChange={(event) => onChange(setOptionalText(block, 'language', event.target.value))}
           />
           <Growing
             className="data"
@@ -320,7 +323,9 @@ function ImageBlockBody({
           onChange={(value) =>
             onChange({
               ...block,
-              ...(value === '' ? { caption: [] } : { caption: inlineText(value) }),
+              ...(value === ''
+                ? { caption: [] }
+                : { caption: replaceInlineText(block.caption ?? [], value) }),
             })
           }
         />

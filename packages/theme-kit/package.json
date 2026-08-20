@@ -7,9 +7,7 @@
   "//": "The contract a theme satisfies. It exports types, one declaration function and the two components every theme must not reimplement \u2014 never a component a theme could style. What a theme may do is decided here; how it looks is decided there.",
   "exports": {
     ".": "./src/index.ts",
-    "./Blocks.astro": "./src/Blocks.astro",
-    "./ThemeHead.astro": "./src/ThemeHead.astro",
-    "./Inline.astro": "./src/Inline.astro"
+    "./*.astro": "./src/*.astro"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -28,5 +26,6 @@
     "astro": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "//exports": "A wildcard rather than an entry per component. Adding one to an explicit map changes package.json, and a dev server already running caches a package's export conditions: the new component resolves to \"is not exported\" until somebody restarts it, with nothing to suggest that is the cause. Only components live in src/*.astro, so the wildcard exposes exactly what it should."
 }

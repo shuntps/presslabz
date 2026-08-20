@@ -1,6 +1,6 @@
 import type { Blocks } from '@presslabz/blocks'
 import { type AnyContentType, type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
-import { and, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
 
@@ -33,6 +33,15 @@ export type ContentConflictReason =
   | 'group-type-mismatch'
   | 'translation-exists'
   | 'slug-taken'
+  /** The document moved on since the client last read it. */
+  | 'stale-version'
+  | 'parent-not-found'
+  /** A parent of another type or another language. */
+  | 'parent-mismatch'
+  /** The document would become its own ancestor. */
+  | 'parent-cycle'
+  /** The tree would grow deeper than a URL can express. */
+  | 'parent-too-deep'
 
 /**
  * Assigned in the body rather than declared as a constructor parameter
@@ -297,6 +306,17 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
           ? await openGroup(tx, input.type)
           : await joinGroup(tx, input)
 
+      if (input.state.parentId !== undefined) {
+        await assertUsableParent(tx, {
+          // Nothing exists yet, so nothing can be its own ancestor: the walk
+          // is only checking that the parent itself is usable.
+          childId: null,
+          parentId: input.state.parentId,
+          type: input.type,
+          locale: input.locale,
+        })
+      }
+
       const rows = await tx
         .insert(contents)
         .values({
@@ -405,6 +425,22 @@ export interface UpdateContentOptions {
    * through. Returning false aborts the transaction.
    */
   readonly authorize?: (current: ContentRow, next: ContentState) => boolean
+
+  /**
+   * The version the caller believes it is editing, or `'any'` to say it does
+   * not care.
+   *
+   * Required rather than optional, and a union rather than a nullable number,
+   * because "I did not think about concurrency" and "I know this write cannot
+   * conflict" have to look different in the code. The lock below serializes
+   * writes; it does not notice that the second one was composed against a
+   * version the first has already replaced, and without this the later save
+   * wins silently and the earlier author's work is gone.
+   *
+   * `'any'` is for writes that are not somebody's edit of a document they were
+   * looking at — a restore of a revision, a migration, a scheduler.
+   */
+  readonly expectedVersion: number | 'any'
 }
 
 /**
@@ -427,7 +463,7 @@ export async function updateContent(
   type: AnyContentType,
   id: string,
   patch: Record<string, unknown>,
-  options: UpdateContentOptions = {},
+  options: UpdateContentOptions,
 ): Promise<ContentRow | null> {
   try {
     return await db.transaction(async (tx) => {
@@ -441,6 +477,19 @@ export async function updateContent(
       const current = locked[0]
       if (!current) return null
 
+      /*
+       * Before anything is merged: a stale write is refused rather than
+       * applied to a document it was not composed against. The check is inside
+       * the transaction, against the locked row, because a version read
+       * outside it could already have moved.
+       */
+      if (options.expectedVersion !== 'any' && options.expectedVersion !== current.version) {
+        throw new ContentConflictError(
+          'stale-version',
+          'This document changed since it was opened. Reload it and apply the change again.',
+        )
+      }
+
       const rawMerge = { ...toState(current), ...definedEntries(patch) } as ContentState
       const merged = options.derive ? options.derive(current, rawMerge) : rawMerge
       // AnyContentType erases the schema's output type; the shape is the one
@@ -452,6 +501,20 @@ export async function updateContent(
       }
 
       /*
+       * Only when it moves. Re-walking on every save would take a lock on
+       * every ancestor of every edit, which is a lot of contention to prove
+       * something that did not change.
+       */
+      if (next.parentId !== undefined && next.parentId !== current.parentId) {
+        await assertUsableParent(tx, {
+          childId: current.id,
+          parentId: next.parentId,
+          type: current.type,
+          locale: current.locale,
+        })
+      }
+
+      /*
        * The revision records what the document was, not what it becomes, so
        * restoring one means restoring a state that actually existed. Written
        * in the same transaction as the change it supersedes, or a crash
@@ -459,15 +522,23 @@ export async function updateContent(
        */
       await tx.insert(contentRevisions).values({
         contentId: current.id,
+        slug: current.slug,
         title: current.title,
+        excerpt: current.excerpt,
+        status: current.status,
         blocks: current.blocks,
         meta: current.meta,
         authorId: current.authorId,
+        parentId: current.parentId,
+        publishedAt: current.publishedAt,
+        version: current.version,
       })
+
+      await pruneRevisions(tx, current.id)
 
       const rows = await tx
         .update(contents)
-        .set({ ...toColumns(next), updatedAt: new Date() })
+        .set({ ...toColumns(next), updatedAt: new Date(), version: current.version + 1 })
         .where(eq(contents.id, id))
         .returning()
 
@@ -497,11 +568,20 @@ export interface DeleteContentOptions {
  * can ever attach to a group with no members — there is nothing to hold update
  * permission over — so an empty one is a row that no path can use again.
  */
+/**
+ * Returns the row that was deleted, or null when there was none.
+ *
+ * The row rather than a boolean, because every caller has something to do with
+ * it that only the deleted version can answer: which cache tags to purge,
+ * which document a hook is being told about. Re-reading it afterwards is not
+ * an option — it is gone — and reading it before means acting on a version the
+ * lock below may have replaced.
+ */
 export async function deleteContent(
   db: Database,
   id: string,
   options: DeleteContentOptions = {},
-): Promise<boolean> {
+): Promise<ContentRow | null> {
   return db.transaction(async (tx) => {
     // Read once, unlocked, only to learn which group to lock.
     const found = await tx
@@ -511,7 +591,7 @@ export async function deleteContent(
       .limit(1)
 
     const groupId = found[0]?.translationGroupId
-    if (groupId === undefined) return false
+    if (groupId === undefined) return null
 
     await tx
       .select({ id: translationGroups.id })
@@ -537,11 +617,23 @@ export async function deleteContent(
       .for('update')
 
     const current = locked[0]
-    if (!current) return false
+    if (!current) return null
 
     if (options.authorize && !options.authorize(current)) {
       throw new ContentForbiddenError()
     }
+
+    /*
+     * The children become roots, explicitly, before the parent goes.
+     *
+     * The foreign key is `restrict`, so this is not a nicety: without it the
+     * delete is refused. It is written here rather than left to `on delete set
+     * null` because that clause nulls every column of a composite key —
+     * including the type and the locale, which cannot be null — and the
+     * delete failed with a not-null violation that named neither the page nor
+     * the reason.
+     */
+    await tx.update(contents).set({ parentId: null }).where(eq(contents.parentId, id))
 
     await tx.delete(contents).where(eq(contents.id, id))
 
@@ -555,6 +647,240 @@ export async function deleteContent(
       await tx.delete(translationGroups).where(eq(translationGroups.id, groupId))
     }
 
-    return true
+    return current
   })
+}
+
+/**
+ * Publishes everything whose moment has come, and returns what it published.
+ *
+ * One statement, deliberately. `UPDATE … WHERE status = 'scheduled' AND
+ * published_at <= now RETURNING *` takes a row lock per row it touches, so two
+ * API instances running this at the same second cannot both claim a document:
+ * the loser re-evaluates its condition after the winner commits, finds the row
+ * already published, and returns fewer rows. Reading the due set and then
+ * updating it would have that race, and it would announce the same publication
+ * twice — once per instance — to every hook handler.
+ *
+ * Anything overdue is published, however overdue. A schedule is a promise
+ * about a moment, and an installation that was down for an hour owes the
+ * documents that came due while it was: publishing them late is what an author
+ * expects, and skipping them silently is how a post never appears at all.
+ */
+export async function publishDueContent(
+  db: Database,
+  now: Date = new Date(),
+): Promise<ContentRow[]> {
+  return db
+    .update(contents)
+    .set({ status: 'published', updatedAt: new Date() })
+    .where(
+      and(
+        eq(contents.status, 'scheduled'),
+        isNotNull(contents.publishedAt),
+        lte(contents.publishedAt, now),
+      ),
+    )
+    .returning()
+}
+
+/**
+ * How much history a document keeps.
+ *
+ * A cap rather than a duration: a document edited twice a year should keep its
+ * history, and one edited every minute by an automation should not fill the
+ * table with it. Fifty is enough to walk back through a day's work and small
+ * enough that the rows are never the reason a backup is large.
+ *
+ * Pruned in the transaction that adds one, so the table cannot grow between a
+ * write and a sweep that might never run.
+ */
+export const REVISION_LIMIT = 50
+
+async function pruneRevisions(tx: Transaction, contentId: string): Promise<void> {
+  await tx.execute(sql`
+    delete from ${contentRevisions}
+    where ${contentRevisions.contentId} = ${contentId}
+      and ${contentRevisions.id} not in (
+        select id from ${contentRevisions}
+        where ${contentRevisions.contentId} = ${contentId}
+        order by ${contentRevisions.createdAt} desc, ${contentRevisions.version} desc
+        limit ${REVISION_LIMIT}
+      )
+  `)
+}
+
+export type ContentRevisionRow = typeof contentRevisions.$inferSelect
+
+/** A document's history, newest first. */
+export async function listRevisions(
+  db: Database,
+  contentId: string,
+  limit = REVISION_LIMIT,
+): Promise<ContentRevisionRow[]> {
+  return db
+    .select()
+    .from(contentRevisions)
+    .where(eq(contentRevisions.contentId, contentId))
+    .orderBy(desc(contentRevisions.createdAt), desc(contentRevisions.version))
+    .limit(Math.min(REVISION_LIMIT, Math.max(1, Math.trunc(limit))))
+}
+
+/**
+ * A revision as a patch that restores it.
+ *
+ * Nulls rather than undefined, and that is the whole subtlety: in a patch,
+ * absent means "leave this alone", so a revision whose excerpt was empty would
+ * restore everything *except* the emptiness — the document would come back
+ * with a summary written after the version being restored. A restore states
+ * every field, including the ones that were empty.
+ */
+export function stateOfRevision(revision: ContentRevisionRow): Record<string, unknown> {
+  return {
+    slug: revision.slug,
+    title: revision.title,
+    excerpt: revision.excerpt,
+    status: revision.status,
+    blocks: revision.blocks,
+    meta: revision.meta,
+    publishedAt: revision.publishedAt,
+    parentId: revision.parentId,
+  }
+}
+
+/** One revision, by id. The caller checks it belongs to the document. */
+export async function findRevision(db: Database, id: string): Promise<ContentRevisionRow | null> {
+  const rows = await db.select().from(contentRevisions).where(eq(contentRevisions.id, id)).limit(1)
+
+  return rows[0] ?? null
+}
+
+/**
+ * How deep a page tree may go.
+ *
+ * The same number the URL walk stops at, and for the same reason: a document
+ * deeper than this has a path that cannot be resolved, so it has no canonical
+ * URL and no place in the sitemap. Refusing the move is better than accepting
+ * one that makes a page unreachable.
+ */
+export const MAX_HIERARCHY_DEPTH = 8
+
+interface ParentCheck {
+  readonly childId: string | null
+  readonly parentId: string
+  readonly type: string
+  readonly locale: string
+}
+
+/**
+ * Refuses a parent that would make the tree something a tree cannot be.
+ *
+ * Type and locale are guaranteed by the composite foreign key; they are
+ * checked here anyway so the answer is a named conflict rather than a driver
+ * error, and so the check happens before anything else is written.
+ *
+ * Cycles cannot be a constraint — no SQL check can see a path — so the walk
+ * takes each ancestor `for update` as it goes. That is what makes it safe
+ * against a concurrent write building the other half of the loop: two
+ * transactions setting A under B and B under A each need a row the other
+ * holds, so one waits, and then reads the tree the first one committed and
+ * finds itself in it.
+ */
+async function assertUsableParent(tx: Transaction, check: ParentCheck): Promise<void> {
+  let currentId: string | null = check.parentId
+  let depth = 0
+
+  while (currentId !== null) {
+    if (currentId === check.childId) {
+      throw new ContentConflictError(
+        'parent-cycle',
+        'A document cannot be placed under itself or under one of its own children',
+      )
+    }
+
+    depth += 1
+
+    /*
+     * A runaway guard, not the limit. Cycles are refused now, but a row
+     * written before that constraint existed is still representable in an old
+     * backup, and this walk must end either way.
+     */
+    if (depth > MAX_HIERARCHY_DEPTH + 1) {
+      throw new ContentConflictError(
+        'parent-too-deep',
+        `A page may be at most ${MAX_HIERARCHY_DEPTH} levels deep`,
+      )
+    }
+
+    const rows: { id: string; parentId: string | null; type: string; locale: string }[] = await tx
+      .select({
+        id: contents.id,
+        parentId: contents.parentId,
+        type: contents.type,
+        locale: contents.locale,
+      })
+      .from(contents)
+      .where(eq(contents.id, currentId))
+      .limit(1)
+      .for('update')
+
+    const ancestor = rows[0]
+
+    if (!ancestor) {
+      // Only reachable for the parent itself: an ancestor that disappeared
+      // mid-walk would have been held by the lock.
+      throw new ContentConflictError(
+        'parent-not-found',
+        'No document with that id to place it under',
+      )
+    }
+
+    if (depth === 1 && (ancestor.type !== check.type || ancestor.locale !== check.locale)) {
+      throw new ContentConflictError(
+        'parent-mismatch',
+        'A parent must be the same kind of document, in the same language',
+      )
+    }
+
+    currentId = ancestor.parentId
+  }
+
+  /*
+   * `depth` is the parent's own depth, so the document lands one below it, and
+   * everything already under the document moves down with it. A new document
+   * has no children and therefore a height of one.
+   */
+  const height = check.childId === null ? 1 : await subtreeHeight(tx, check.childId)
+
+  if (depth + height > MAX_HIERARCHY_DEPTH) {
+    throw new ContentConflictError(
+      'parent-too-deep',
+      `A page may be at most ${MAX_HIERARCHY_DEPTH} levels deep`,
+    )
+  }
+}
+
+/**
+ * How many levels the document carries with it.
+ *
+ * Its own depth is not the whole question: everything under it moves down by
+ * the same amount, so a two-level subtree grafted at the limit puts its leaves
+ * beyond it — and those leaves would have no URL.
+ */
+async function subtreeHeight(tx: Transaction, childId: string): Promise<number> {
+  const result = await tx.execute<{ height: number }>(sql`
+    with recursive descendants as (
+      select ${contents.id} as id, 1 as depth
+      from ${contents}
+      where ${contents.id} = ${childId}
+      union all
+      select child.id, parent.depth + 1
+      from ${contents} child
+      join descendants parent on child.parent_id = parent.id
+      where parent.depth <= ${MAX_HIERARCHY_DEPTH}
+    )
+    select coalesce(max(depth), 1)::int as height from descendants
+  `)
+
+  return Number([...result][0]?.height ?? 1)
 }
