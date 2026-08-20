@@ -27,9 +27,21 @@ export function isLocale(value: unknown): value is Locale {
  * Picks the best supported locale from an Accept-Language header, falling
  * back to the default. Quality values are honoured; unknown tags are skipped
  * rather than treated as errors.
+ *
+ * `supported` is what this installation actually serves, which is not the same
+ * question as what PressLabz can speak: a site narrowed to French must not
+ * answer an English browser with a language it has no content in. It defaults
+ * to the whole catalogue so a caller that has no configuration to hand still
+ * gets a sensible answer.
  */
-export function negotiateLocale(acceptLanguage: string | undefined | null): Locale {
-  if (!acceptLanguage) return DEFAULT_LOCALE
+export function negotiateLocale(
+  acceptLanguage: string | undefined | null,
+  supported: readonly Locale[] = LOCALES,
+): Locale {
+  const fallback = supported.includes(DEFAULT_LOCALE) ? DEFAULT_LOCALE : (supported[0] as Locale)
+  const serves = (value: unknown): value is Locale => isLocale(value) && supported.includes(value)
+
+  if (!acceptLanguage) return fallback
 
   const ranked = acceptLanguage
     .split(',')
@@ -43,11 +55,11 @@ export function negotiateLocale(acceptLanguage: string | undefined | null): Loca
     .sort((a, b) => b.quality - a.quality)
 
   for (const { tag } of ranked) {
-    if (isLocale(tag)) return tag
+    if (serves(tag)) return tag
     // 'fr-CA' should match 'fr'.
     const base = tag.split('-')[0]
-    if (isLocale(base)) return base
+    if (serves(base)) return base
   }
 
-  return DEFAULT_LOCALE
+  return fallback
 }

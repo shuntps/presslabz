@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["node", "astro/client"],
+    "jsx": "preserve",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noEmit": true
+  },
+  "//": "No .astro here: tsc cannot parse them, and `astro check` cannot run on TypeScript 7 yet. `astro build` is what type-errors a template today.",
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "astro.config.ts", ".astro/types.d.ts"]
+}

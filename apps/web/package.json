@@ -1,0 +1,33 @@
+{
+  "name": "@presslabz/web",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "//": "The public site. It reads Postgres through packages/db rather than calling the API: one installation serving one site, and tag collection has to happen where the reading does.",
+  "scripts": {
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
+    "start": "node --env-file-if-exists=../../.env dist/server/entry.mjs",
+    "typecheck": "ASTRO_TELEMETRY_DISABLED=1 astro sync && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/node": "catalog:",
+    "@presslabz/blocks": "workspace:*",
+    "@presslabz/cache": "workspace:*",
+    "@presslabz/core": "workspace:*",
+    "@presslabz/db": "workspace:*",
+    "@presslabz/i18n": "workspace:*",
+    "@presslabz/tokens": "workspace:*",
+    "astro": "catalog:",
+    "zod": "catalog:"
+  },
+  "//telemetry": "Astro phones home with anonymous build data by default. A self-hosted CMS whose whole argument is that it keeps what it runs does not do that, so every script here opts out rather than relying on a per-machine `astro telemetry disable`.",
+  "//typecheck": "tsc rather than `astro check`: the Astro language server needs the TypeScript programmatic API, which the native TS 7 compiler this repository runs does not ship (withastro/roadmap#1321). tsc covers the .ts modules; `astro build` is what compiles and rejects a broken .astro template, which is why CI runs it.",
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,101 @@
+---
+import { LOCALE_TAGS, type Locale } from '@presslabz/i18n'
+import { THEME_INIT_SCRIPT } from '@presslabz/tokens/preferences'
+import '@presslabz/tokens/tokens.css'
+
+interface Props {
+  locale: Locale
+  title: string
+  description?: string | undefined
+}
+
+const { locale, title, description } = Astro.props
+
+/*
+ * The theme script is inlined before first paint, because the alternative is a
+ * flash of the wrong theme on every navigation. It reads a cookie the server
+ * never writes into this HTML: the page is shared and cacheable, so a
+ * server-rendered data-theme would bake the first visitor's choice into
+ * everyone's copy. The reasoning lives here rather than in an HTML comment,
+ * which would ship to every reader on every response.
+ */
+---
+
+<html lang={LOCALE_TAGS[locale]}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{title}</title>
+    {description ? <meta name="description" content={description} /> : null}
+    <script is:inline set:html={THEME_INIT_SCRIPT}></script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  /*
+   * Deliberately the least design that can carry a document. The theme
+   * contract is the next step of this phase and it owns everything visual;
+   * what must already be true is that nothing here hardcodes a colour, so the
+   * page follows the reader's light or dark preference from the first commit.
+   */
+  body {
+    margin: 0;
+    background: var(--pl-color-bg);
+    color: var(--pl-color-text);
+    font-family: var(--pl-font-machine);
+    line-height: var(--pl-line-normal);
+  }
+
+  main {
+    max-width: var(--pl-layout-max);
+    margin-inline: auto;
+    padding: var(--pl-section) var(--pl-gutter);
+  }
+
+  article,
+  .pl-card {
+    background: var(--pl-color-bg-raised);
+    border: 1px solid var(--pl-color-border);
+    padding: var(--pl-gutter);
+    margin-block-end: var(--pl-space-6);
+  }
+
+  article :is(h1, h2, h3),
+  .pl-title {
+    font-family: var(--pl-font-content);
+    line-height: var(--pl-line-tight);
+  }
+
+  article :is(p, li, blockquote) {
+    font-family: var(--pl-font-content);
+    max-width: var(--pl-measure);
+  }
+
+  article :is(pre, code) {
+    font-family: var(--pl-font-data);
+    font-size: var(--pl-text-sm);
+  }
+
+  article pre {
+    overflow-x: auto;
+    background: var(--pl-color-bg-subtle);
+    padding: var(--pl-space-4);
+  }
+
+  article img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  time {
+    color: var(--pl-color-text-muted);
+    font-size: var(--pl-text-sm);
+  }
+</style>

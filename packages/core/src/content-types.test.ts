@@ -624,3 +624,38 @@ describe('createContentTypeRegistry', () => {
     expect(two.names()).toEqual(['post', 'page'])
   })
 })
+
+describe('public base path', () => {
+  it('defaults to the type name, which can never collide', () => {
+    expect(defineContentType({ name: 'recipe' }).basePath).toBe('recipe')
+  })
+
+  it('takes the declared segment, including the locale root', () => {
+    expect(defineContentType({ name: 'post', basePath: 'blog' }).basePath).toBe('blog')
+    expect(defineContentType({ name: 'page', basePath: '' }).basePath).toBe('')
+  })
+
+  it('refuses a base path that is not a single path segment', () => {
+    expect(() => defineContentType({ name: 'post', basePath: 'blog/posts' })).toThrow(/base path/)
+    expect(() => defineContentType({ name: 'post', basePath: 'Blog' })).toThrow(/base path/)
+  })
+
+  /*
+   * Which of the two would be unreachable depends on registration order, and
+   * that is a plugin load order — so the same two plugins would shadow
+   * different content on different installations.
+   */
+  it('refuses two types claiming one segment', () => {
+    const first = defineContentType({ name: 'post', basePath: 'blog' })
+    const second = defineContentType({ name: 'article', basePath: 'blog' })
+
+    expect(() => createContentTypeRegistry([first, second])).toThrow(/both claim "\/blog"/)
+  })
+
+  it('refuses two types claiming the locale root', () => {
+    const first = defineContentType({ name: 'page', basePath: '' })
+    const second = defineContentType({ name: 'landing', basePath: '' })
+
+    expect(() => createContentTypeRegistry([first, second])).toThrow(/both claim the locale root/)
+  })
+})

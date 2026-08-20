@@ -110,6 +110,18 @@ export const fr: Messages = {
   'nav.dashboard': 'Tableau de bord',
   'nav.compose': 'Composer',
 
+  /* Site public. Tout ce qu'un lecteur voit et que le site dit en son nom. */
+  'web.notFound.title': 'Page introuvable',
+  'web.notFound.body': "Cette page n'existe pas, ou n'est pas encore publiée.",
+  'web.notFound.home': "Aller à l'accueil",
+  'web.archive.title': 'Écrits',
+  'web.archive.empty': 'Rien de publié pour le moment.',
+  'web.archive.older': 'Plus ancien',
+  'web.archive.newer': 'Plus récent',
+  'web.archive.page': 'Page {page} sur {pages}',
+  'web.home.latest': 'Derniers articles',
+  'web.home.readMore': 'Lire',
+
   'error.notFound': 'Introuvable',
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',

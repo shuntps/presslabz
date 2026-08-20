@@ -1,0 +1,30 @@
+---
+import { negotiateLocale } from '@presslabz/i18n'
+import { localeConfig } from '../env.ts'
+import { homePath } from '../lib/routes.ts'
+
+/*
+ * The site root belongs to the reader's browser, not to the installation's
+ * default: `Accept-Language` is the one thing that says which of the languages
+ * this site runs they can actually read. Astro's own redirect would go
+ * straight to DEFAULT_LOCALE, which is why it is turned off in the config.
+ *
+ * 302, not 301. The answer depends on the request, and a permanent redirect
+ * would be cached by the browser and handed to the next person on that
+ * machine — and to the same person after they change their language.
+ */
+const locale = negotiateLocale(Astro.request.headers.get('accept-language'), [
+  ...localeConfig.locales,
+])
+
+/*
+ * Built here rather than through Astro.redirect: that helper returns a new
+ * Response, so anything set on Astro.response beforehand — the Vary below —
+ * is dropped. Without it a shared cache would hand one reader's language to
+ * the next, which is the one thing this route must not do.
+ */
+return new Response(null, {
+  status: 302,
+  headers: { Location: homePath(locale), Vary: 'Accept-Language' },
+})
+---

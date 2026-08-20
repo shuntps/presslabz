@@ -28,6 +28,8 @@ const seoSchema = z
 
 export const postType = defineContentType({
   name: 'post',
+  /** Posts are the archive; `/en/blog/hello-world`. */
+  basePath: 'blog',
   taxonomies: ['category', 'tag'],
   meta: z.object({
     seo: seoSchema,
@@ -38,6 +40,11 @@ export const postType = defineContentType({
 
 export const pageType = defineContentType({
   name: 'page',
+  /**
+   * Pages sit at the locale root — `/en/about`, `/en/about/team` — which is
+   * the only reason posts need a segment of their own.
+   */
+  basePath: '',
   /** Pages nest; posts do not. */
   hierarchical: true,
   meta: z.object({

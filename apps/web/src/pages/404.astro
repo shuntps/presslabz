@@ -1,0 +1,16 @@
+---
+import { negotiateLocale } from '@presslabz/i18n'
+import NotFound from '../components/NotFound.astro'
+import { localeConfig } from '../env.ts'
+
+/*
+ * Reached when no route matched at all, so there is no locale in the path to
+ * read — the reader's own header is the best guess available, and an apology
+ * in a language they read is worth more than one in the site's default.
+ */
+const locale =
+  Astro.locals.locale ??
+  negotiateLocale(Astro.request.headers.get('accept-language'), [...localeConfig.locales])
+---
+
+<NotFound locale={locale} />

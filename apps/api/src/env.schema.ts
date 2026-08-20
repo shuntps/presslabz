@@ -6,16 +6,25 @@
  * useless for a test: every refusal declared here has to be shown to
  * actually refuse, against inputs a real environment would never hold.
  */
-import { isLocale, LOCALES } from '@presslabz/i18n'
+import {
+  isLocale,
+  isLocaleList,
+  LOCALES,
+  parseLocaleList,
+  SUPPORTED_LOCALES_MESSAGE,
+} from '@presslabz/i18n'
 import { z } from 'zod'
 
+/*
+ * The parsing lives in packages/i18n because the public site has to answer
+ * this identically: a site that routes a language the API refuses to write is
+ * two definitions of "which languages does this installation run" drifting.
+ */
 const localeList = z
   .string()
   .default(LOCALES.join(','))
-  .transform((value) => value.split(',').map((part) => part.trim()))
-  .refine((list) => list.length > 0 && list.every(isLocale), {
-    message: `SUPPORTED_LOCALES must be a comma-separated subset of: ${LOCALES.join(', ')}`,
-  })
+  .refine(isLocaleList, { message: SUPPORTED_LOCALES_MESSAGE })
+  .transform(parseLocaleList)
 
 /**
  * Where the address of the client actually comes from.

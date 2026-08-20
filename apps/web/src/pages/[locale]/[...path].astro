@@ -1,0 +1,153 @@
+---
+import { type AnyContentType, createBuiltinRegistry } from '@presslabz/core'
+import type { ContentRow } from '@presslabz/db'
+import { createTranslator, formatDate, type Locale } from '@presslabz/i18n'
+import NotFound from '../../components/NotFound.astro'
+import {
+  type Archive,
+  loadAncestry,
+  loadArchive,
+  loadDocument,
+  renderDocument,
+} from '../../data/content.ts'
+import Base from '../../layouts/Base.astro'
+import {
+  archivePageUrl,
+  documentPath,
+  PAGE_PARAM,
+  parsePageNumber,
+  parseSegments,
+  resolveRoute,
+} from '../../lib/routes.ts'
+
+/**
+ * Every public URL under a locale, resolved from the declared content types
+ * rather than from a file per route. A type's base path is part of its
+ * declaration, so moving it — or adding a type in a later phase — has to move
+ * its URLs without anyone touching this directory.
+ */
+type View =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'archive'; readonly type: AnyContentType; readonly archive: Archive }
+  | { readonly kind: 'document'; readonly row: ContentRow; readonly html: string }
+
+const locale = Astro.locals.locale
+const registry = createBuiltinRegistry()
+const segments = parseSegments(Astro.params.path ?? '')
+const route = locale && segments ? resolveRoute(registry, segments) : null
+
+let view: View = { kind: 'missing' }
+
+if (locale && route?.kind === 'archive') {
+  const page = parsePageNumber(Astro.url.searchParams.get(PAGE_PARAM))
+  const archive = page === null ? null : await loadArchive({ type: route.type, locale, page })
+
+  /*
+   * A page number past the end is a 404, not an empty list. An archive that
+   * answers 200 for every number has an unbounded set of URLs that all say
+   * nothing, and each one is a cache entry and a crawl.
+   */
+  view =
+    archive && archive.page <= archive.pageCount
+      ? { kind: 'archive', type: route.type, archive }
+      : { kind: 'missing' }
+}
+
+if (locale && route?.kind === 'document') {
+  const row = await loadDocument({ type: route.type, locale, slug: route.slug })
+
+  if (row) {
+    /*
+     * A flat type is its own path. A nesting one has to resolve its ancestors
+     * before it has a URL at all: an incomplete chain — a cycle, or a parent
+     * in another language — would put the document at a path that is not its
+     * own, so it answers 404 rather than picking a plausible one.
+     */
+    const ancestry = await loadAncestry(row, route.type)
+    const path = route.type.hierarchical ? (ancestry?.complete ? ancestry.slugs : null) : [row.slug]
+
+    if (path === null) {
+      view = { kind: 'missing' }
+    } else {
+      const canonical = documentPath(locale, route.type, path)
+
+      if (canonical !== Astro.url.pathname) {
+        /*
+         * 301 rather than rendering it here. A nested page is reachable by its
+         * slug alone — the unique index is (type, locale, slug) — so without
+         * this, one document answers at every prefix somebody guesses: a URL
+         * to index and a cache entry to purge for each of them.
+         */
+        return Astro.redirect(canonical, 301)
+      }
+
+      view = { kind: 'document', row, html: await renderDocument(row, locale) }
+    }
+  }
+}
+
+const t = createTranslator(locale ?? undefined)
+const readerLocale: Locale = locale ?? 'en'
+---
+
+{
+  view.kind === 'missing' ? (
+    <NotFound locale={readerLocale} />
+  ) : view.kind === 'archive' ? (
+    <Base locale={readerLocale} title={t('web.archive.title')}>
+      <main>
+        <h1 class="pl-title">{t('web.archive.title')}</h1>
+
+        {view.archive.rows.length === 0 ? <p>{t('web.archive.empty')}</p> : null}
+
+        {view.archive.rows.map((row) => (
+          <article>
+            <h2 class="pl-title">
+              <a href={documentPath(readerLocale, view.type, [row.slug])}>{row.title}</a>
+            </h2>
+            {row.publishedAt ? (
+              <time datetime={row.publishedAt.toISOString()}>
+                {formatDate(row.publishedAt, readerLocale, { dateStyle: 'long' })}
+              </time>
+            ) : null}
+            {row.excerpt ? <p>{row.excerpt}</p> : null}
+          </article>
+        ))}
+
+        <nav>
+          {view.archive.page > 1 ? (
+            <a rel="prev" href={archivePageUrl(readerLocale, view.type, view.archive.page - 1)}>
+              {t('web.archive.newer')}
+            </a>
+          ) : null}
+          <span>
+            {t('web.archive.page', { page: view.archive.page, pages: view.archive.pageCount })}
+          </span>
+          {view.archive.page < view.archive.pageCount ? (
+            <a rel="next" href={archivePageUrl(readerLocale, view.type, view.archive.page + 1)}>
+              {t('web.archive.older')}
+            </a>
+          ) : null}
+        </nav>
+      </main>
+    </Base>
+  ) : (
+    <Base
+      locale={readerLocale}
+      title={view.row.title}
+      description={view.row.excerpt ?? undefined}
+    >
+      <main>
+        <article>
+          <h1 class="pl-title">{view.row.title}</h1>
+          {view.row.publishedAt ? (
+            <time datetime={view.row.publishedAt.toISOString()}>
+              {formatDate(view.row.publishedAt, readerLocale, { dateStyle: 'long' })}
+            </time>
+          ) : null}
+          <Fragment set:html={view.html} />
+        </article>
+      </main>
+    </Base>
+  )
+}
