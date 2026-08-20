@@ -3,8 +3,8 @@ import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import rateLimit, { normalizeIP } from '@fastify/rate-limit'
-import { createBuiltinRegistry } from '@presslabz/core'
-import { createDb, deleteExpiredSessions } from '@presslabz/db'
+import { contentEventOf, createBuiltinRegistry, transitionsFor } from '@presslabz/core'
+import { createDb, deleteExpiredSessions, publishDueContent } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
 import type { Module } from '@presslabz/modules'
 import Fastify from 'fastify'
@@ -14,6 +14,7 @@ import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
 import { createApiPageCache } from './cache/purge.ts'
 import { contentRoutes } from './content/routes.ts'
+import { startScheduler } from './content/scheduler.ts'
 import { env } from './env.ts'
 import { createProbe } from './health/probe.ts'
 import { summarizeHealth } from './health/status.ts'
@@ -261,6 +262,38 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.addHook('onClose', () => {
     uninstall()
+  })
+
+  /*
+   * What makes `scheduled` mean anything. It announces each publication
+   * through the same hook a manual one uses, so the cache purge and every
+   * other handler treat a scheduled post exactly like one somebody pressed a
+   * button for — which is the point of routing invalidation through the hook
+   * API rather than calling it from the routes.
+   */
+  const scheduler =
+    env.SCHEDULER_INTERVAL_MS > 0
+      ? startScheduler({
+          publishDue: () => publishDueContent(db),
+          announce: async (row) => {
+            /*
+             * The same announcements a manual publication makes, decided by
+             * the same function, so that a handler cannot tell the two apart —
+             * which is the whole reason invalidation went through the hook API
+             * rather than staying in the write routes.
+             */
+            const context = { locale: row.locale, actorId: null }
+            for (const announcement of transitionsFor('scheduled', contentEventOf(row))) {
+              await hooks.emit(announcement.name, announcement.payload, context)
+            }
+          },
+          log: app.log,
+          intervalMs: env.SCHEDULER_INTERVAL_MS,
+        })
+      : null
+
+  app.addHook('onClose', () => {
+    scheduler?.stop()
   })
 
   await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), hooks })

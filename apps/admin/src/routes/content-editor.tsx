@@ -14,6 +14,7 @@ import {
   useSaveContent,
   useTranslations,
 } from '../lib/content.ts'
+import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '../lib/datetime.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -42,7 +43,13 @@ function draftFrom(content: ContentSummary | undefined): Draft {
     slugTouched: content !== undefined,
     excerpt: content?.excerpt ?? '',
     status: content?.status ?? 'draft',
-    publishedAt: content?.publishedAt?.slice(0, 16) ?? '',
+    /*
+     * Converted, never sliced. The stored value is a UTC instant, and cutting
+     * the first sixteen characters off it hands the field UTC digits that the
+     * browser then reads as local time — so opening a document and saving it
+     * untouched moved its publication by the zone's offset.
+     */
+    publishedAt: toLocalInput(content?.publishedAt),
     blocks: content?.blocks ?? [],
   }
 }
@@ -97,6 +104,14 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
   const save = useSaveContent(type, id)
 
+  /*
+   * What the field's value actually means, spelled out. The number in the
+   * field is the editor's own wall clock; this is the instant it names, which
+   * is what everybody else — the scheduler, a colleague abroad, the site —
+   * will see.
+   */
+  const utcInstant = describeInstant(fromLocalInput(draft?.publishedAt ?? ''), locale)
+
   // Loaded once, then owned locally: an editor that re-seeds itself from a
   // refetch would throw away whatever was typed in the meantime.
   if (enabled && draft === null && existing.data) setDraft(draftFrom(existing.data))
@@ -130,9 +145,9 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         status: draft.status,
         blocks: draft.blocks,
         ...(draft.excerpt === '' ? {} : { excerpt: draft.excerpt }),
-        ...(draft.publishedAt === ''
+        ...(fromLocalInput(draft.publishedAt) === null
           ? {}
-          : { publishedAt: new Date(draft.publishedAt).toISOString() }),
+          : { publishedAt: fromLocalInput(draft.publishedAt) as string }),
       },
       {
         onSuccess: (content) => {
@@ -256,7 +271,19 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
               className="data"
               value={draft.publishedAt}
               onChange={(event) => patch({ publishedAt: event.target.value })}
+              aria-describedby="publish-at-zone"
             />
+            {/*
+              Whose nine o'clock it is. The field shows the editor's own zone,
+              and a colleague in another country opening the same document sees
+              a different number for the same instant — so the zone is named
+              rather than assumed, and the instant it resolves to is spelled
+              out beside it.
+            */}
+            <small id="publish-at-zone" className="data">
+              {localZoneName()}
+              {utcInstant === '' ? '' : ` · ${t('editor.publishAtUtc', { instant: utcInstant })}`}
+            </small>
           </label>
         )}
 

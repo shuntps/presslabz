@@ -69,6 +69,22 @@ describe('cache invalidation', () => {
     ])
   })
 
+  /*
+   * The scheduler announces a publication and nothing else. Listening only to
+   * the broad events looked sufficient until it existed, and a post that had
+   * gone live kept serving the page that said it had not.
+   */
+  it('hears a publication announced on its own', async () => {
+    const { cache, purged } = recordingCache()
+    const registry = hooks()
+    installModules(registry, [cacheInvalidation(cache)])
+
+    await registry.emit('content:published', { ...CONTENT, previousStatus: 'scheduled' })
+    await registry.emit('content:unpublished', { ...CONTENT, previousStatus: 'published' })
+
+    expect(purged).toHaveLength(2)
+  })
+
   it('hears about a creation and a deletion as well as an edit', async () => {
     const { cache, purged } = recordingCache()
     const registry = hooks()

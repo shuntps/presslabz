@@ -185,6 +185,14 @@ export const envSchema = z
      * installation, and a weak secret would hand over every unpublished
      * document on it.
      */
+    /*
+     * How often the API looks for documents whose publication time has come.
+     * Zero turns the scheduler off, for an installation that would rather run
+     * it elsewhere; the status then stays as inert as it was before it
+     * existed, which is a choice rather than an accident.
+     */
+    SCHEDULER_INTERVAL_MS: z.coerce.number().int().min(0).max(3_600_000).default(60_000),
+
     PREVIEW_SECRET: z.string().min(32).max(512).optional(),
     PREVIEW_TTL_SECONDS: z.coerce.number().int().min(30).max(86_400).default(600),
     /** Where the public site answers, for building a preview link. */

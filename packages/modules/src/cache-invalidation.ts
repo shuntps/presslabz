@@ -56,9 +56,20 @@ export function cacheInvalidation(cache: PageCache): Module {
        */
       const options = { priority: 1, label: 'cache-invalidation' }
 
+      /*
+       * Every content event, including the two that a manual edit also emits
+       * as `content:updated`. Listening only to the broad ones looked
+       * sufficient until the scheduler arrived: it announces a publication and
+       * nothing else, so the page stayed cached and a post that had gone live
+       * kept serving the version that said it had not. Purging twice for one
+       * manual publish costs a Valkey round trip on an empty tag set; missing
+       * one costs a reader the wrong page.
+       */
       const off = [
         hooks.action('content:created', purgeContent, options),
         hooks.action('content:updated', purgeContent, options),
+        hooks.action('content:published', purgeContent, options),
+        hooks.action('content:unpublished', purgeContent, options),
         hooks.action('content:deleted', purgeContent, options),
         hooks.action('media:uploaded', purgeMedia, options),
         hooks.action('media:updated', purgeMedia, options),

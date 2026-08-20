@@ -271,7 +271,25 @@ The public site reads the database directly, through the same repositories the A
 
 **What is public is a domain rule, not a `where` clause.** `isPubliclyVisible` in `packages/core` answers it, and `packages/db/src/repositories/public-contents.ts` restates it in SQL because a listing has to be counted and paginated by the database. Two expressions of one rule is the duplication this project treats as a defect, so an integration test crosses every status with every relation a date can have to now and asserts the two select the same rows. When it fails, the SQL is the copy that is wrong.
 
-The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible however old its date. Nothing yet moves `scheduled` to `published` when its time comes, and answering that question in a read would be the scheduler implemented in the one place that cannot write the row, fire the hooks or purge the cache.
+The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible whatever its date. A read is not where a schedule is resolved — it cannot write the row, announce it, or purge the cache — so the scheduler does that, and by the time a reader arrives the row says `published` like any other.
+
+### Scheduled publication
+
+A timer in the API claims everything due in **one statement**: `UPDATE … WHERE status = 'scheduled' AND published_at <= now RETURNING *`. That is what makes several instances safe. Each row is locked by whichever instance touches it first, and the loser re-evaluates its condition after that commits, finds the row already published, and returns fewer rows — so a document is published once and, more importantly, *announced* once. Reading the due set and then updating it would hand the same rows to every instance and tell every hook handler about the same publication several times.
+
+It runs once at boot and then on an interval, because an instance starting after downtime owes whatever came due while it was gone. Anything overdue is published however overdue: a schedule is a promise about a moment, and publishing late is what an author expects where skipping silently is how a post never appears at all.
+
+What it publishes is announced through `transitionsFor`, the same function a manual write uses, so a scheduled post and one somebody pressed a button for are indistinguishable to every handler. That is the point of routing invalidation through the hook API rather than calling it from the routes — and it was not free: the cache module listened only to the broad events, so the first scheduled publication went live behind a cached page that still said it had not. The module now hears `content:published` on its own.
+
+`SCHEDULER_INTERVAL_MS=0` turns it off, for an installation that would rather run it elsewhere. The status then means what it meant before the scheduler existed, which is a choice rather than an accident.
+
+### Times an editor types
+
+A stored publication date is a UTC instant; a `datetime-local` field speaks the browser's local time. Converting between them is where this went wrong: the editor sliced the first sixteen characters off the ISO string, which the field then read as local, so opening a document in Toronto and saving it untouched moved its publication by four hours in summer and five in winter — with nothing in the interface to show it.
+
+The field shows the instant in the editor's own zone, and what they type means their own zone, with the zone named beside the field and the resulting UTC instant spelled out. Both conversions defer to the platform's zone rules, so daylight saving is handled by the same table the browser's clock uses; the tests cross both transitions, including the local hour that does not exist and the one that happens twice.
+
+One editorial timezone for the whole installation — the way WordPress does it — is the alternative, and it is a setting, a migration and a second conversion. It would be worth that for a newsroom scheduling to the minute across countries. Naming the zone is what keeps the current choice visible rather than assumed.
 
 **Pages nest, but the unique index is on `(type, locale, slug)`.** A slug therefore already identifies a row, and the ancestor chain is only needed to know which URL is canonical. The walk is one recursive query, restricted to the same type and locale — a parent in another language is not part of this language's path — and it is depth-capped, because `parentId` has no cycle check behind it yet and a recursive query over a cycle does not terminate.
 

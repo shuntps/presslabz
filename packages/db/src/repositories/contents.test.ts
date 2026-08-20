@@ -11,9 +11,11 @@ import {
   type ContentState,
   createContent,
   deleteContent,
+  findContentById,
   findContentBySlug,
   listContents,
   listTranslations,
+  publishDueContent,
   updateContent,
 } from './contents.ts'
 
@@ -719,6 +721,89 @@ describe.skipIf(!ready)('contents repository', () => {
       )
 
       expect(sawTransition).toEqual(['draft', 'published'])
+    })
+  })
+
+  describe('publishing what has come due', () => {
+    const at = (iso: string) => new Date(iso)
+    const NOW = at('2026-08-20T12:00:00.000Z')
+
+    async function scheduled(slug: string, when: Date) {
+      return createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug, status: 'scheduled', publishedAt: when }),
+      })
+    }
+
+    it('publishes what is due and leaves the rest alone', async () => {
+      const due = await scheduled('due-now', at('2026-08-20T11:00:00.000Z'))
+      const later = await scheduled('due-later', at('2026-08-21T11:00:00.000Z'))
+      const draft = await createContent(db, {
+        type: TYPE,
+        locale: 'en',
+        authorId: null,
+        state: state({ slug: 'still-drafting', status: 'draft' }),
+      })
+
+      const published = await publishDueContent(db, NOW)
+
+      expect(published.map((row) => row.id)).toEqual([due.id])
+      expect(published[0]?.status).toBe('published')
+      expect((await findContentById(db, later.id))?.status).toBe('scheduled')
+      expect((await findContentById(db, draft.id))?.status).toBe('draft')
+    })
+
+    /*
+     * A schedule is a promise about a moment. An installation that was down
+     * for an hour owes the documents that came due while it was gone, and
+     * publishing them late is what an author expects — silently skipping them
+     * is how a post never appears at all.
+     */
+    it('publishes what came due while nothing was running', async () => {
+      const missed = await scheduled('missed-it', at('2026-08-19T09:00:00.000Z'))
+
+      const published = await publishDueContent(db, NOW)
+
+      expect(published.map((row) => row.id)).toContain(missed.id)
+    })
+
+    it('publishes exactly at the moment named, not a moment later', async () => {
+      const exact = await scheduled('on-the-dot', NOW)
+
+      expect(await publishDueContent(db, at('2026-08-20T11:59:59.999Z'))).toEqual([])
+      expect((await publishDueContent(db, NOW)).map((row) => row.id)).toEqual([exact.id])
+    })
+
+    /*
+     * The property the whole design rests on: several API instances run this
+     * on their own timers, and a document must be claimed — and therefore
+     * announced to every hook handler — exactly once. Reading the due set and
+     * then updating it would hand the same rows to both.
+     */
+    it('hands each document to one caller when two run at once', async () => {
+      const ids = new Set<string>()
+      for (const slug of ['race-a', 'race-b', 'race-c', 'race-d']) {
+        ids.add((await scheduled(slug, at('2026-08-20T10:00:00.000Z'))).id)
+      }
+
+      const [first, second] = await Promise.all([
+        publishDueContent(db, NOW),
+        publishDueContent(db, NOW),
+      ])
+
+      const claimed = [...first, ...second].map((row) => row.id).filter((id) => ids.has(id))
+
+      expect(new Set(claimed).size).toBe(claimed.length)
+      expect(new Set(claimed)).toEqual(ids)
+    })
+
+    it('finds nothing to do twice in a row', async () => {
+      await scheduled('once-only', at('2026-08-20T10:00:00.000Z'))
+
+      expect((await publishDueContent(db, NOW)).length).toBeGreaterThan(0)
+      expect(await publishDueContent(db, NOW)).toEqual([])
     })
   })
 })

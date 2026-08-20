@@ -61,6 +61,7 @@ export const fr: Messages = {
   'editor.group': 'Groupe de traduction',
   'editor.schema': 'Schéma',
   'editor.excerpt': 'Extrait',
+  'editor.publishAtUtc': '{instant} UTC',
   'editor.publishAt': 'Publier le',
   'editor.translations': 'Traductions',
   'editor.createTranslation': 'L’écrire en {language}',

@@ -63,6 +63,7 @@ export const en = {
   'editor.group': 'Translation group',
   'editor.schema': 'Schema',
   'editor.excerpt': 'Excerpt',
+  'editor.publishAtUtc': '{instant} UTC',
   'editor.publishAt': 'Publish at',
   'editor.translations': 'Translations',
   'editor.createTranslation': 'Write it in {language}',

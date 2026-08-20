@@ -1,6 +1,6 @@
 import type { Blocks } from '@presslabz/blocks'
 import { type AnyContentType, type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
-import { and, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, lte, or } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
 
@@ -566,4 +566,37 @@ export async function deleteContent(
 
     return current
   })
+}
+
+/**
+ * Publishes everything whose moment has come, and returns what it published.
+ *
+ * One statement, deliberately. `UPDATE … WHERE status = 'scheduled' AND
+ * published_at <= now RETURNING *` takes a row lock per row it touches, so two
+ * API instances running this at the same second cannot both claim a document:
+ * the loser re-evaluates its condition after the winner commits, finds the row
+ * already published, and returns fewer rows. Reading the due set and then
+ * updating it would have that race, and it would announce the same publication
+ * twice — once per instance — to every hook handler.
+ *
+ * Anything overdue is published, however overdue. A schedule is a promise
+ * about a moment, and an installation that was down for an hour owes the
+ * documents that came due while it was: publishing them late is what an author
+ * expects, and skipping them silently is how a post never appears at all.
+ */
+export async function publishDueContent(
+  db: Database,
+  now: Date = new Date(),
+): Promise<ContentRow[]> {
+  return db
+    .update(contents)
+    .set({ status: 'published', updatedAt: new Date() })
+    .where(
+      and(
+        eq(contents.status, 'scheduled'),
+        isNotNull(contents.publishedAt),
+        lte(contents.publishedAt, now),
+      ),
+    )
+    .returning()
 }
