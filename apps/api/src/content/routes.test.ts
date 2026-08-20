@@ -1132,4 +1132,86 @@ describe.skipIf(!ready)('content routes', () => {
       expect(response.statusCode).toBe(403)
     })
   })
+
+  describe('placing a page under another', () => {
+    /*
+     * Pages nest and posts do not, so this is the one type in the registry
+     * that can exercise the hierarchy through the API. What is asserted here
+     * is the mapping: the repository's reasons have to reach a client as
+     * statuses it can act on, and 422 and 409 mean different things — one is
+     * "that cannot be a parent", the other is "not with the tree as it is".
+     */
+    async function makePage(slug: string, body: Record<string, unknown> = {}) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: { locale: 'en', slug: uniqueSlug(slug), title: 'Une page', ...body },
+      })
+      if (response.statusCode === 201) created.push(response.json().content.id)
+      return response
+    }
+
+    async function movePage(id: string, parentId: string | null, version: number) {
+      return app.inject({
+        method: 'PATCH',
+        url: `/content/page/${id}`,
+        cookies: as('editor'),
+        payload: { parentId, expectedVersion: version },
+      })
+    }
+
+    it('answers 422 for a parent that does not exist', async () => {
+      const response = await makePage('lost-child', {
+        parentId: '00000000-0000-4000-8000-000000000000',
+      })
+
+      expect(response.statusCode).toBe(422)
+      expect(response.json().reason).toBe('parent-not-found')
+    })
+
+    it('answers 422 for a parent in another language', async () => {
+      const french = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: { locale: 'fr', slug: uniqueSlug('parent-francais'), title: 'Parent' },
+      })
+      created.push(french.json().content.id)
+
+      const response = await makePage('english-child', {
+        parentId: french.json().content.id,
+      })
+
+      expect(response.statusCode).toBe(422)
+      expect(response.json().reason).toBe('parent-mismatch')
+    })
+
+    it('answers 409 for a placement that would make a loop', async () => {
+      const top = await makePage('loop-top')
+      const topId = top.json().content.id as string
+
+      const under = await makePage('loop-under', { parentId: topId })
+      const underId = under.json().content.id as string
+
+      const response = await movePage(topId, underId, top.json().content.version)
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().reason).toBe('parent-cycle')
+    })
+
+    it('accepts an ordinary nesting', async () => {
+      const parent = await makePage('ordinary-top')
+      const child = await makePage('ordinary-below')
+
+      const response = await movePage(
+        child.json().content.id,
+        parent.json().content.id,
+        child.json().content.version,
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().content.parentId).toBe(parent.json().content.id)
+    })
+  })
 })

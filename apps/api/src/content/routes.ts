@@ -18,6 +18,7 @@ import {
 import { previewPath, signPreviewToken } from '@presslabz/core/preview'
 import {
   ContentConflictError,
+  type ContentConflictReason,
   ContentForbiddenError,
   type ContentRow,
   type ContentState,
@@ -135,14 +136,27 @@ async function replyForWriteError(error: unknown, reply: FastifyReply): Promise<
   }
   if (error instanceof ContentConflictError) {
     /*
-     * A group that does not exist is not a conflict with the state of this
-     * collection: the request is well formed and its instructions cannot be
-     * followed, which is what 422 is for. The other three are genuine
-     * conflicts with what is already there.
+     * 422 when the request names something that cannot be what it is being
+     * asked to be — a group that does not exist, a parent that does not or
+     * that is the wrong kind of thing. The request is well formed and its
+     * instructions cannot be followed, which is what 422 is for.
+     *
+     * 409 when it conflicts with the shape the collection currently has: a
+     * slug already taken, a language already translated, a document that has
+     * moved on, a placement that would make a loop or push a page deeper than
+     * a URL can express. Those are answers about the state, and they can
+     * change without the request changing.
      */
-    if (error.reason === 'group-not-found') {
+    const unprocessable: readonly ContentConflictReason[] = [
+      'group-not-found',
+      'parent-not-found',
+      'parent-mismatch',
+    ]
+
+    if (unprocessable.includes(error.reason)) {
       return reply.code(422).send({ error: 'unprocessable', reason: error.reason })
     }
+
     return reply.code(409).send({ error: 'conflict', reason: error.reason })
   }
   if (error instanceof z.ZodError) {

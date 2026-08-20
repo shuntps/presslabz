@@ -294,25 +294,34 @@ describe.skipIf(!ready)('public content reads', () => {
       ).toBeNull()
     })
 
-    it('refuses to cross into another locale', async () => {
+    /*
+     * This walk used to be the only thing standing between a French parent and
+     * an English URL: the state was representable, and the guard was to stop
+     * at the language boundary and report an incomplete chain.
+     *
+     * It cannot be created any more — the composite foreign key on
+     * (parent_id, type, locale) refuses it, and the repository names it before
+     * the key has to — so what is asserted here is the invariant itself. The
+     * filter stays in the query regardless: it costs nothing, and a database
+     * restored from a backup taken before the constraint existed would still
+     * hold rows that need it.
+     */
+    it('cannot be given a parent in another language at all', async () => {
       const frenchParent = await createContent(db, {
         type: TYPE,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'a-propos', title: 'À propos', status: 'published' }),
       })
-      const orphan = await open(TYPE, {
-        slug: 'stranded',
-        status: 'published',
-        publishedAt: PAST,
-        parentId: frenchParent.id,
-      })
 
-      const ancestry = await resolveAncestry(db, { id: orphan.id, type: TYPE, locale: 'en' })
-
-      // The chain stops rather than producing a French segment in an English
-      // path, and says it is incomplete so no URL is built from it.
-      expect(ancestry).toEqual({ slugs: ['stranded'], complete: false })
+      await expect(
+        open(TYPE, {
+          slug: 'stranded',
+          status: 'published',
+          publishedAt: PAST,
+          parentId: frenchParent.id,
+        }),
+      ).rejects.toMatchObject({ reason: 'parent-mismatch' })
     })
 
     /*

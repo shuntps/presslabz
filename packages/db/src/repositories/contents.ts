@@ -35,6 +35,13 @@ export type ContentConflictReason =
   | 'slug-taken'
   /** The document moved on since the client last read it. */
   | 'stale-version'
+  | 'parent-not-found'
+  /** A parent of another type or another language. */
+  | 'parent-mismatch'
+  /** The document would become its own ancestor. */
+  | 'parent-cycle'
+  /** The tree would grow deeper than a URL can express. */
+  | 'parent-too-deep'
 
 /**
  * Assigned in the body rather than declared as a constructor parameter
@@ -299,6 +306,17 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
           ? await openGroup(tx, input.type)
           : await joinGroup(tx, input)
 
+      if (input.state.parentId !== undefined) {
+        await assertUsableParent(tx, {
+          // Nothing exists yet, so nothing can be its own ancestor: the walk
+          // is only checking that the parent itself is usable.
+          childId: null,
+          parentId: input.state.parentId,
+          type: input.type,
+          locale: input.locale,
+        })
+      }
+
       const rows = await tx
         .insert(contents)
         .values({
@@ -483,6 +501,20 @@ export async function updateContent(
       }
 
       /*
+       * Only when it moves. Re-walking on every save would take a lock on
+       * every ancestor of every edit, which is a lot of contention to prove
+       * something that did not change.
+       */
+      if (next.parentId !== undefined && next.parentId !== current.parentId) {
+        await assertUsableParent(tx, {
+          childId: current.id,
+          parentId: next.parentId,
+          type: current.type,
+          locale: current.locale,
+        })
+      }
+
+      /*
        * The revision records what the document was, not what it becomes, so
        * restoring one means restoring a state that actually existed. Written
        * in the same transaction as the change it supersedes, or a crash
@@ -590,6 +622,18 @@ export async function deleteContent(
     if (options.authorize && !options.authorize(current)) {
       throw new ContentForbiddenError()
     }
+
+    /*
+     * The children become roots, explicitly, before the parent goes.
+     *
+     * The foreign key is `restrict`, so this is not a nicety: without it the
+     * delete is refused. It is written here rather than left to `on delete set
+     * null` because that clause nulls every column of a composite key —
+     * including the type and the locale, which cannot be null — and the
+     * delete failed with a not-null violation that named neither the page nor
+     * the reason.
+     */
+    await tx.update(contents).set({ parentId: null }).where(eq(contents.parentId, id))
 
     await tx.delete(contents).where(eq(contents.id, id))
 
@@ -709,4 +753,134 @@ export async function findRevision(db: Database, id: string): Promise<ContentRev
   const rows = await db.select().from(contentRevisions).where(eq(contentRevisions.id, id)).limit(1)
 
   return rows[0] ?? null
+}
+
+/**
+ * How deep a page tree may go.
+ *
+ * The same number the URL walk stops at, and for the same reason: a document
+ * deeper than this has a path that cannot be resolved, so it has no canonical
+ * URL and no place in the sitemap. Refusing the move is better than accepting
+ * one that makes a page unreachable.
+ */
+export const MAX_HIERARCHY_DEPTH = 8
+
+interface ParentCheck {
+  readonly childId: string | null
+  readonly parentId: string
+  readonly type: string
+  readonly locale: string
+}
+
+/**
+ * Refuses a parent that would make the tree something a tree cannot be.
+ *
+ * Type and locale are guaranteed by the composite foreign key; they are
+ * checked here anyway so the answer is a named conflict rather than a driver
+ * error, and so the check happens before anything else is written.
+ *
+ * Cycles cannot be a constraint — no SQL check can see a path — so the walk
+ * takes each ancestor `for update` as it goes. That is what makes it safe
+ * against a concurrent write building the other half of the loop: two
+ * transactions setting A under B and B under A each need a row the other
+ * holds, so one waits, and then reads the tree the first one committed and
+ * finds itself in it.
+ */
+async function assertUsableParent(tx: Transaction, check: ParentCheck): Promise<void> {
+  let currentId: string | null = check.parentId
+  let depth = 0
+
+  while (currentId !== null) {
+    if (currentId === check.childId) {
+      throw new ContentConflictError(
+        'parent-cycle',
+        'A document cannot be placed under itself or under one of its own children',
+      )
+    }
+
+    depth += 1
+
+    /*
+     * A runaway guard, not the limit. Cycles are refused now, but a row
+     * written before that constraint existed is still representable in an old
+     * backup, and this walk must end either way.
+     */
+    if (depth > MAX_HIERARCHY_DEPTH + 1) {
+      throw new ContentConflictError(
+        'parent-too-deep',
+        `A page may be at most ${MAX_HIERARCHY_DEPTH} levels deep`,
+      )
+    }
+
+    const rows: { id: string; parentId: string | null; type: string; locale: string }[] = await tx
+      .select({
+        id: contents.id,
+        parentId: contents.parentId,
+        type: contents.type,
+        locale: contents.locale,
+      })
+      .from(contents)
+      .where(eq(contents.id, currentId))
+      .limit(1)
+      .for('update')
+
+    const ancestor = rows[0]
+
+    if (!ancestor) {
+      // Only reachable for the parent itself: an ancestor that disappeared
+      // mid-walk would have been held by the lock.
+      throw new ContentConflictError(
+        'parent-not-found',
+        'No document with that id to place it under',
+      )
+    }
+
+    if (depth === 1 && (ancestor.type !== check.type || ancestor.locale !== check.locale)) {
+      throw new ContentConflictError(
+        'parent-mismatch',
+        'A parent must be the same kind of document, in the same language',
+      )
+    }
+
+    currentId = ancestor.parentId
+  }
+
+  /*
+   * `depth` is the parent's own depth, so the document lands one below it, and
+   * everything already under the document moves down with it. A new document
+   * has no children and therefore a height of one.
+   */
+  const height = check.childId === null ? 1 : await subtreeHeight(tx, check.childId)
+
+  if (depth + height > MAX_HIERARCHY_DEPTH) {
+    throw new ContentConflictError(
+      'parent-too-deep',
+      `A page may be at most ${MAX_HIERARCHY_DEPTH} levels deep`,
+    )
+  }
+}
+
+/**
+ * How many levels the document carries with it.
+ *
+ * Its own depth is not the whole question: everything under it moves down by
+ * the same amount, so a two-level subtree grafted at the limit puts its leaves
+ * beyond it — and those leaves would have no URL.
+ */
+async function subtreeHeight(tx: Transaction, childId: string): Promise<number> {
+  const result = await tx.execute<{ height: number }>(sql`
+    with recursive descendants as (
+      select ${contents.id} as id, 1 as depth
+      from ${contents}
+      where ${contents.id} = ${childId}
+      union all
+      select child.id, parent.depth + 1
+      from ${contents} child
+      join descendants parent on child.parent_id = parent.id
+      where parent.depth <= ${MAX_HIERARCHY_DEPTH}
+    )
+    select coalesce(max(depth), 1)::int as height from descendants
+  `)
+
+  return Number([...result][0]?.height ?? 1)
 }

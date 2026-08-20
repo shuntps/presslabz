@@ -327,6 +327,20 @@ The field shows the instant in the editor's own zone, and what they type means t
 
 One editorial timezone for the whole installation — the way WordPress does it — is the alternative, and it is a setting, a migration and a second conversion. It would be worth that for a newsroom scheduling to the minute across countries. Naming the zone is what keeps the current choice visible rather than assumed.
 
+### What a parent may be
+
+`parentId` used to guarantee one thing: that some row existed. A page could therefore name a post, a translation in another language, itself, or one of its own descendants — and the read path had to defend against all of it, capping its walk and reporting chains it could not resolve.
+
+Type and locale are now **structural**. `contents` carries a unique constraint on `(id, type, locale)` and the parent is a composite foreign key `(parent_id, type, locale) → (id, type, locale)` — the same pattern the translation group uses, and for the same reason: a check loses its race, because two concurrent writes can each read a compatible parent and then make it incompatible. A `CHECK` refuses a document that is its own parent.
+
+**Cycles cannot be a constraint** — no check can see a path — so the repository walks up from the proposed parent, taking each ancestor `for update` as it goes. That lock is what makes it safe against a concurrent write building the other half of the loop: two transactions placing A under B and B under A each need a row the other holds, so one waits, then reads the tree the first committed and finds itself in it.
+
+**Depth is a limit, not a guard.** A page may be at most eight levels deep — the same number the URL walk resolves — because a document deeper than that has no path, so no canonical URL and no place in the sitemap. The check counts the subtree as well as the document: everything under a page moves down with it, and grafting a two-level branch at the limit would put its leaves past it.
+
+**Deleting a parent makes its children roots**, and the repository does it explicitly rather than through `on delete set null`. On a composite key Postgres nulls *every* column of it, so deleting a parent tried to null the child's `type` and `locale` too and failed on the not-null constraint. The key is `restrict`, the children are detached in the same transaction, and nothing can delete a page and orphan a subtree by accident. Never cascade: removing an index page must not remove the pages under it.
+
+An unpublished parent does not hide its children. A child is published on its own terms and stays reachable at its full path, which may therefore contain a segment that answers 404 on its own — that is the same trade every CMS makes, and the alternative is a page disappearing because somebody unpublished something above it.
+
 **Pages nest, but the unique index is on `(type, locale, slug)`.** A slug therefore already identifies a row, and the ancestor chain is only needed to know which URL is canonical. The walk is one recursive query, restricted to the same type and locale — a parent in another language is not part of this language's path — and it is depth-capped, because `parentId` has no cycle check behind it yet and a recursive query over a cycle does not terminate.
 
 ### Routing

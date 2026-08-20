@@ -2,7 +2,7 @@ import { type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
 import { and, asc, count, desc, eq, inArray, isNull, lte, or, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contents } from '../schema/contents.ts'
-import type { ContentRow } from './contents.ts'
+import { type ContentRow, MAX_HIERARCHY_DEPTH } from './contents.ts'
 
 /**
  * The read path the public site uses, kept apart from the write path on
@@ -155,13 +155,16 @@ export async function listPublishedTranslations(
 /**
  * How deep a page may nest before the walk gives up.
  *
- * It is a guard, not a limit anyone should reach. `parentId` has no cycle
- * check behind it yet, so a row that is its own ancestor is representable —
- * and a recursive query over a cycle does not terminate on its own. Eight is
- * far past any navigable page hierarchy, and an incomplete answer is reported
- * rather than returned as if it were a path.
+ * The same number the write path refuses to exceed, imported rather than
+ * repeated: a document deeper than this has a path this walk cannot resolve,
+ * so it would have no canonical URL — which is exactly why the write path
+ * refuses to create one.
+ *
+ * It stays a guard as well as a limit. Cycles are refused now, but a row
+ * written before that constraint existed is still representable in an old
+ * backup, and a recursive query over a cycle does not terminate on its own.
  */
-const MAX_ANCESTRY_DEPTH = 8
+const MAX_ANCESTRY_DEPTH = MAX_HIERARCHY_DEPTH
 
 export interface Ancestry {
   /** Root first, the document's own slug last. */

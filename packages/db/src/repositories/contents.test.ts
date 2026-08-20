@@ -16,6 +16,7 @@ import {
   listContents,
   listRevisions,
   listTranslations,
+  MAX_HIERARCHY_DEPTH,
   publishDueContent,
   REVISION_LIMIT,
   updateContent,
@@ -1013,6 +1014,145 @@ describe.skipIf(!ready)('contents repository', () => {
       expect(kept.length).toBe(REVISION_LIMIT)
       // The oldest went, not the newest.
       expect(kept[0]?.title).toBe(`Version ${REVISION_LIMIT + 3}`)
+    })
+  })
+
+  describe('what a parent may be', () => {
+    const TREE = 'test-tree'
+    const treeType = defineContentType({ name: TREE, hierarchical: true })
+
+    async function page(slug: string, parentId?: string, locale = 'fr') {
+      return createContent(db, {
+        type: TREE,
+        locale,
+        authorId: null,
+        state: state({ slug, ...(parentId === undefined ? {} : { parentId }) }),
+      })
+    }
+
+    it('refuses a parent that does not exist', async () => {
+      await expect(page('orphan', '00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({
+        reason: 'parent-not-found',
+      })
+    })
+
+    /*
+     * The composite foreign key makes this impossible; the check is here so
+     * the answer names what is wrong instead of surfacing a driver error.
+     */
+    it('refuses a parent in another language', async () => {
+      const english = await page('english-parent', undefined, 'en')
+
+      await expect(page('french-child', english.id)).rejects.toMatchObject({
+        reason: 'parent-mismatch',
+      })
+    })
+
+    it('refuses a parent of another type', async () => {
+      const otherType = await createContent(db, {
+        type: 'test-other-tree',
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'not-a-page' }),
+      })
+
+      await expect(page('wrong-kind', otherType.id)).rejects.toMatchObject({
+        reason: 'parent-mismatch',
+      })
+    })
+
+    it('refuses a document that would be its own parent', async () => {
+      const alone = await page('itself')
+
+      await expect(
+        updateContent(db, treeType, alone.id, { parentId: alone.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-cycle' })
+    })
+
+    /*
+     * The case the read path had to defend against twice: a document under one
+     * of its own descendants has no root, so it has no path and no URL.
+     */
+    it('refuses a document placed under its own child', async () => {
+      const top = await page('grandparent')
+      const middle = await page('parent-page', top.id)
+      const bottom = await page('child-page', middle.id)
+
+      await expect(
+        updateContent(db, treeType, top.id, { parentId: bottom.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-cycle' })
+    })
+
+    it('refuses a tree deeper than a URL can express', async () => {
+      let parent = await page('depth-1')
+      for (let level = 2; level <= MAX_HIERARCHY_DEPTH; level += 1) {
+        parent = await page(`depth-${level}`, parent.id)
+      }
+
+      await expect(page(`depth-${MAX_HIERARCHY_DEPTH + 1}`, parent.id)).rejects.toMatchObject({
+        reason: 'parent-too-deep',
+      })
+    })
+
+    /*
+     * The document's own depth is not the whole question: everything under it
+     * moves down with it, and those leaves would have no URL either.
+     */
+    it('refuses a move that would take the children past the limit', async () => {
+      let deep = await page('graft-1')
+      for (let level = 2; level < MAX_HIERARCHY_DEPTH; level += 1) {
+        deep = await page(`graft-${level}`, deep.id)
+      }
+
+      const branchTop = await page('branch-top')
+      const branchLeaf = await page('branch-leaf', branchTop.id)
+      expect(branchLeaf.parentId).toBe(branchTop.id)
+
+      await expect(
+        updateContent(db, treeType, branchTop.id, { parentId: deep.id }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'parent-too-deep' })
+    })
+
+    it('accepts an ordinary nesting, and lets it be undone', async () => {
+      const parent = await page('ordinary-parent')
+      const child = await page('ordinary-child')
+
+      const nested = await updateContent(
+        db,
+        treeType,
+        child.id,
+        { parentId: parent.id },
+        {
+          expectedVersion: 1,
+        },
+      )
+      expect(nested?.parentId).toBe(parent.id)
+
+      const detached = await updateContent(
+        db,
+        treeType,
+        child.id,
+        { parentId: null },
+        {
+          expectedVersion: 2,
+        },
+      )
+      expect(detached?.parentId).toBeNull()
+    })
+
+    /*
+     * Documented behaviour: children become roots rather than disappearing.
+     * Deleting an index page must not silently delete the pages under it.
+     */
+    it('turns children into roots when their parent is deleted', async () => {
+      const parent = await page('doomed-parent')
+      const child = await page('surviving-child', parent.id)
+
+      await deleteContent(db, parent.id, {})
+
+      const after = await findContentById(db, child.id)
+      expect(after).not.toBeNull()
+      expect(after?.parentId).toBeNull()
     })
   })
 })
