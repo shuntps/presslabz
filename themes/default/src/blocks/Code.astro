@@ -1,0 +1,37 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+
+const { block } = Astro.props as BlockProps
+
+/*
+ * No highlighter, and no client-side one either. Colouring code costs a
+ * grammar bundle per language on a page whose entire budget is a few
+ * kilobytes; when it is worth paying, it is paid at render time and not in the
+ * reader's browser. The language is kept as a class so a theme that decides
+ * otherwise has what it needs.
+ */
+---
+
+{
+  block.type === 'code' ? (
+    <pre><code class={block.language ? `language-${block.language}` : undefined}>{block.code}</code></pre>
+  ) : null
+}
+
+<style>
+  pre {
+    font-family: var(--pl-font-data);
+    font-size: var(--pl-text-sm);
+    line-height: var(--pl-line-normal);
+    background: var(--pl-color-bg-subtle);
+    border: 1px solid var(--pl-color-border);
+    padding: var(--pl-space-4);
+    /* Its own scroller: a long line must not widen the page. */
+    overflow-x: auto;
+    margin-block: 0 var(--pl-space-6);
+  }
+
+  code {
+    font-family: inherit;
+  }
+</style>

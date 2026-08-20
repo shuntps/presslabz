@@ -1,0 +1,115 @@
+---
+import { LOCALE_TAGS } from '@presslabz/i18n'
+import type { SiteContext } from '@presslabz/theme-kit'
+import ThemeHead from '@presslabz/theme-kit/ThemeHead.astro'
+import '../tokens.css'
+
+interface Props {
+  site: SiteContext
+  title: string
+  description?: string | undefined
+}
+
+const { site, title, description } = Astro.props
+---
+
+<html lang={LOCALE_TAGS[site.locale]}>
+  <head>
+    <ThemeHead title={title} description={description} />
+  </head>
+  <body>
+    <header>
+      <a class="wordmark" href={site.homeHref}>{site.siteName}</a>
+      {
+        site.nav.length > 0 ? (
+          <nav aria-label={site.t('web.nav.label')}>
+            {site.nav.map((link) => (
+              <a href={link.href} aria-current={link.current ? 'page' : undefined}>
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        ) : null
+      }
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer>
+      <p>{site.siteName}</p>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  /*
+   * Mobile-first, and correct at 320px before any query is written. There is
+   * no max-width query anywhere in this project: mixing the two directions
+   * produces rules that contradict each other at the boundary.
+   */
+  body {
+    margin: 0;
+    background: var(--pl-color-bg);
+    color: var(--pl-color-text);
+    font-family: var(--pl-font-machine);
+    line-height: var(--pl-line-normal);
+    /* Keeps content out from under a phone's notch and home indicator. */
+    padding-inline: var(--pl-safe-right) var(--pl-safe-left);
+  }
+
+  a {
+    color: inherit;
+  }
+</style>
+
+<style>
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--pl-space-4);
+    align-items: baseline;
+    justify-content: space-between;
+    background: var(--pl-color-bg-subtle);
+    border-block-end: 1px solid var(--pl-color-border);
+    padding: var(--pl-space-4) var(--pl-gutter);
+  }
+
+  .wordmark {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-xl);
+    text-decoration: none;
+  }
+
+  nav {
+    display: flex;
+    gap: var(--pl-space-4);
+    font-size: var(--pl-text-sm);
+  }
+
+  nav a[aria-current='page'] {
+    /* The rubricator's mark, not a fill: colour marks, it never fills. */
+    text-decoration-color: var(--pl-color-rubric);
+    text-underline-offset: 0.25em;
+  }
+
+  main {
+    max-width: var(--pl-layout-max);
+    margin-inline: auto;
+    padding: var(--pl-section) var(--pl-gutter);
+  }
+
+  footer {
+    border-block-start: 1px solid var(--pl-color-border);
+    padding: var(--pl-space-6) var(--pl-gutter);
+    color: var(--pl-color-text-muted);
+    font-size: var(--pl-text-sm);
+  }
+
+  footer p {
+    margin: 0;
+    max-width: var(--pl-layout-max);
+    margin-inline: auto;
+  }
+</style>

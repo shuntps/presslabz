@@ -1,0 +1,73 @@
+---
+import { formatDate } from '@presslabz/i18n'
+import type { ArchiveEntry, SiteContext } from '@presslabz/theme-kit'
+
+interface Props {
+  site: SiteContext
+  entries: readonly ArchiveEntry[]
+}
+
+const { site, entries } = Astro.props
+---
+
+{entries.length === 0 ? <p class="empty">{site.t('web.archive.empty')}</p> : null}
+
+<ul class="entries">
+  {
+    entries.map((entry) => (
+      <li>
+        <article>
+          <h2><a href={entry.href}>{entry.title}</a></h2>
+          {entry.publishedAt ? (
+            <time datetime={entry.publishedAt.toISOString()}>
+              {formatDate(entry.publishedAt, site.locale, { dateStyle: 'long' })}
+            </time>
+          ) : null}
+          {entry.excerpt ? <p>{entry.excerpt}</p> : null}
+        </article>
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  li + li {
+    margin-block-start: var(--pl-space-8);
+    border-block-start: 1px solid var(--pl-color-border);
+    padding-block-start: var(--pl-space-8);
+  }
+
+  h2 {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-2xl);
+    line-height: var(--pl-line-tight);
+    margin: 0 0 var(--pl-space-2);
+  }
+
+  h2 a {
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.15em;
+  }
+
+  time {
+    font-size: var(--pl-text-sm);
+    color: var(--pl-color-text-muted);
+  }
+
+  p {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-lg);
+    max-width: var(--pl-measure);
+    margin-block: var(--pl-space-3) 0;
+  }
+
+  .empty {
+    color: var(--pl-color-text-muted);
+  }
+</style>

@@ -1,0 +1,32 @@
+{
+  "name": "@presslabz/theme-kit",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "//": "The contract a theme satisfies. It exports types, one declaration function and the two components every theme must not reimplement \u2014 never a component a theme could style. What a theme may do is decided here; how it looks is decided there.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./Blocks.astro": "./src/Blocks.astro",
+    "./ThemeHead.astro": "./src/ThemeHead.astro",
+    "./Inline.astro": "./src/Inline.astro"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@presslabz/blocks": "workspace:*",
+    "@presslabz/i18n": "workspace:*",
+    "@presslabz/tokens": "workspace:*"
+  },
+  "peerDependencies": {
+    "astro": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "astro": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

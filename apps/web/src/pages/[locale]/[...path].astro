@@ -1,40 +1,38 @@
 ---
-import { type AnyContentType, createBuiltinRegistry } from '@presslabz/core'
-import type { ContentRow } from '@presslabz/db'
-import { createTranslator, formatDate, type Locale } from '@presslabz/i18n'
-import NotFound from '../../components/NotFound.astro'
+import { createBuiltinRegistry } from '@presslabz/core'
+import type { ArchiveView, DocumentView } from '@presslabz/theme-kit'
+import { loadAncestry, loadArchive, loadDocument, loadMedia } from '../../data/content.ts'
+import { localeConfig } from '../../env.ts'
 import {
-  type Archive,
-  loadAncestry,
-  loadArchive,
-  loadDocument,
-  renderDocument,
-} from '../../data/content.ts'
-import Base from '../../layouts/Base.astro'
-import {
-  archivePageUrl,
   documentPath,
   PAGE_PARAM,
   parsePageNumber,
   parseSegments,
   resolveRoute,
 } from '../../lib/routes.ts'
+import { archiveView, documentView, siteContext } from '../../lib/view.ts'
+import { theme } from '../../theme.ts'
 
 /**
- * Every public URL under a locale, resolved from the declared content types
- * rather than from a file per route. A type's base path is part of its
- * declaration, so moving it — or adding a type in a later phase — has to move
- * its URLs without anyone touching this directory.
+ * Every public URL under a locale. The route is resolved from the declared
+ * content types, the data is loaded, and the theme is handed a finished view —
+ * this file never renders anything itself.
  */
 type View =
   | { readonly kind: 'missing' }
-  | { readonly kind: 'archive'; readonly type: AnyContentType; readonly archive: Archive }
-  | { readonly kind: 'document'; readonly row: ContentRow; readonly html: string }
+  | { readonly kind: 'archive'; readonly archive: ArchiveView }
+  | { readonly kind: 'document'; readonly document: DocumentView }
 
-const locale = Astro.locals.locale
 const registry = createBuiltinRegistry()
+const locale = Astro.locals.locale
 const segments = parseSegments(Astro.params.path ?? '')
 const route = locale && segments ? resolveRoute(registry, segments) : null
+
+const site = siteContext({
+  locale: locale ?? localeConfig.defaultLocale,
+  path: Astro.url.pathname,
+  registry,
+})
 
 let view: View = { kind: 'missing' }
 
@@ -49,7 +47,17 @@ if (locale && route?.kind === 'archive') {
    */
   view =
     archive && archive.page <= archive.pageCount
-      ? { kind: 'archive', type: route.type, archive }
+      ? {
+          kind: 'archive',
+          archive: archiveView({
+            locale,
+            type: route.type,
+            rows: archive.rows,
+            page: archive.page,
+            pageCount: archive.pageCount,
+            title: site.t(`content.type.${route.type.name}.plural` as never),
+          }),
+        }
       : { kind: 'missing' }
 }
 
@@ -66,9 +74,7 @@ if (locale && route?.kind === 'document') {
     const ancestry = await loadAncestry(row, route.type)
     const path = route.type.hierarchical ? (ancestry?.complete ? ancestry.slugs : null) : [row.slug]
 
-    if (path === null) {
-      view = { kind: 'missing' }
-    } else {
+    if (path !== null) {
       const canonical = documentPath(locale, route.type, path)
 
       if (canonical !== Astro.url.pathname) {
@@ -81,73 +87,27 @@ if (locale && route?.kind === 'document') {
         return Astro.redirect(canonical, 301)
       }
 
-      view = { kind: 'document', row, html: await renderDocument(row, locale) }
+      view = {
+        kind: 'document',
+        document: documentView(row, route.type, path, await loadMedia(row, locale)),
+      }
     }
   }
 }
 
-const t = createTranslator(locale ?? undefined)
-const readerLocale: Locale = locale ?? 'en'
+if (view.kind === 'missing') Astro.response.status = 404
+
+const Archive = theme.templates.archive
+const Document = theme.templates.document
+const NotFound = theme.templates.notFound
 ---
 
 {
-  view.kind === 'missing' ? (
-    <NotFound locale={readerLocale} />
-  ) : view.kind === 'archive' ? (
-    <Base locale={readerLocale} title={t('web.archive.title')}>
-      <main>
-        <h1 class="pl-title">{t('web.archive.title')}</h1>
-
-        {view.archive.rows.length === 0 ? <p>{t('web.archive.empty')}</p> : null}
-
-        {view.archive.rows.map((row) => (
-          <article>
-            <h2 class="pl-title">
-              <a href={documentPath(readerLocale, view.type, [row.slug])}>{row.title}</a>
-            </h2>
-            {row.publishedAt ? (
-              <time datetime={row.publishedAt.toISOString()}>
-                {formatDate(row.publishedAt, readerLocale, { dateStyle: 'long' })}
-              </time>
-            ) : null}
-            {row.excerpt ? <p>{row.excerpt}</p> : null}
-          </article>
-        ))}
-
-        <nav>
-          {view.archive.page > 1 ? (
-            <a rel="prev" href={archivePageUrl(readerLocale, view.type, view.archive.page - 1)}>
-              {t('web.archive.newer')}
-            </a>
-          ) : null}
-          <span>
-            {t('web.archive.page', { page: view.archive.page, pages: view.archive.pageCount })}
-          </span>
-          {view.archive.page < view.archive.pageCount ? (
-            <a rel="next" href={archivePageUrl(readerLocale, view.type, view.archive.page + 1)}>
-              {t('web.archive.older')}
-            </a>
-          ) : null}
-        </nav>
-      </main>
-    </Base>
+  view.kind === 'archive' ? (
+    <Archive site={site} archive={view.archive} />
+  ) : view.kind === 'document' ? (
+    <Document site={site} document={view.document} />
   ) : (
-    <Base
-      locale={readerLocale}
-      title={view.row.title}
-      description={view.row.excerpt ?? undefined}
-    >
-      <main>
-        <article>
-          <h1 class="pl-title">{view.row.title}</h1>
-          {view.row.publishedAt ? (
-            <time datetime={view.row.publishedAt.toISOString()}>
-              {formatDate(view.row.publishedAt, readerLocale, { dateStyle: 'long' })}
-            </time>
-          ) : null}
-          <Fragment set:html={view.html} />
-        </article>
-      </main>
-    </Base>
+    <NotFound site={site} />
   )
 }

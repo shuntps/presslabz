@@ -1,0 +1,33 @@
+---
+import { THEME_INIT_SCRIPT } from '@presslabz/tokens/preferences'
+import '@presslabz/tokens/tokens.css'
+
+interface Props {
+  title: string
+  description?: string | undefined
+}
+
+const { title, description } = Astro.props
+
+/*
+ * The head every theme gets, so that three things are implemented once rather
+ * than per theme: the tokens the whole design system is built on, the viewport
+ * declaration that makes safe-area insets report anything, and the pre-paint
+ * theme script.
+ *
+ * That last one is the reason this component exists at all. Dark mode is a
+ * core feature, not a theme option; a theme that forgot the script would show
+ * every reader a flash of the wrong theme, and a theme that wrote its own
+ * would be the second implementation of the cookie contract. Neither is
+ * possible if the script is not the theme's to write.
+ *
+ * No maximum-scale and no user-scalable: pinch zoom is how a lot of people
+ * read, and removing it fails WCAG 1.4.4.
+ */
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>{title}</title>
+{description ? <meta name="description" content={description} /> : null}
+<script is:inline set:html={THEME_INIT_SCRIPT}></script>

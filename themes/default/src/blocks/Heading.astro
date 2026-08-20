@@ -1,0 +1,33 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+import Inline from '@presslabz/theme-kit/Inline.astro'
+
+const { block } = Astro.props as BlockProps
+
+/*
+ * The level comes from the document, never from the position on the page: an
+ * author who wrote an h3 gets an h3, because the outline is theirs. A theme
+ * that renumbered headings to suit its own hierarchy would be rewriting the
+ * document's structure for screen readers.
+ */
+const Tag = block.type === 'heading' ? (`h${block.level}` as const) : 'p'
+---
+
+{block.type === 'heading' ? <Tag><Inline content={block.content} /></Tag> : null}
+
+<style>
+  :is(h2, h3, h4, h5, h6) {
+    font-family: var(--pl-font-content);
+    line-height: var(--pl-line-tight);
+    margin-block: var(--pl-space-8) var(--pl-space-3);
+    max-width: var(--pl-measure);
+  }
+
+  h2 {
+    font-size: var(--pl-text-2xl);
+  }
+
+  h3 {
+    font-size: var(--pl-text-xl);
+  }
+</style>

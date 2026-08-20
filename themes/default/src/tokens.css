@@ -1,0 +1,20 @@
+/*
+ * What this theme changes about the design system, and nothing more.
+ *
+ * A theme overrides token *values*; it never reimplements theming. These two
+ * are dimensions, so they are the same number in either colour scheme and
+ * belong on :root alone.
+ *
+ * A colour is the other case, and it is the one with a rule: define it on bare
+ * :root, then redefine it under both `@media (prefers-color-scheme: dark)` and
+ * `:root[data-theme="dark"]`. Under only the media query it ignores a reader
+ * who explicitly asked for dark on a light system; under only the attribute it
+ * ignores the system. The theme's own test refuses either.
+ *
+ * The public site is a reading surface rather than a working one, so the
+ * measure is wider than the admin's and the page is narrower.
+ */
+:root {
+  --pl-measure: 72ch;
+  --pl-layout-max: 46rem;
+}

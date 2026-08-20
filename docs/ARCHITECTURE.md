@@ -69,8 +69,9 @@ packages/cache     tag collection and the page cache Valkey holds
 packages/tokens    design tokens — the only place colors and theming exist
 packages/ui        shared UI primitives, built on tokens
 packages/i18n      locale config, message catalogues, formatting
-packages/theme-kit theme contract
-themes/default
+packages/theme-kit the theme contract: typed views, defineTheme, the head and
+                   the block renderer no theme reimplements
+themes/default     the theme PressLabz ships with
 ```
 
 ## Data model
@@ -286,6 +287,20 @@ Consequence worth stating: the locale list is fixed when the site is built, beca
 **The routes come from the declared content types, not from the pages directory.** There is one catch-all under `[locale]`, and it resolves a path against the registry: a type's `basePath` is part of its declaration — `blog` for posts, the locale root for pages — so moving a type moves its URLs, and a type declared by a plugin is routable without a file being added. `basePath` has to be declared because the unique index is `(type, locale, slug)`: a post and a page may both be called `about`, and without a segment to tell them apart one of them is unreachable. Two types claiming one segment is refused by the registry, since which one wins would otherwise depend on plugin load order.
 
 **A document has one URL.** `trailingSlash` is `never`, and a nested page reached by any other path — its bare slug, or a wrong ancestor — is answered with a 301 to its canonical path rather than rendered there. The slug identifies the document and the path presents it; serving both would mean two things to index, two cache entries, and two purges to get right. A page number past the end of an archive, or one that is not a positive integer, is a 404 for the same reason: an archive that answers 200 for every number has an unbounded set of URLs that all say nothing.
+
+### The theme contract
+
+A theme is a workspace package under `themes/`, exporting `.astro` components. There is no build step: Astro publishes and consumes those files as they are, and each component's CSS is scoped automatically, so two themes cannot collide and a theme cannot leak a rule into the admin.
+
+**A theme is handed values, never the means to compute them.** Every template receives a typed view the site resolved first — no database handle, no locale prefixing rule, no `basePath`. That is not politeness: it is what makes the data a theme needs listable, which is the prerequisite for the permission manifest, and it is why changing where a content type lives moves every link on the site without a theme being touched. Navigation and pagination arrive as links, already built.
+
+**Blocks are the theme's to style and not to widen.** It supplies a component per block type, all of them optional, and anything it leaves out falls back to the whitelist renderer in `packages/blocks` — per block, so a theme that styles quotes and nothing else gets its quotes and the reference rendering for the rest. Marked-up text goes through `Inline.astro`, which is the whitelist itself: a theme decides how a link looks, never what a link may be. A theme is first-party code in this phase and could still reach for `set:html`; confining that is what the phase 5 sandbox is for.
+
+`ThemeHead.astro` is the other thing a theme does not write. It carries the tokens, the viewport declaration and the pre-paint theme script, so dark mode stays implemented exactly once — a theme that forgot the script would flash the wrong theme at every reader, and one that wrote its own would be a second implementation of the cookie contract.
+
+**A theme is selected by a static import, and changing it means building again.** That is not a limitation of the resolver but of what Astro components are: a `.astro` file goes through the compiler, so nothing can load a theme's source at runtime. Installing and activating a theme the way WordPress does would require themes to ship compiled — a distribution question that belongs with the signed registry rather than here. What the seam buys is that `apps/web/src/theme.ts` is the only module naming a theme.
+
+The rules a theme must keep are asserted rather than described: no colour literals, no `max-width` query, breakpoints from the registry, and colour overrides paired across both schemes. That last check lives in `packages/tokens` and runs against the core palette too, because the rule it enforces — never define a colour only inside a media query or a `[data-theme]` block — is what makes an explicit choice win in both directions.
 
 ### The page cache
 

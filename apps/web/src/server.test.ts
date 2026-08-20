@@ -211,7 +211,13 @@ describe.skipIf(!ready)('the public site', () => {
 
       expect(response.status).toBe(200)
       expect(html).toContain('Hello world')
-      expect(html).toContain('<p>Fixture body</p>')
+      /*
+       * A paragraph, not an exact string of markup: the theme owns what a
+       * block looks like and adds its own scoping attributes. What the site
+       * guarantees is that the document's text reaches the page as the block
+       * it was written as.
+       */
+      expect(html).toMatch(/<p[^>]*>Fixture body<\/p>/)
     })
 
     it('withholds a draft', async () => {

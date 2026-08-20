@@ -1,4 +1,4 @@
-import { renderBlocksToHtml } from '@presslabz/blocks'
+import type { ResolvedMedia } from '@presslabz/blocks'
 import {
   collectTags,
   contentListTag,
@@ -101,19 +101,29 @@ export async function loadAncestry(
 }
 
 /**
- * The document's blocks as HTML, with its images resolved.
+ * Every asset a document's blocks reference, resolved once.
  *
- * The reference renderer in packages/blocks, not a copy: it is the whitelist,
- * so the markup a document can produce is decided in exactly one place. Themes
- * replace it per block type in phase 3's next step; what they cannot do is
- * widen what a block may emit.
+ * Resolved here rather than by the theme, because a theme that could turn a
+ * media id into a URL is a theme that has to know where media lives — and
+ * because the tags below are what make an alt-text edit reach the pages that
+ * display the image. Rendering is the theme's; knowing what to render is not.
  */
-export async function renderDocument(row: ContentRow, locale: Locale): Promise<string> {
+export async function loadMedia(
+  row: ContentRow,
+  locale: Locale,
+): Promise<ReadonlyMap<string, ResolvedMedia>> {
   const ids = mediaIdsIn(row.blocks)
-  if (ids.length === 0) return renderBlocksToHtml(row.blocks)
+  if (ids.length === 0) return new Map()
 
   const rows = await findMediaByIds(db, ids)
   for (const media of rows) collectTags(mediaTag(media.id))
 
-  return renderBlocksToHtml(row.blocks, { resolveMedia: mediaResolver(rows, locale) })
+  const resolve = mediaResolver(rows, locale)
+  const resolved = new Map<string, ResolvedMedia>()
+  for (const id of ids) {
+    const media = resolve(id)
+    if (media) resolved.set(id, media)
+  }
+
+  return resolved
 }

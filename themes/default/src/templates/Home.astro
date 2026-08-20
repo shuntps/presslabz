@@ -1,0 +1,21 @@
+---
+import type { HomeProps } from '@presslabz/theme-kit'
+import EntryList from './EntryList.astro'
+import Layout from './Layout.astro'
+
+const { site, archive } = Astro.props as HomeProps
+---
+
+<Layout site={site} title={site.siteName}>
+  <h1>{archive.title}</h1>
+  <EntryList site={site} entries={archive.entries} />
+</Layout>
+
+<style>
+  h1 {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-2xl);
+    line-height: var(--pl-line-tight);
+    margin: 0 0 var(--pl-section);
+  }
+</style>

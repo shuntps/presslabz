@@ -1,0 +1,31 @@
+{
+  "name": "@presslabz/theme-default",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "//": "The theme PressLabz ships with, and the reference for writing another one. It is an ordinary consumer of @presslabz/theme-kit with no privileged path into the site \u2014 the same reasoning as the built-in content types.",
+  "exports": {
+    ".": "./src/theme.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@presslabz/blocks": "workspace:*",
+    "@presslabz/i18n": "workspace:*",
+    "@presslabz/theme-kit": "workspace:*",
+    "@presslabz/tokens": "workspace:*"
+  },
+  "peerDependencies": {
+    "astro": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "astro": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@presslabz/tokens": "workspace:*"
+  }
+}

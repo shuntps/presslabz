@@ -1,0 +1,46 @@
+---
+import type { BlockProps } from '@presslabz/theme-kit'
+import Inline from '@presslabz/theme-kit/Inline.astro'
+
+const { block } = Astro.props as BlockProps
+---
+
+{
+  block.type === 'quote' ? (
+    <figure>
+      <blockquote>
+        <p><Inline content={block.content} /></p>
+      </blockquote>
+      {block.attribution ? <figcaption>{block.attribution}</figcaption> : null}
+    </figure>
+  ) : null
+}
+
+<style>
+  figure {
+    margin-block: var(--pl-space-8);
+    margin-inline: 0;
+    /* A mark in the margin, which is what the rubric colour is for. */
+    border-inline-start: 2px solid var(--pl-color-rubric);
+    padding-inline-start: var(--pl-space-6);
+  }
+
+  blockquote {
+    margin: 0;
+  }
+
+  blockquote p {
+    font-family: var(--pl-font-content);
+    font-size: var(--pl-text-xl);
+    line-height: var(--pl-line-normal);
+    margin: 0;
+    max-width: var(--pl-measure);
+  }
+
+  figcaption {
+    font-family: var(--pl-font-machine);
+    font-size: var(--pl-text-sm);
+    color: var(--pl-color-text-muted);
+    margin-block-start: var(--pl-space-2);
+  }
+</style>
