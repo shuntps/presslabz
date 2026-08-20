@@ -42,7 +42,9 @@ if (row && type && locale && row.locale !== locale) {
 }
 
 const view =
-  row && type && locale ? documentView(row, type, [row.slug], await loadMedia(row, locale)) : null
+  row && type && locale
+    ? await documentView(row, type, [row.slug], await loadMedia(row, locale))
+    : null
 
 if (!view) Astro.response.status = 404
 

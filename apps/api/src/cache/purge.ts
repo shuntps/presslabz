@@ -1,85 +1,14 @@
-import {
-  contentListTag,
-  contentTag,
-  createNullPageCache,
-  createPageCache,
-  mediaTag,
-  type PageCache,
-  translationGroupTag,
-} from '@presslabz/cache'
-import type { FastifyBaseLogger } from 'fastify'
+import { createNullPageCache, createPageCache, type PageCache } from '@presslabz/cache'
 import type { Valkey } from 'iovalkey'
 
 /**
- * The other half of invalidation: the site collects tags while it renders,
- * and this purges them when a document changes.
+ * Where the API reaches the page cache the public site fills.
  *
- * It lives in the API because the API is where a change is known. Astro's
- * `cache.invalidate()` runs inside the rendering process, which never hears
- * about a publish — that asymmetry is the reason the entries live in Valkey
- * rather than in the site's memory.
- *
- * A purge that fails must not fail the write. By the time it runs the document
- * is already saved, and answering 500 would tell the author their work was
- * lost when it was not; the ttl on every entry is the backstop, and the log
- * line is how an operator learns the backstop is what is holding the site
- * together.
+ * What it does with it is not decided here any more: purging is a first-party
+ * module registered on the hook API, in packages/modules. This file only
+ * builds the handle, because building it needs configuration and a module
+ * takes only what it is given.
  */
-
-export interface ContentChange {
-  readonly id: string
-  readonly type: string
-  readonly locale: string
-  readonly translationGroupId: string
-}
-
-export interface Purger {
-  content(change: ContentChange): Promise<void>
-  media(mediaId: string): Promise<void>
-}
-
-export interface PurgerOptions {
-  readonly cache: PageCache
-  readonly logger: FastifyBaseLogger
-}
-
-export function createPurger(options: PurgerOptions): Purger {
-  const { cache, logger } = options
-
-  const purge = async (tags: readonly string[], what: string): Promise<void> => {
-    try {
-      const removed = await cache.purgeTags(tags)
-      logger.debug({ tags, removed }, 'purged the page cache')
-    } catch (error) {
-      logger.error({ err: error, tags, what }, 'could not purge the page cache')
-    }
-  }
-
-  return {
-    async content(change) {
-      /*
-       * Three tags, because publishing changes three things. The document's
-       * own page. Every listing of its type in its language — including the
-       * pages of an archive that do not contain it, since it pushed one entry
-       * off the end of each. And its translation group, because the other
-       * languages announce this one in hreflang and offer it in the switcher.
-       */
-      await purge(
-        [
-          contentTag(change.id),
-          contentListTag(change.type, change.locale),
-          translationGroupTag(change.translationGroupId),
-        ],
-        `content ${change.id}`,
-      )
-    },
-
-    async media(mediaId) {
-      // Alt text is part of every page that displays the asset.
-      await purge([mediaTag(mediaId)], `media ${mediaId}`)
-    },
-  }
-}
 
 /**
  * The store this API purges, or a no-op when the installation has not said

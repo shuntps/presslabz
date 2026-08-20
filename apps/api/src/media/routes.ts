@@ -1,5 +1,6 @@
 import {
   type Actor,
+  type CoreHooks,
   canEditMedia,
   canPerformOnMedia,
   MEDIA_ACCESS,
@@ -21,7 +22,7 @@ import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
-import type { Purger } from '../cache/purge.ts'
+
 import {
   isAcceptedInputType,
   MAX_UPLOAD_BYTES,
@@ -34,7 +35,7 @@ import { deleteObjects, mediaUrl, putObject } from './storage.ts'
 
 interface MediaRoutesOptions {
   db: Database
-  purger: Purger
+  hooks: CoreHooks
 }
 
 /**
@@ -119,7 +120,7 @@ function serializeMedia(actor: Actor, row: MediaRow) {
   }
 }
 
-export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, { db, purger }) => {
+export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, { db, hooks }) => {
   app.get('/media', { onRequest: [requireMediaOperation('read')] }, async (request, reply) => {
     if (!request.user) return
     const actor = actorOf(request.user)
@@ -236,7 +237,11 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
 
       // Alt text is rendered into every page that shows the asset, so editing
       // it changes pages nothing else would have invalidated.
-      await purger.media(updated.id)
+      await hooks.emit(
+        'media:updated',
+        { id: updated.id, mimeType: updated.mimeType, uploadedById: updated.uploadedById },
+        { actorId: request.user.id },
+      )
       return reply.send({ media: serializeMedia(actor, updated) })
     } catch (error) {
       if (error instanceof MediaForbiddenError) {
@@ -257,7 +262,11 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
       if (!row) return reply.code(404).send({ error: 'not_found' })
 
       // Every page that rendered it now renders one image fewer.
-      await purger.media(row.id)
+      await hooks.emit(
+        'media:deleted',
+        { id: row.id, mimeType: row.mimeType, uploadedById: row.uploadedById },
+        { actorId: request.user?.id ?? null },
+      )
 
       /*
        * The row went first. An object with no row costs storage; a row with no

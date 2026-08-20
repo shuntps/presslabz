@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phases 0 to 3 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. An unpublished document opens through a signed, short-lived link.
+**Phases 0 to 4 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. An unpublished document opens through a signed, short-lived link. The extension API is exposed and validated: the cache invalidation the site depends on is itself a module registered on it, with no privileged path into the core.
 
 All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site: the suite starts what production starts and asks it questions over a socket.
 
@@ -63,6 +63,7 @@ apps/api           Fastify core
 apps/admin         React SPA (the wp-admin equivalent)
 apps/web           Astro public rendering, loads themes
 packages/core      domain: content model, hook API, capabilities
+packages/modules   first-party features, built on the public hook API
 packages/blocks    block schemas + whitelist renderers
 packages/db        Drizzle schema + migrations
 packages/cache     tag collection and the page cache Valkey holds
@@ -348,12 +349,36 @@ Biome reads only the frontmatter of an `.astro` file, so every import used solel
 
 ## Hook API
 
-Typed through a declaration map, so payload types are known at compile time:
+Two shapes, and the difference between them is the design. An **action** is told that something happened and can change nothing: it runs after the write has landed, its result is discarded, and its failure is reported rather than propagated. A **filter** is handed a value and returns one of the same type: it can change what the system produces, which is exactly why it may not change anything else.
 
 ```ts
-hooks.action('content:published', async (ctx, content) => { /* ... */ })
-hooks.filter('content:render', (blocks, ctx) => blocks)
+hooks.action('content:published', async (content, context) => { /* ... */ })
+hooks.filter('content:excerpt', (value) => ({ ...value, excerpt: derive(value.blocks) }))
 ```
+
+Typed through two declaration maps, so a payload's shape is known at compile time and a hook name that does not exist does not compile. The payloads are the smallest thing a handler could need rather than the row that happened to be in hand: a handler given the whole row would come to depend on columns that are nobody's business, and removing one would break plugins that had no reason to care. Nothing in a payload carries a database handle, a request, or a way back into the core — the manifest in phase 5 can only describe what a plugin needs if the code cannot quietly take more.
+
+Three rules, each of them a way somebody else's plugin system has taken a site down:
+
+**A handler cannot fail the operation.** By the time an action runs the document is saved, so a handler that throws has failed at its own job and not at the author's. A filter that throws keeps the value it was given, and one that returns nothing is reported rather than rendered — taking it at its word would replace a document with `undefined`.
+
+**A handler cannot hang the request.** Every one runs under a timeout, because a plugin awaiting a service that stopped answering would otherwise hold the response open for as long as the socket allows.
+
+**Order is decided, not discovered.** Priority first, registration second, so two plugins that filter the same value give the same answer on every installation rather than one that depends on load order. Actions start in that order but run concurrently: being told is independent of anybody else being told, and running them in sequence would make the slowest handler the cost of every write.
+
+`content:published` and `content:unpublished` exist beside `content:updated` because "did this just become visible" is the question almost every integration actually asks, and making each of them re-derive it from a status pair is how they all get it slightly differently. One write can be two events; which ones is decided in one function rather than per route.
+
+### First-party modules
+
+`packages/modules` holds features built **on** the API rather than beside it, which is the only way to know it is sufficient before phase 5 exposes it to code nobody here wrote. Two of them, one of each shape:
+
+**Cache invalidation** used to be called directly from the write routes. It now hears about writes exactly as a third-party plugin will, and purges the document's own page, every listing of its type in its language, and its translation group. If invalidation could not be expressed through actions, the API would be missing something — and that is much cheaper to discover here.
+
+**Automatic excerpts** give a document a summary when its author did not write one, through `content:excerpt`. It never overwrites one that exists: an author's own summary is what appears in a search result and in a feed, and a module that replaced it would be editing their work.
+
+A module is a name and a function that registers handlers, returning one that removes them. No lifecycle, no object the core keeps hold of — uninstalling is dropping its registrations.
+
+`content:blocks` is the one filter that reaches the page, so what comes back is validated against the block schema before it is rendered. A filter may decide how a document reads; it may never decide what a block is. When the result does not parse, the original blocks are rendered and the failure is logged: a broken extension costs its own feature, never the document.
 
 ## Roadmap
 

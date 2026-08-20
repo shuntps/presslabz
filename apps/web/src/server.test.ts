@@ -146,7 +146,13 @@ describe.skipIf(!ready)('the public site', () => {
       type: postType.name,
       locale: 'en',
       authorId: null,
-      state: state({ slug: 'hello-world', title: 'Hello world' }),
+      state: state({
+        slug: 'hello-world',
+        title: 'Hello world',
+        // An excerpt the author wrote, so the assertion that a module never
+        // overwrites one has something to be about.
+        excerpt: 'Written by the author, not derived.',
+      }),
     })
     helloId = english.id
 
@@ -201,6 +207,19 @@ describe.skipIf(!ready)('the public site', () => {
         slug: 'quiet',
         title: 'Kept out of results',
         meta: { seo: { noindex: true } },
+      }),
+    })
+
+    // No excerpt at all: what a first-party module is expected to supply.
+    await createContent(db, {
+      type: postType.name,
+      locale: 'en',
+      authorId: null,
+      state: state({
+        slug: 'no-summary',
+        title: 'No summary written',
+        excerpt: undefined,
+        blocks: blocks('The body has to stand in for the summary here.'),
       }),
     })
   }
@@ -506,6 +525,28 @@ describe.skipIf(!ready)('the public site', () => {
 
     it('still refuses the draft at its public address', async () => {
       expect((await get('/en/blog/a-draft')).status).toBe(404)
+    })
+  })
+
+  describe('extensions', () => {
+    /*
+     * Phase 4's other half. The excerpt below is written by no route and by no
+     * theme: a first-party module supplies it through the public filter API,
+     * which is how the API gets validated before anybody outside uses it.
+     */
+    it('lets a module supply what an author left out', async () => {
+      const html = await (await get('/en/blog')).text()
+
+      expect(html).toContain('The body has to stand in for the summary here.')
+    })
+
+    it('never lets it overwrite what an author did write', async () => {
+      const html = await (await get('/en/blog/hello-world')).text()
+
+      // The description is the author's sentence, not one derived from the
+      // body — which is what the module would have supplied had it been empty.
+      expect(html).toContain('content="Written by the author, not derived."')
+      expect(html).not.toContain('content="Fixture body"')
     })
   })
 

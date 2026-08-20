@@ -28,7 +28,7 @@ const archive = locale && type ? await loadArchive({ type, locale, page: 1 }) : 
 
 const view =
   archive && type && locale
-    ? archiveView({
+    ? await archiveView({
         locale,
         type,
         rows: archive.rows,

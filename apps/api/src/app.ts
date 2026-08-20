@@ -6,16 +6,18 @@ import rateLimit, { normalizeIP } from '@fastify/rate-limit'
 import { createBuiltinRegistry } from '@presslabz/core'
 import { createDb, deleteExpiredSessions } from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
+import type { Module } from '@presslabz/modules'
 import Fastify from 'fastify'
 import { Valkey } from 'iovalkey'
 import { startSessionSweep } from './auth/cleanup.ts'
 import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
-import { createApiPageCache, createPurger } from './cache/purge.ts'
+import { createApiPageCache } from './cache/purge.ts'
 import { contentRoutes } from './content/routes.ts'
 import { env } from './env.ts'
 import { createProbe } from './health/probe.ts'
 import { summarizeHealth } from './health/status.ts'
+import { createApiHooks } from './hooks.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
@@ -72,6 +74,12 @@ export interface BuildAppOptions {
    * lets a test observe a purge without inventing one.
    */
   readonly pageCacheNamespace?: string
+  /**
+   * Extra hook modules. A suite installs one to observe what the core
+   * announces, which is the only way to assert that it announces anything at
+   * all without reaching inside the routes.
+   */
+  readonly modules?: readonly Module[]
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -232,14 +240,14 @@ export async function buildApp(options: BuildAppOptions = {}) {
   // Declared in code, so the registry is built once at boot and passed in
   // rather than reached for from a module.
   /*
-   * The purge shares the health client. It runs after a write has already
+   * The cache shares the health client. Purging runs after a write has already
    * landed, so it is allowed to be slow and is not allowed to fail the
    * request; a dedicated connection would buy nothing and cost one more thing
    * to keep alive.
    */
   const pageCacheNamespace = options.pageCacheNamespace ?? env.PAGE_CACHE_NAMESPACE
 
-  const purger = createPurger({
+  const { hooks, uninstall } = createApiHooks({
     cache: createApiPageCache({
       client: valkey,
       ...(pageCacheNamespace === undefined ? {} : { namespace: pageCacheNamespace }),
@@ -248,11 +256,16 @@ export async function buildApp(options: BuildAppOptions = {}) {
         : { ttlSeconds: env.PAGE_CACHE_TTL_SECONDS }),
     }),
     logger: app.log,
+    ...(options.modules === undefined ? {} : { modules: options.modules }),
   })
 
-  await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), purger })
+  app.addHook('onClose', () => {
+    uninstall()
+  })
+
+  await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), hooks })
   await app.register(multipart)
-  await app.register(mediaRoutes, { db, purger })
+  await app.register(mediaRoutes, { db, hooks })
 
   /*
    * A fresh clone plus `pnpm services:up` should leave a working installation.

@@ -2,6 +2,7 @@ import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
 import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import type { Module } from '@presslabz/modules'
 import type { FastifyInstance } from 'fastify'
 import { Valkey } from 'iovalkey'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -35,6 +36,7 @@ describe.skipIf(!ready)('content routes', () => {
   let scratch: Awaited<ReturnType<typeof createScratchDatabase>>
   let namespace: string
   let cacheNamespace: string
+  const announced: { name: string; id: string }[] = []
   let cacheClient: Valkey
   let pageCache: PageCache
   let app: FastifyInstance
@@ -83,10 +85,38 @@ describe.skipIf(!ready)('content routes', () => {
     cacheClient.on('error', () => {})
     pageCache = createPageCache({ client: cacheClient, namespace: cacheNamespace })
 
+    /*
+     * A module that records what the core announced. It is registered the same
+     * way any plugin will be, which is the point: if the events could only be
+     * observed from inside the routes, the hook API would not be an API.
+     */
+    const recorder: Module = {
+      name: 'recorder',
+      register(hooks) {
+        const off = (
+          [
+            'content:created',
+            'content:updated',
+            'content:published',
+            'content:unpublished',
+            'content:deleted',
+          ] as const
+        ).map((name) =>
+          hooks.action(name, (payload) => {
+            announced.push({ name, id: (payload as { id: string }).id })
+          }),
+        )
+        return () => {
+          for (const remove of off) remove()
+        }
+      },
+    }
+
     app = await buildApp({
       databaseUrl: scratch.url,
       rateLimitNamespace: namespace,
       pageCacheNamespace: cacheNamespace,
+      modules: [recorder],
     })
     await app.ready()
 
@@ -769,6 +799,64 @@ describe.skipIf(!ready)('content routes', () => {
       })
 
       expect(response.statusCode).toBe(200)
+    })
+  })
+
+  describe('what a write announces', () => {
+    /*
+     * Phase 4's claim, asserted: a first-party feature hears about writes
+     * through the same API a third-party plugin will use, and the core
+     * announces enough for it to act on.
+     */
+    it('announces a creation, an edit and a deletion', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('announced-doc'))
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Renamed' })
+      await remove('editor', id)
+
+      expect(announced.filter((event) => event.id === id).map((event) => event.name)).toEqual([
+        'content:created',
+        'content:updated',
+        'content:deleted',
+      ])
+    })
+
+    /*
+     * "Did this just become visible" is the question every integration asks,
+     * and deriving it from a status pair in each of them is how they all get
+     * it slightly differently.
+     */
+    it('says when a document became public, and when it stopped', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('going-public'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { status: 'published' })
+      const afterPublish = announced.filter((event) => event.id === id).map((e) => e.name)
+
+      await patch('editor', id, { status: 'draft' })
+      const afterUnpublish = announced.filter((event) => event.id === id).map((e) => e.name)
+
+      expect(afterPublish).toContain('content:published')
+      expect(afterUnpublish).toContain('content:unpublished')
+      // An edit that publishes is both events, not one instead of the other.
+      expect(afterPublish.filter((name) => name === 'content:updated')).toHaveLength(1)
+    })
+
+    it('says nothing about a status that did not change', async () => {
+      announced.length = 0
+
+      const created = await post('editor', draft('quiet-edit'))
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Still a draft' })
+
+      const names = announced.filter((event) => event.id === id).map((event) => event.name)
+
+      expect(names).not.toContain('content:published')
+      expect(names).not.toContain('content:unpublished')
     })
   })
 })

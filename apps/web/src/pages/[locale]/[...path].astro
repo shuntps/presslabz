@@ -57,7 +57,7 @@ if (locale && route?.kind === 'archive') {
     archive && archive.page <= archive.pageCount
       ? {
           kind: 'archive',
-          archive: archiveView({
+          archive: await archiveView({
             locale,
             type: route.type,
             rows: archive.rows,
@@ -99,7 +99,7 @@ if (locale && route?.kind === 'document') {
 
       view = {
         kind: 'document',
-        document: documentView(row, route.type, path, await loadMedia(row, locale)),
+        document: await documentView(row, route.type, path, await loadMedia(row, locale)),
         head: documentHead({ locale, type: route.type, path, meta: row.meta, siblings }),
         translations: translationLinks(siblings, route.type, locale),
       }

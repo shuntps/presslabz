@@ -3,14 +3,17 @@ import {
   type AnyContentType,
   type ContentStatus,
   type ContentTypeRegistry,
+  type CoreHooks,
   canDelete,
   canJoinTranslationGroup,
   canPerform,
   canReadDocument,
   canWrite,
+  contentEventOf,
   isContentStatus,
   permissionsForCreation,
   permissionsForDocument,
+  transitionsFor,
 } from '@presslabz/core'
 import { previewPath, signPreviewToken } from '@presslabz/core/preview'
 import {
@@ -30,7 +33,7 @@ import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
-import type { Purger } from '../cache/purge.ts'
+
 import { env } from '../env.ts'
 
 /**
@@ -43,7 +46,7 @@ import { env } from '../env.ts'
 interface ContentRoutesOptions {
   db: Database
   registry: ContentTypeRegistry
-  purger: Purger
+  hooks: CoreHooks
 }
 
 /**
@@ -171,7 +174,7 @@ function actorOf(user: AuthenticatedUser) {
 
 export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
   app,
-  { db, registry, purger },
+  { db, registry, hooks },
 ) => {
   /** What content types exist, so the admin builds its navigation from truth. */
   app.get('/content-types', { onRequest: [app.requireAuth] }, async (request, reply) => {
@@ -406,7 +409,11 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
             },
       )
 
-      await purger.content(row)
+      await hooks.emit('content:created', contentEventOf(row), {
+        locale: row.locale,
+        actorId: request.user.id,
+      })
+
       return reply.code(201).send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -429,6 +436,15 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     const actor = actorOf(request.user)
     const now = new Date()
 
+    /*
+     * Captured inside the transaction, from the locked row, because the
+     * authorizer is the only place that sees the document as it was. Reading
+     * it before the call would report a status another write may already have
+     * moved, and "did this just become public" would be answered about the
+     * wrong version.
+     */
+    let previousStatus: ContentStatus | undefined
+
     try {
       const row = await updateContent(
         db,
@@ -444,23 +460,37 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
            * the gap between the read and the write is exactly where a publish
            * slips past content:publish.
            */
-          authorize: (current, next) =>
-            current.type === type.name &&
-            canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
-              authorId: current.authorId,
-            }),
+          authorize: (current, next) => {
+            previousStatus = current.status
+            return (
+              current.type === type.name &&
+              canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
+                authorId: current.authorId,
+              })
+            )
+          },
         },
       )
 
       if (!row) return reply.code(404).send({ error: 'not_found' })
 
       /*
-       * After the write, and whatever the write was. An edit to a draft purges
-       * nothing that was cached — a draft has no public page — and asking
-       * whether it might have is a second implementation of "what is public"
-       * living in the route that can least afford one.
+       * After the write, and whatever the write was. Announcing an edit to a
+       * draft costs a handler nothing to ignore, and asking here whether it
+       * "mattered" would put a second implementation of what is public in the
+       * route that can least afford one.
+       *
+       * An edit that also publishes is two events, decided by transitionsFor
+       * so that every caller means the same thing by "published".
        */
-      await purger.content(row)
+      const context = { locale: row.locale, actorId: request.user.id }
+      for (const announcement of transitionsFor(
+        previousStatus ?? row.status,
+        contentEventOf(row),
+      )) {
+        await hooks.emit(announcement.name, announcement.payload, context)
+      }
+
       return reply.send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -492,10 +522,14 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
 
       if (!deleted) return reply.code(404).send({ error: 'not_found' })
 
-      // The row that was deleted, which is the only version that can say what
-      // to purge: the document is gone, and reading it before the lock would
-      // have described a version this transaction may have replaced.
-      await purger.content(deleted)
+      // The row that was deleted, which is the only version that can describe
+      // what is gone: reading it before the lock would have described a
+      // version this transaction may have replaced.
+      await hooks.emit('content:deleted', contentEventOf(deleted), {
+        locale: deleted.locale,
+        actorId: request.user.id,
+      })
+
       return reply.code(204).send()
     } catch (error) {
       return replyForWriteError(error, reply)

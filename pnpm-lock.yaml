@@ -231,6 +231,9 @@ importers:
       '@presslabz/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@presslabz/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
       '@presslabz/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
@@ -280,6 +283,9 @@ importers:
       '@presslabz/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@presslabz/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
       '@presslabz/theme-default':
         specifier: workspace:*
         version: link:../../themes/default
@@ -395,6 +401,28 @@ importers:
         version: 4.1.10(@types/node@26.2.0)(jsdom@30.0.1)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/i18n:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.2.0)(jsdom@30.0.1)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/modules:
+    dependencies:
+      '@presslabz/blocks':
+        specifier: workspace:*
+        version: link:../blocks
+      '@presslabz/cache':
+        specifier: workspace:*
+        version: link:../cache
+      '@presslabz/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

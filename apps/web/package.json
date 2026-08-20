@@ -19,6 +19,7 @@
     "@presslabz/core": "workspace:*",
     "@presslabz/db": "workspace:*",
     "@presslabz/i18n": "workspace:*",
+    "@presslabz/modules": "workspace:*",
     "@presslabz/theme-default": "workspace:*",
     "@presslabz/theme-kit": "workspace:*",
     "@presslabz/tokens": "workspace:*",
