@@ -4,7 +4,11 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phase 2 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme. The content model, the block vocabulary, the media pipeline and the translation grouping are verified end to end against a real database and a real object store. There is no public rendering yet; that is phase 3. Everything below is settled, not proposed.
+**Phases 0 to 2 landed, and phase 3 is under way.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, at a prefixed locale URL, rendered from its blocks. All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site, which is tested by starting what production starts and asking it questions over a socket.
+
+What phase 3 still owes: the theme contract and the default theme, so the site's appearance stops being the plain built-in layout; the page cache actually wired to responses and purged by the API when content changes; `hreflang`, the language switcher and the canonical metadata; the sitemap, `robots.txt` and the feeds; and preview of unpublished documents.
+
+Everything below is settled, not proposed.
 
 PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
 

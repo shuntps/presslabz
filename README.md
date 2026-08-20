@@ -2,7 +2,7 @@
 
 A modern alternative to WordPress — secure and fast by construction, familiar by design.
 
-> **Status: pre-alpha.** You can sign in to the admin, in English or French, in light or dark mode, with roles and capabilities enforced. There is no content model and no public site yet, so there is still nothing to run a website on.
+> **Status: pre-alpha.** You can sign in, write a document out of typed blocks, upload an image into it, publish it and write its translation — and read the result on the public site, in English or French, in light or dark mode. What is missing before it can run a real website is the theme layer: the site renders through a deliberately plain built-in layout, and there is no way yet to change how it looks.
 
 The full architecture — conventions, data model, hook API, roadmap — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -47,14 +47,14 @@ Deployment targets self-hosted single-site installations on Node and Docker.
 
 ## Roadmap
 
-| Phase | Scope |
-|---|---|
-| 0 | Monorepo, local services, database schema, design tokens, i18n foundation, CI |
-| 1 | Authentication, users, roles and capabilities, admin shell |
-| 2 | Content model, block editor, media library, translation linking |
-| 3 | Public rendering, theme contract, tag-based cache, language switching |
-| 4 | Public hook API, first-party modules built on it |
-| 5 | Plugin sandbox, permission manifests, signed registry |
+| Phase | Scope | State |
+|---|---|---|
+| 0 | Monorepo, local services, database schema, design tokens, i18n foundation, CI | Done |
+| 1 | Authentication, users, roles and capabilities, admin shell | Done |
+| 2 | Content model, block editor, media library, translation linking | Done |
+| 3 | Public rendering, theme contract, tag-based cache, language switching | Under way — the site renders in both languages; the theme contract, the cache wiring and the language switcher are not built |
+| 4 | Public hook API, first-party modules built on it | Planned |
+| 5 | Plugin sandbox, permission manifests, signed registry | Planned |
 
 ## Development
 
@@ -66,24 +66,21 @@ pnpm install
 pnpm services:up      # Postgres, Valkey, MinIO
 pnpm db:migrate
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
-pnpm dev              # API on :3000, admin on :5173
+pnpm seed:demo        # optional: fixture content, so the public site has something to show
+pnpm dev              # API on :3000, admin on :5173, public site on :4321
 ```
 
 Full command reference in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#commands).
 
 ## Contributing
 
-The architecture is settled but the implementation has not started, so the most useful contribution right now is discussion — open an issue if you disagree with one of the principles above. Please note the licence before contributing.
+The architecture is settled and the implementation is under way, so the most useful contribution is still discussion — open an issue if you disagree with one of the principles above, or if something in `docs/ARCHITECTURE.md` does not match what the code does. Please note the licence before contributing.
 
 ## Contact
 
 General enquiries: contact@presslabz.com
 
 Security issues should be reported privately to that address rather than opened as a public issue.
-
-## Trademarks
-
-WordPress is a registered trademark of the WordPress Foundation. PressLabz is an independent project, not affiliated with, endorsed by, or sponsored by the WordPress Foundation or Automattic Inc. References to WordPress here are descriptive and comparative, made to explain design decisions.
 
 ## Licence
 
