@@ -845,6 +845,57 @@ button.quiet:hover:not(:disabled) {
   color: var(--pl-color-rubric);
 }
 
+/*
+ * The end of a page, which is a place and not an edge.
+ *
+ * A button rather than a scroll listener: everything below the rows — the
+ * count of translation gaps, the totals — belongs to the listing, and infinite
+ * scrolling takes it away with no way back to it. The count beside the button
+ * says how much of the set is on screen, so pressing it is a decision rather
+ * than a reflex.
+ */
+.list-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-3);
+  align-items: center;
+  padding: var(--pl-space-3);
+  border-top: var(--pl-border-width) solid var(--pl-color-border);
+}
+
+.list-more button {
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg-subtle);
+  color: var(--pl-color-text);
+  font-size: var(--pl-text-sm);
+  cursor: pointer;
+}
+
+.list-more button:hover:not(:disabled) {
+  border-color: var(--pl-color-accent);
+}
+
+.list-more button:disabled {
+  cursor: progress;
+  color: var(--pl-color-text-faint);
+}
+
+.list-more .data {
+  color: var(--pl-color-text-faint);
+  font-size: var(--pl-text-xs);
+}
+
+/* The same control inside the picker, which has its own dark surface. */
+.picker-more {
+  display: block;
+  margin: var(--pl-space-3) auto 0;
+  min-height: var(--pl-tap-target);
+  padding: var(--pl-space-2) var(--pl-space-3);
+}
+
 /* ── The editor ─────────────────────────────────────────────────────────── */
 
 /*

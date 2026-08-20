@@ -3,6 +3,8 @@ import {
   canPerformOnMedia,
   capabilitiesFor,
   MEDIA_OPERATIONS,
+  type MediaPage,
+  mediaPageSchema,
   type Role,
 } from '@presslabz/core'
 import {
@@ -201,6 +203,20 @@ describe.skipIf(!ready)('media routes', () => {
   }
 
   const library = async (role: string) => app.inject({ url: '/media', cookies: as(role) })
+
+  /**
+   * The library, parsed with the contract the admin parses it with, so a field
+   * this route stops sending fails here rather than in the picker.
+   */
+  async function page(role: string, query: { limit?: number; cursor?: string } = {}) {
+    const search = new URLSearchParams()
+    if (query.limit !== undefined) search.set('limit', String(query.limit))
+    if (query.cursor !== undefined) search.set('cursor', query.cursor)
+
+    const response = await app.inject({ url: `/media?${search.toString()}`, cookies: as(role) })
+    expect(response.statusCode, `library for ${role}`).toBe(200)
+    return mediaPageSchema.parse(response.json())
+  }
 
   it('re-encodes an upload into the formats it serves', async () => {
     const response = await upload(await samplePng(), 'photo.png', 'image/png')
@@ -774,6 +790,79 @@ describe.skipIf(!ready)('media routes', () => {
       // And this suite still owns the bytes.
       await storage.deleteObjects(storageKeysOf(row as MediaRow))
       for (const key of storageKeysOf(row as MediaRow)) await forgetOrphan(db, key)
+    })
+  })
+
+  describe('the library arrives one page at a time', () => {
+    /*
+     * Before this, the picker asked for everything and the repository capped
+     * it at sixty rows with no way to ask for the rest: the sixty-first upload
+     * was in the bucket, in the database, and unreachable from the interface
+     * that put it there.
+     */
+    it('walks the whole library without repeating or losing an asset', async () => {
+      for (let index = 0; index < 5; index += 1) {
+        expect((await upload(await samplePng(), `page-${index}.png`, 'image/png')).statusCode).toBe(
+          201,
+        )
+      }
+
+      const expected = (await page('administrator', { limit: 100 })).media.map((row) => row.id)
+      expect(expected.length).toBeGreaterThanOrEqual(5)
+
+      const seen: string[] = []
+      let cursor: string | null = null
+      let pages = 0
+
+      do {
+        const current: MediaPage = await page('administrator', {
+          limit: 2,
+          ...(cursor ? { cursor } : {}),
+        })
+        seen.push(...current.media.map((row) => row.id))
+        cursor = current.nextCursor
+        pages += 1
+      } while (cursor && pages < 20)
+
+      expect(seen).toEqual(expected)
+      expect(new Set(seen).size).toBe(seen.length)
+    })
+
+    it('says there is nothing after the last page', async () => {
+      await upload(await samplePng(), 'last.png', 'image/png')
+      expect((await page('administrator', { limit: 100 })).nextCursor).toBeNull()
+    })
+
+    /*
+     * An upload landing while the picker is open shifts every offset by one.
+     * Against a fixed row, the page after it is the same page whatever
+     * arrived in the meantime.
+     */
+    it('does not repeat an asset when one is uploaded between two pages', async () => {
+      for (let index = 0; index < 4; index += 1) {
+        await upload(await samplePng(), `between-${index}.png`, 'image/png')
+      }
+
+      const first = await page('administrator', { limit: 2 })
+      await upload(await samplePng(), 'arrived-late.png', 'image/png')
+
+      const second = await page('administrator', {
+        limit: 2,
+        cursor: first.nextCursor as string,
+      })
+
+      const firstIds = first.media.map((row) => row.id)
+      expect(second.media.map((row) => row.id).filter((id) => firstIds.includes(id))).toEqual([])
+    })
+
+    it('refuses a cursor it did not issue', async () => {
+      const response = await app.inject({
+        url: '/media?cursor=not-a-cursor',
+        cookies: as('administrator'),
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json().reason).toBe('bad-cursor')
     })
   })
 })

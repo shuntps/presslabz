@@ -1,3 +1,4 @@
+import { type Cursor, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '@presslabz/core'
 import { asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contents } from '../schema/contents.ts'
@@ -45,8 +46,31 @@ export async function createMedia(db: Database, input: CreateMediaInput): Promis
   return created
 }
 
-export async function listMedia(db: Database, limit = 60, offset = 0): Promise<MediaRow[]> {
-  return db.select().from(media).orderBy(desc(media.createdAt)).limit(limit).offset(offset)
+export interface ListMediaQuery {
+  readonly limit?: number
+  /** Where the previous page stopped; rows strictly after it are returned. */
+  readonly after?: Cursor
+}
+
+/**
+ * The library, newest first, one page at a time.
+ *
+ * Keyset rather than offset for the same reason the content listing uses one:
+ * an upload landing while the picker is open shifts every offset by one, so
+ * the reader scrolling to "load more" would be shown a row they have already
+ * seen and never shown the one it displaced.
+ */
+export async function listMedia(db: Database, query: ListMediaQuery = {}): Promise<MediaRow[]> {
+  const where = query.after
+    ? sql`(${media.createdAt}, ${media.id}) < (${query.after.at.toISOString()}::timestamptz, ${query.after.id}::uuid)`
+    : undefined
+
+  return db
+    .select()
+    .from(media)
+    .where(where)
+    .orderBy(desc(media.createdAt), desc(media.id))
+    .limit(Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(query.limit ?? DEFAULT_PAGE_SIZE))))
 }
 
 export async function findMediaById(db: Database, id: string): Promise<MediaRow | null> {

@@ -1,4 +1,5 @@
 import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
+import { type ContentPage, contentPageSchema } from '@presslabz/core'
 import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
@@ -153,6 +154,35 @@ describe.skipIf(!ready)('content routes', () => {
     if (response.statusCode === 201) created.push(response.json().content.id)
     return response
   }
+
+  /**
+   * A listing, parsed with the contract the admin parses it with.
+   *
+   * Not `response.json()` and a cast: the schema in `packages/core` is what
+   * both sides face, so a field this route stops sending, or sends in another
+   * shape, fails here rather than three components deep in the interface. It
+   * also asserts the status first — a body read without checking the status is
+   * how a suite stays green while a route answers 500.
+   */
+  async function list(
+    role: string,
+    locale: string,
+    query: { limit?: number; cursor?: string } = {},
+  ): Promise<ContentPage> {
+    const search = new URLSearchParams({ locale })
+    if (query.limit !== undefined) search.set('limit', String(query.limit))
+    if (query.cursor !== undefined) search.set('cursor', query.cursor)
+
+    const response = await app.inject({
+      url: `/content/post?${search.toString()}`,
+      cookies: as(role),
+    })
+
+    expect(response.statusCode, `listing for ${role}/${locale}`).toBe(200)
+    return contentPageSchema.parse(response.json())
+  }
+
+  const idsOf = (page: ContentPage) => page.groups.map((group) => group.primary.id)
 
   /**
    * Reads the document's current version and sends it back with the patch.
@@ -463,13 +493,11 @@ describe.skipIf(!ready)('content routes', () => {
 
     it('shows one language at a time', async () => {
       await post('editor', draft('fr-one'))
-      const french = await app.inject({ url: '/content/post?locale=fr', cookies: as('editor') })
-      const english = await app.inject({ url: '/content/post?locale=en', cookies: as('editor') })
+      const french = await list('editor', 'fr')
+      const english = await list('editor', 'en')
 
-      expect(french.json().contents.length).toBeGreaterThan(0)
-      expect(english.json().contents.every((row: { locale: string }) => row.locale === 'en')).toBe(
-        true,
-      )
+      expect(french.groups.length).toBeGreaterThan(0)
+      expect(english.groups.every((group) => group.primary.locale === 'en')).toBe(true)
     })
 
     it('keeps another author’s draft out of a contributor’s list', async () => {
@@ -478,12 +506,161 @@ describe.skipIf(!ready)('content routes', () => {
       const created = await post('editor', draft('hidden'))
       const hiddenId = created.json().content.id
 
-      const list = await app.inject({ url: '/content/post?locale=fr', cookies: as('contributor') })
-      const visible = list.json().contents.map((row: { id: string }) => row.id)
-      expect(visible).not.toContain(hiddenId)
+      expect(idsOf(await list('contributor', 'fr'))).not.toContain(hiddenId)
+      expect(idsOf(await list('editor', 'fr'))).toContain(hiddenId)
+    })
 
-      const editorList = await app.inject({ url: '/content/post?locale=fr', cookies: as('editor') })
-      expect(editorList.json().contents.map((row: { id: string }) => row.id)).toContain(hiddenId)
+    /*
+     * The listing is a page, and the pair is what it pages over. Two
+     * independently paginated listings cannot be zipped together in the
+     * browser: the second page of one language has no reason to hold the
+     * partners of the second page of the other.
+     */
+    it('carries the other languages of the documents on the page', async () => {
+      const french = await post('editor', { ...draft('paired'), status: 'published' })
+      const id = french.json().content.id
+      const group = french.json().content.translationGroupId
+
+      const english = await post('editor', {
+        ...draft('paired-en'),
+        locale: 'en',
+        status: 'published',
+        translationGroupId: group,
+      })
+      expect(english.statusCode).toBe(201)
+
+      const page = await list('editor', 'fr')
+      const found = page.groups.find((candidate) => candidate.primary.id === id)
+
+      expect(found?.siblings.en?.id).toBe(english.json().content.id)
+      // The pair is one row, so the sibling is not also a row of its own.
+      expect(
+        page.groups.filter((candidate) => candidate.translationGroupId === group),
+      ).toHaveLength(1)
+    })
+
+    it('does not hand out a sibling the reader could not open directly', async () => {
+      // The same disclosure the translations endpoint used to make, on the
+      // other route: a draft in another language reaching a listing as
+      // somebody else's sibling, blocks included.
+      const anchor = await post('editor', { ...draft('visible-anchor'), status: 'published' })
+      const group = anchor.json().content.translationGroupId
+
+      await post('editor', {
+        ...draft('secret-sibling'),
+        locale: 'en',
+        translationGroupId: group,
+      })
+
+      const page = await list('subscriber', 'fr')
+      const found = page.groups.find((candidate) => candidate.translationGroupId === group)
+
+      expect(found).toBeDefined()
+      expect(found?.siblings.en).toBeUndefined()
+    })
+
+    describe('paging', () => {
+      /** Five documents, so a page of two is genuinely three pages. */
+      async function fill(count = 5) {
+        for (let index = 0; index < count; index += 1) {
+          const response = await post('editor', {
+            ...draft(`page-${index}`),
+            // Half published, half left as drafts, so the counts differ.
+            ...(index % 2 === 0
+              ? { status: 'published', publishedAt: '2026-01-01T00:00:00Z' }
+              : {}),
+          })
+          expect(response.statusCode).toBe(201)
+        }
+      }
+
+      /*
+       * The whole set, not the page. A count of the rows in hand would make
+       * the heading say "so far", which is a different and useless statement.
+       */
+      it('counts the set the page comes from', async () => {
+        await fill()
+
+        const page = await list('editor', 'fr', { limit: 1 })
+
+        expect(page.groups).toHaveLength(1)
+        expect(page.total).toBe(5)
+        expect(page.drafts).toBe(2)
+      })
+
+      it('walks the whole listing without repeating or losing a row', async () => {
+        await fill()
+        const expected = idsOf(await list('editor', 'fr', { limit: 100 }))
+        expect(expected).toHaveLength(5)
+
+        const seen: string[] = []
+        let cursor: string | null = null
+        let pages = 0
+
+        do {
+          const page: ContentPage = await list('editor', 'fr', {
+            limit: 2,
+            ...(cursor ? { cursor } : {}),
+          })
+          seen.push(...idsOf(page))
+          cursor = page.nextCursor
+          pages += 1
+        } while (cursor && pages < 20)
+
+        expect(seen).toEqual(expected)
+        expect(new Set(seen).size).toBe(seen.length)
+      })
+
+      it('says there is nothing after the last page', async () => {
+        await fill(2)
+        expect((await list('editor', 'fr', { limit: 100 })).nextCursor).toBeNull()
+      })
+
+      /*
+       * The reason this is keyset and not offset. With an offset, a document
+       * saved between two requests moves to the front of a listing sorted by
+       * modification time and pushes a row across the boundary: the reader is
+       * shown it twice, or never shown it at all.
+       */
+      it('does not repeat a row when a document is saved between two pages', async () => {
+        await fill()
+        const first = await list('editor', 'fr', { limit: 2 })
+        const firstIds = idsOf(first)
+
+        // The oldest document in the listing jumps to the front.
+        const all = await list('editor', 'fr', { limit: 100 })
+        const oldest = all.groups.at(-1)?.primary
+        expect(oldest).toBeDefined()
+        expect((await patch('editor', oldest?.id as string, { title: 'Touché' })).statusCode).toBe(
+          200,
+        )
+
+        const second = await list('editor', 'fr', {
+          limit: 2,
+          cursor: first.nextCursor as string,
+        })
+
+        expect(idsOf(second).filter((id) => firstIds.includes(id))).toEqual([])
+      })
+
+      it('refuses a cursor it did not issue rather than starting over', async () => {
+        const response = await app.inject({
+          url: '/content/post?locale=fr&cursor=not-a-cursor',
+          cookies: as('editor'),
+        })
+
+        expect(response.statusCode).toBe(400)
+        expect(response.json().reason).toBe('bad-cursor')
+      })
+
+      it('refuses a page size nobody could want', async () => {
+        const response = await app.inject({
+          url: '/content/post?locale=fr&limit=100000',
+          cookies: as('editor'),
+        })
+
+        expect(response.statusCode).toBe(400)
+      })
     })
   })
 

@@ -26,7 +26,12 @@ export const media = pgTable(
     uploadedById: uuid().references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
-  (t) => [index('media_created_idx').on(t.createdAt)],
+  /*
+   * The id is in the index because it is in the sort: the library pages by
+   * keyset, and two uploads in the same millisecond need a tiebreak that the
+   * index can answer rather than one the planner has to sort for.
+   */
+  (t) => [index('media_created_idx').on(t.createdAt.desc().nullsFirst(), t.id.desc().nullsFirst())],
 )
 
 /**

@@ -4,13 +4,18 @@ import {
   type ContentStatus,
   type ContentTypeRegistry,
   type CoreHooks,
+  type Cursor,
   canDelete,
   canJoinTranslationGroup,
   canPerform,
   canReadDocument,
   canWrite,
   contentEventOf,
+  DEFAULT_PAGE_SIZE,
+  decodeCursor,
+  encodeCursor,
   isContentStatus,
+  MAX_PAGE_SIZE,
   permissionsForCreation,
   permissionsForDocument,
   transitionsFor,
@@ -22,6 +27,7 @@ import {
   ContentForbiddenError,
   type ContentRow,
   type ContentState,
+  countContents,
   createContent,
   type Database,
   deleteContent,
@@ -29,6 +35,7 @@ import {
   findRevision,
   listContents,
   listRevisions,
+  listSiblingsAcrossLocales,
   listTranslations,
   stateOfRevision,
   updateContent,
@@ -68,8 +75,15 @@ const listQuery = z.object({
     .refine((value) => value === undefined || value.every(isContentStatus), {
       message: 'Unknown status',
     }),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-  offset: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+  /*
+   * Opaque, and handed back unchanged. `offset` is gone rather than kept as an
+   * alternative: this listing is sorted by modification time, so a colleague
+   * saving a document while somebody reads it shifts every offset by one — the
+   * reader is shown a row twice, or never shown it at all. Two ways of asking
+   * would also mean two query plans to keep honest.
+   */
+  cursor: z.string().min(1).max(512).optional(),
 })
 
 const idParams = z.object({ id: z.uuid() })
@@ -241,16 +255,75 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
      */
     const seesEverything = canPerform(type, 'update', actor, { authorId: null })
 
-    const rows = await listContents(db, {
+    let after: Cursor | undefined
+    if (parsed.data.cursor !== undefined) {
+      const cursor = decodeCursor(parsed.data.cursor)
+      /*
+       * Refused rather than repaired. Falling back to the first page would
+       * show somebody the top of the list while they were pressing "load
+       * more", which reads as the list having changed under them.
+       */
+      if (!cursor) return reply.code(400).send({ error: 'invalid_request', reason: 'bad-cursor' })
+      after = cursor
+    }
+
+    const query = {
       type: type.name,
       locale: parsed.data.locale,
       ...(parsed.data.status ? { statuses: parsed.data.status as ContentStatus[] } : {}),
       ...(seesEverything ? {} : { visibleTo: { authorId: request.user.id } }),
-      ...(parsed.data.limit !== undefined ? { limit: parsed.data.limit } : {}),
-      ...(parsed.data.offset !== undefined ? { offset: parsed.data.offset } : {}),
+    }
+
+    /*
+     * One more row than asked for, which is how the answer knows whether there
+     * is another page without counting the whole set again. The extra row is
+     * dropped; the last kept row is what the next cursor names.
+     */
+    const rows = await listContents(db, {
+      ...query,
+      limit: parsed.data.limit + 1,
+      ...(after ? { after } : {}),
     })
 
-    return reply.send({ contents: rows.map((row) => serializeContent(type, actor, row)) })
+    const page = rows.slice(0, parsed.data.limit)
+    const last = page.at(-1)
+    const nextCursor =
+      rows.length > page.length && last ? encodeCursor({ at: last.updatedAt, id: last.id }) : null
+
+    /*
+     * The siblings are resolved here, in one query, because the pair is the
+     * unit this interface works in and pairing two independently paginated
+     * listings in the browser cannot be made to work: the second page of one
+     * language has no reason to hold the partners of the second page of the
+     * other. The visibility filter travels with it — a translation this actor
+     * may not read must not arrive as somebody else's sibling.
+     */
+    const siblings = await listSiblingsAcrossLocales(db, {
+      groupIds: page.map((row) => row.translationGroupId),
+      excludeLocale: parsed.data.locale,
+      ...(seesEverything ? {} : { visibleTo: { authorId: request.user.id } }),
+    })
+
+    const byGroup = new Map<string, Record<string, unknown>>()
+    for (const row of siblings) {
+      if (!canReadDocument(type, actor, row)) continue
+      const group = byGroup.get(row.translationGroupId) ?? {}
+      group[row.locale] = serializeContent(type, actor, row)
+      byGroup.set(row.translationGroupId, group)
+    }
+
+    const counts = await countContents(db, query)
+
+    return reply.send({
+      groups: page.map((row) => ({
+        translationGroupId: row.translationGroupId,
+        primary: serializeContent(type, actor, row),
+        siblings: byGroup.get(row.translationGroupId) ?? {},
+      })),
+      total: counts.total,
+      drafts: counts.drafts,
+      nextCursor,
+    })
   })
 
   app.get('/content/:type/:id', { onRequest: [app.requireAuth] }, async (request, reply) => {

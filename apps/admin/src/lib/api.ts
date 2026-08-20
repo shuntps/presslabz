@@ -69,12 +69,30 @@ export interface ApiFetchInit extends RequestInit {
 }
 
 /**
+ * Anything that can turn an unknown value into a `T` or throw.
+ *
+ * Structural on purpose: the schemas live in `@presslabz/core` and this file
+ * does not need to know they are Zod's, only that something checked.
+ */
+export interface Parser<T> {
+  parse: (value: unknown) => T
+}
+
+/**
  * `credentials: 'include'` is what carries the session cookie across origins
  * in development, where the admin runs on 5173 and the API on 3000. The API
  * allows exactly that origin, never a wildcard.
  */
-export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
-  const { timeoutMs = REQUEST_TIMEOUT_MS, signal, ...rest } = init
+export async function apiFetch<T>(
+  path: string,
+  init: ApiFetchInit & { schema: Parser<T> },
+): Promise<T>
+export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T>
+export async function apiFetch<T>(
+  path: string,
+  init: ApiFetchInit & { schema?: Parser<T> } = {},
+): Promise<T> {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, signal, schema, ...rest } = init
 
   /*
    * The caller's own signal still cancels — a component that unmounts should
@@ -127,5 +145,25 @@ export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promis
     throw new ApiError(response.status, code, reason)
   }
 
-  return body as T
+  if (!schema) return body as T
+
+  /*
+   * A 200 is not a promise that the body is what this build expects. `as T`
+   * was that promise, made by nobody: a field the API renamed, a null where a
+   * string belonged, or an answer from something that is not the API at all
+   * went straight into React state and failed several components later, as
+   * "undefined is not an object" about a thing that was never at fault.
+   *
+   * The schema is the one in `@presslabz/core` that the API's own tests parse
+   * their responses with, so this cannot start disagreeing with the server
+   * quietly. What it catches is reported as a malformed answer, with the
+   * status it came back on, because "the server said something I do not
+   * understand" and "the server refused" are different problems.
+   */
+  try {
+    return schema.parse(body)
+  } catch (error) {
+    if (import.meta.env.DEV) console.error(`Malformed response from ${path}`, error, body)
+    throw new ApiError(response.status, 'malformed_response')
+  }
 }

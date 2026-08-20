@@ -1,6 +1,13 @@
 import type { Blocks } from '@presslabz/blocks'
-import { type AnyContentType, type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
-import { and, desc, eq, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
+import {
+  type AnyContentType,
+  type ContentStatus,
+  type Cursor,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  PUBLIC_CONTENT_STATUSES,
+} from '@presslabz/core'
+import { and, desc, eq, inArray, isNotNull, lte, ne, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
 
@@ -179,11 +186,24 @@ export interface ListContentsQuery {
    */
   readonly visibleTo?: { readonly authorId: string | null }
   readonly limit?: number
-  readonly offset?: number
+  /**
+   * Where the previous page stopped. Rows strictly after it are returned, in
+   * the same order — never "skip the first fifty", because the sort column is
+   * modification time and a colleague saving a document while somebody reads
+   * the list would push a row across the boundary, showing it twice or not at
+   * all.
+   */
+  readonly after?: Cursor
 }
 
-export async function listContents(db: Database, query: ListContentsQuery): Promise<ContentRow[]> {
+/**
+ * Filters shared by the listing and its counts, so the number in the heading
+ * describes the set the rows come from. Two expressions of one predicate would
+ * be a heading that says five about a list of four.
+ */
+function listFilters(query: ListContentsQuery) {
   const filters = [eq(contents.type, query.type), eq(contents.locale, query.locale)]
+
   if (query.statuses && query.statuses.length > 0) {
     filters.push(inArray(contents.status, [...query.statuses]))
   }
@@ -196,13 +216,97 @@ export async function listContents(db: Database, query: ListContentsQuery): Prom
     if (visible) filters.push(visible)
   }
 
+  return filters
+}
+
+export async function listContents(db: Database, query: ListContentsQuery): Promise<ContentRow[]> {
+  const filters = listFilters(query)
+
+  /*
+   * A row comparison, not two comparisons joined by OR. `(a, b) < (x, y)` is
+   * one predicate Postgres can answer from an index whose leading columns are
+   * exactly those two, where the equivalent `a < x OR (a = x AND b < y)` is
+   * usually not. The index is `(type, locale, updated_at DESC, id DESC)`, in
+   * that order, which is also why the sort below names both columns.
+   */
+  if (query.after) {
+    filters.push(
+      sql`(${contents.updatedAt}, ${contents.id}) < (${query.after.at.toISOString()}::timestamptz, ${query.after.id}::uuid)`,
+    )
+  }
+
+  return db
+    .select()
+    .from(contents)
+    .where(and(...filters))
+    .orderBy(desc(contents.updatedAt), desc(contents.id))
+    .limit(pageSize(query.limit))
+}
+
+/** Bounded here as well as at the route: a repository is called from tests too. */
+function pageSize(limit: number | undefined): number {
+  return Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(limit ?? DEFAULT_PAGE_SIZE)))
+}
+
+/**
+ * How many documents the listing describes, and how many of them are drafts.
+ *
+ * One pass over the same filtered set rather than two queries: the heading
+ * states both numbers about the same set, and asking twice invites them to
+ * disagree by whatever landed in between.
+ */
+export async function countContents(
+  db: Database,
+  query: ListContentsQuery,
+): Promise<{ total: number; drafts: number }> {
+  const rows = await db
+    .select({
+      total: sql<string>`count(*)`,
+      drafts: sql<string>`count(*) filter (where ${contents.status} = 'draft')`,
+    })
+    .from(contents)
+    .where(and(...listFilters(query)))
+
+  return { total: Number(rows[0]?.total ?? 0), drafts: Number(rows[0]?.drafts ?? 0) }
+}
+
+/**
+ * The other languages of a page's documents, in one query.
+ *
+ * Deliberately crossing locales, which is why it says so in its name. It
+ * exists because the pair is what the interface works in and pairing two
+ * independently paginated listings in the browser cannot be made to work — the
+ * second page of one language has no reason to hold the partners of the second
+ * page of the other. The visibility filter travels with it: a translation this
+ * actor may not read must not arrive as somebody else's sibling.
+ */
+export async function listSiblingsAcrossLocales(
+  db: Database,
+  query: {
+    readonly groupIds: readonly string[]
+    readonly excludeLocale: string
+    readonly visibleTo?: { readonly authorId: string | null }
+  },
+): Promise<ContentRow[]> {
+  if (query.groupIds.length === 0) return []
+
+  const filters = [
+    inArray(contents.translationGroupId, [...query.groupIds]),
+    ne(contents.locale, query.excludeLocale),
+  ]
+
+  if (query.visibleTo) {
+    const published = inArray(contents.status, [...PUBLIC_CONTENT_STATUSES])
+    const authorId = query.visibleTo.authorId
+    const visible = authorId === null ? published : or(published, eq(contents.authorId, authorId))
+    if (visible) filters.push(visible)
+  }
+
   return db
     .select()
     .from(contents)
     .where(and(...filters))
     .orderBy(desc(contents.updatedAt))
-    .limit(query.limit ?? 50)
-    .offset(query.offset ?? 0)
 }
 
 export async function findContentBySlug(

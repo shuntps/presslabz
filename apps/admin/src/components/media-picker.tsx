@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../lib/api.ts'
+import { messageForError } from '../lib/errors.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import {
+  assetsOf,
   type MediaSummary,
   useMediaLibrary,
   useUpdateMediaAlt,
@@ -28,21 +30,28 @@ export function MediaPicker({
   const dialog = useRef<HTMLDialogElement>(null)
   const [rejected, setRejected] = useState(false)
 
-  if (dialog.current) {
-    if (open && !dialog.current.open) dialog.current.showModal()
-    if (!open && dialog.current.open) dialog.current.close()
-  }
+  const assets = assetsOf(library.data?.pages)
+  // One answer for the whole library, so it is read off whichever page arrived.
+  const permissions = library.data?.pages[0]?.permissions
+
+  /*
+   * Opening and closing a dialog is a DOM side effect, and it used to run
+   * during render — both in the body and in the ref callback. React may call a
+   * render more than once for a single commit, and it may throw one away
+   * entirely; a component that reaches into the DOM while rendering is relying
+   * on it not doing either. The effect runs after the commit, which is when
+   * the element it is talking about actually exists on screen.
+   */
+  useEffect(() => {
+    const element = dialog.current
+    if (!element) return
+
+    if (open && !element.open) element.showModal()
+    if (!open && element.open) element.close()
+  }, [open])
 
   return (
-    <dialog
-      ref={(node) => {
-        dialog.current = node
-        if (node && open && !node.open) node.showModal()
-      }}
-      className="picker"
-      onClose={onClose}
-      aria-label={t('media.pick')}
-    >
+    <dialog ref={dialog} className="picker" onClose={onClose} aria-label={t('media.pick')}>
       <div className="picker-bar">
         <p className="panel-heading">{t('media.library')}</p>
 
@@ -53,7 +62,7 @@ export function MediaPicker({
             it is a separate permission from anything the editor's fieldset is
             about. The server decides; a capability list read in the browser
             would be a second copy of the rule. */}
-        {library.data?.permissions.upload && (
+        {permissions?.upload && (
           <label className="picker-upload">
             <span>{upload.isPending ? t('media.uploading') : t('media.upload')}</span>
             <input
@@ -85,10 +94,20 @@ export function MediaPicker({
         </p>
       )}
 
-      {library.data?.media.length === 0 && <p className="muted">{t('media.empty')}</p>}
+      {library.isError && (
+        <p className="error" role="alert">
+          {t(messageForError(library.error))}
+        </p>
+      )}
+
+      {library.isPending && <p className="muted">{t('common.loading')}</p>}
+
+      {!library.isPending && assets.length === 0 && !library.isError && (
+        <p className="muted">{t('media.empty')}</p>
+      )}
 
       <div className="picker-grid">
-        {library.data?.media.map((item) => (
+        {assets.map((item) => (
           <figure key={item.id} className="picker-asset">
             <button type="button" className="picker-item" onClick={() => onPick(item)}>
               <img src={item.url} alt={item.alt[locale] ?? ''} loading="lazy" decoding="async" />
@@ -97,6 +116,17 @@ export function MediaPicker({
           </figure>
         ))}
       </div>
+
+      {library.hasNextPage && (
+        <button
+          type="button"
+          className="quiet picker-more"
+          onClick={() => void library.fetchNextPage()}
+          disabled={library.isFetchingNextPage}
+        >
+          {library.isFetchingNextPage ? t('common.loading') : t('media.loadMore')}
+        </button>
+      )}
     </dialog>
   )
 }

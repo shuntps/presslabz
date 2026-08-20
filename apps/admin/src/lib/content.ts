@@ -1,105 +1,73 @@
 import type { Blocks } from '@presslabz/blocks'
-import type { ContentStatus, CreationPermissions, DocumentPermissions } from '@presslabz/core'
+import {
+  type ContentPage,
+  type ContentStatus,
+  type ContentSummary,
+  type ContentTypeSummary,
+  contentDocumentSchema,
+  contentPageSchema,
+  contentTypesSchema,
+  type TranslationGroupSummary,
+  type TranslationSet,
+  translationSetSchema,
+} from '@presslabz/core'
 import type { Locale } from '@presslabz/i18n'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './api.ts'
 
 /*
- * The permission shapes are imported from core rather than restated here.
- * Retyping them would be the first half of reimplementing the policy: two
- * declarations that agree today and are edited on different days.
+ * The shapes come from `@presslabz/core`, where the API's own tests parse its
+ * responses with them. They used to be declared here, which made them a second
+ * expression of the contract — one edited on a different day than the other.
  */
-export interface ContentSummary {
-  /** What this actor may do with this document, decided by the server. */
-  permissions: DocumentPermissions
-  id: string
-  type: string
-  locale: Locale
-  translationGroupId: string
-  slug: string
-  status: ContentStatus
-  title: string
-  excerpt: string | null
-  blocks: Blocks
-  meta: Record<string, unknown>
-  authorId: string | null
-  parentId: string | null
-  publishedAt: string | null
-  /** What an edit of this document has to state to be accepted. */
-  version: number
-  createdAt: string
-  updatedAt: string
+/** What a page of the listing carries, including the counts for its heading. */
+export type {
+  ContentPage,
+  ContentSummary,
+  ContentTypeSummary,
+  TranslationGroupSummary,
+  TranslationSet,
 }
 
-export interface ContentTypeSummary {
-  name: string
-  hierarchical: boolean
-  taxonomies: string[]
-  /** What this actor could create of this type, for a document with no row yet. */
-  permissions: CreationPermissions
-}
-
-/**
- * The navigation is built from what the server actually declares, so a type
- * added in code appears here without a second list to keep in step.
- */
 export function useContentTypes() {
   return useQuery({
     queryKey: ['content-types'],
-    queryFn: async () => (await apiFetch<{ types: ContentTypeSummary[] }>('/content-types')).types,
+    queryFn: async () => (await apiFetch('/content-types', { schema: contentTypesSchema })).types,
     staleTime: 5 * 60_000,
   })
 }
 
+/**
+ * The listing, one page at a time, in translation groups.
+ *
+ * It used to ask for everything and get whatever the repository's default
+ * capped it at — fifty documents, with no way to ask for the fifty-first,
+ * which was in the database and unreachable from the interface that wrote it.
+ * It also asked once per language and paired the results here, which cannot
+ * survive paging: the second page of one language has no reason to hold the
+ * partners of the second page of the other. The server pairs them now.
+ */
 export function useContentList(type: string, locale: Locale) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['content', type, locale],
-    queryFn: async () =>
-      (
-        await apiFetch<{ contents: ContentSummary[] }>(
-          `/content/${encodeURIComponent(type)}?locale=${encodeURIComponent(locale)}`,
-        )
-      ).contents,
+    queryFn: async ({ pageParam }) => {
+      const search = new URLSearchParams({ locale })
+      if (pageParam) search.set('cursor', pageParam)
+
+      return apiFetch(`/content/${encodeURIComponent(type)}?${search.toString()}`, {
+        schema: contentPageSchema,
+      })
+    },
+    initialPageParam: '',
+    // Null is the server saying this was the last page; returning undefined is
+    // how React Query is told there is nothing more to fetch.
+    getNextPageParam: (last: ContentPage) => last.nextCursor ?? undefined,
   })
 }
 
-export interface TranslationGroup {
-  translationGroupId: string
-  /** The document in the locale being listed. Always present. */
-  primary: ContentSummary
-  /** Siblings in other languages, by locale. */
-  siblings: Partial<Record<Locale, ContentSummary>>
-}
-
-/**
- * Groups a listing and the other languages' listings into translation pairs.
- *
- * The pair is the unit of work here, which is the thing a WordPress list table
- * cannot express — there a translation is a separate post that a plugin tries
- * to associate afterwards. Assembled from per-locale listings rather than one
- * cross-locale query because every read stays locale-scoped by design; a
- * dedicated endpoint is the answer once this list needs to paginate.
- */
-export function groupTranslations(
-  primary: ContentSummary[],
-  others: ContentSummary[],
-): TranslationGroup[] {
-  const byGroup = new Map<string, TranslationGroup>()
-
-  for (const row of primary) {
-    byGroup.set(row.translationGroupId, {
-      translationGroupId: row.translationGroupId,
-      primary: row,
-      siblings: {},
-    })
-  }
-
-  for (const row of others) {
-    const group = byGroup.get(row.translationGroupId)
-    if (group) group.siblings[row.locale] = row
-  }
-
-  return [...byGroup.values()]
+/** The groups of every page fetched so far, in order. */
+export function groupsOf(pages: readonly ContentPage[] | undefined): TranslationGroupSummary[] {
+  return (pages ?? []).flatMap((page) => page.groups)
 }
 
 export function useContent(type: string, id: string) {
@@ -107,9 +75,9 @@ export function useContent(type: string, id: string) {
     queryKey: ['content', type, 'one', id],
     queryFn: async () =>
       (
-        await apiFetch<{ content: ContentSummary }>(
-          `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
-        )
+        await apiFetch(`/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, {
+          schema: contentDocumentSchema,
+        })
       ).content,
     // Creating a document mounts this hook with nothing to fetch.
     enabled: id !== '',
@@ -150,19 +118,20 @@ export function useSaveContent(type: string, id: string | null) {
   return useMutation({
     mutationFn: async (draft: ContentDraft) => {
       if (id === null) {
-        const body = await apiFetch<{ content: ContentSummary }>(
-          `/content/${encodeURIComponent(type)}`,
-          { method: 'POST', body: JSON.stringify(draft) },
-        )
+        const body = await apiFetch(`/content/${encodeURIComponent(type)}`, {
+          method: 'POST',
+          body: JSON.stringify(draft),
+          schema: contentDocumentSchema,
+        })
         return body.content
       }
 
       // Locale is refused on update by the server — a document is one
       // translation — so it is not sent rather than sent and rejected.
       const { locale: _locale, translationGroupId: _group, ...patch } = draft
-      const body = await apiFetch<{ content: ContentSummary }>(
+      const body = await apiFetch(
         `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
-        { method: 'PATCH', body: JSON.stringify(patch) },
+        { method: 'PATCH', body: JSON.stringify(patch), schema: contentDocumentSchema },
       )
       return body.content
     },
@@ -175,17 +144,6 @@ export function useSaveContent(type: string, id: string | null) {
   })
 }
 
-export interface TranslationSet {
-  translations: ContentSummary[]
-  /**
-   * Whether a translation may be started in this group. Not the same question
-   * as "may create a document of this type": joining an existing group also
-   * needs the right to write one of its members as it currently stands, and a
-   * contributor whose draft an editor published no longer has it.
-   */
-  permissions: { create: boolean }
-}
-
 /**
  * Crosses locales on purpose, like the endpoint behind it. Everything the
  * editor says about a document's siblings comes from here rather than from a
@@ -196,9 +154,9 @@ export function useTranslations(type: string, id: string) {
   return useQuery({
     queryKey: ['content', type, 'translations', id],
     queryFn: async () =>
-      apiFetch<TranslationSet>(
-        `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/translations`,
-      ),
+      apiFetch(`/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/translations`, {
+        schema: translationSetSchema,
+      }),
     enabled: id !== '',
   })
 }

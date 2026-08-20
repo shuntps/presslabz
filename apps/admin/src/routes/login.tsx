@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react'
 import { LocaleSwitcher } from '../components/locale-switcher.tsx'
 import { ThemeSwitcher } from '../components/theme-switcher.tsx'
 import { ApiError } from '../lib/api.ts'
+import { messageForError } from '../lib/errors.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import { useSignIn } from '../lib/session.ts'
 
@@ -16,12 +17,17 @@ export function LoginPage() {
     signIn.mutate({ email, password })
   }
 
-  // 429 gets its own message: telling someone their password is wrong when
-  // they have actually been rate limited sends them in circles.
+  /*
+   * Only a 401 means the credentials were wrong. Everything else said so too:
+   * an unreachable API, a request that timed out, a rate limit and a 500 were
+   * all reported as "that email and password do not match" — an accusation
+   * about the person, for a fault that was never theirs, and one they could
+   * only respond to by retyping a correct password.
+   */
   const errorKey =
-    signIn.error instanceof ApiError && signIn.error.status === 429
-      ? 'auth.tooManyAttempts'
-      : 'auth.invalidCredentials'
+    signIn.error instanceof ApiError && signIn.error.status === 401
+      ? 'auth.invalidCredentials'
+      : messageForError(signIn.error)
 
   return (
     <main className="centered">

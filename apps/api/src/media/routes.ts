@@ -1,8 +1,13 @@
 import {
   type Actor,
   type CoreHooks,
+  type Cursor,
   canEditMedia,
   canPerformOnMedia,
+  DEFAULT_PAGE_SIZE,
+  decodeCursor,
+  encodeCursor,
+  MAX_PAGE_SIZE,
   MEDIA_ACCESS,
   type MediaOperation,
 } from '@presslabz/core'
@@ -91,6 +96,12 @@ interface MediaRoutesOptions {
  */
 const altSchema = z.record(z.string().refine(isLocale), z.string().max(500).nullable())
 
+const pageQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+  /** Opaque: this API issued it, and it is handed back unchanged. */
+  cursor: z.string().min(1).max(512).optional(),
+})
+
 function actorOf(user: AuthenticatedUser): Actor {
   return { capabilities: user.capabilities, id: user.id }
 }
@@ -162,9 +173,33 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
     if (!request.user) return
     const actor = actorOf(request.user)
 
-    const rows = await listMedia(db)
+    const query = pageQuery.safeParse(request.query)
+    if (!query.success) return reply.code(400).send({ error: 'invalid_request' })
+
+    let after: Cursor | undefined
+    if (query.data.cursor !== undefined) {
+      const cursor = decodeCursor(query.data.cursor)
+      if (!cursor) return reply.code(400).send({ error: 'invalid_request', reason: 'bad-cursor' })
+      after = cursor
+    }
+
+    /*
+     * One more than asked for, so the answer knows whether another page exists
+     * without counting the library. Keyset rather than offset because an
+     * upload landing while the picker is open shifts every offset by one: the
+     * reader pressing "load more" would be shown a row they have already seen
+     * and never shown the one it displaced.
+     */
+    const rows = await listMedia(db, { limit: query.data.limit + 1, ...(after ? { after } : {}) })
+    const page = rows.slice(0, query.data.limit)
+    const last = page.at(-1)
+
     return reply.send({
-      media: rows.map((row) => serializeMedia(actor, row)),
+      media: page.map((row) => serializeMedia(actor, row)),
+      nextCursor:
+        rows.length > page.length && last
+          ? encodeCursor({ at: last.createdAt, id: last.id })
+          : null,
       /*
        * Whether this actor may add to the library at all. Without it the
        * picker showed its upload control to everyone, and a contributor who

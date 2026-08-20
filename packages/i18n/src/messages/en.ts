@@ -140,6 +140,17 @@ export const en = {
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',
   'error.unexpected': 'Something went wrong',
+  'error.conflict': 'Somebody else changed this before you did',
+  'error.mediaInUse': 'That image is still used by a document',
+  'error.unreachable': 'The API did not answer.',
+  'error.timeout': 'The API did not answer in time.',
+  'error.malformedResponse':
+    'The API answered with something this interface does not understand. It may be running a different version.',
+  'error.server': 'The server ran into a problem. Nothing you did caused it.',
+  'content.loadMore': 'Load more',
+  'content.shownOf': 'Showing {shown} of {total}',
+  'media.loadMore': 'Load more',
+  'editor.translationsFailed': 'The other languages could not be loaded.',
   'error.apiUnreachable': 'The API at {url} did not answer.',
   'error.apiUnreachableHint':
     'It may not be running, or something else may be holding that address. Start it with pnpm dev, then try again.',

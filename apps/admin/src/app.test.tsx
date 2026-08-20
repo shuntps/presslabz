@@ -176,3 +176,65 @@ describe('when the API does not answer', () => {
     })
   })
 })
+
+describe('what the sign-in screen says went wrong', () => {
+  /**
+   * Signs in against a transport that answers the login request however a test
+   * needs, leaving the session check to the fake.
+   */
+  async function attemptSignIn(answer: () => Promise<Response>) {
+    api = fakeApi()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
+        String(input).includes('/auth/login') ? answer() : api.fetchMock(input, init),
+      ),
+    )
+
+    renderApp()
+    await userEvent.type(await findInput(/email/i), 'someone@presslabz.test')
+    await userEvent.type(getInput(/password/i, 'input[type="password"]'), 'passphrase')
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    return screen.findByRole('alert')
+  }
+
+  it('says the credentials were wrong only when they were', async () => {
+    const alert = await attemptSignIn(async () =>
+      Response.json({ error: 'invalid_credentials' }, { status: 401 }),
+    )
+
+    expect(alert.textContent).toMatch(/do not match/i)
+  })
+
+  /*
+   * The one that sent people in circles: an unreachable API was reported as
+   * "that email and password do not match" — an accusation about the person,
+   * for a fault that was never theirs, and one they could only answer by
+   * retyping a password that was already right.
+   */
+  it('does not blame the credentials when nothing answered', async () => {
+    const alert = await attemptSignIn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+
+    expect(alert.textContent).toMatch(/did not answer/i)
+    expect(alert.textContent).not.toMatch(/do not match/i)
+  })
+
+  it('says so when the attempt was rate limited', async () => {
+    const alert = await attemptSignIn(async () =>
+      Response.json({ error: 'too_many_requests' }, { status: 429 }),
+    )
+
+    expect(alert.textContent).toMatch(/too many attempts/i)
+  })
+
+  it('says the server broke when the server broke', async () => {
+    const alert = await attemptSignIn(async () =>
+      Response.json({ error: 'internal' }, { status: 500 }),
+    )
+
+    expect(alert.textContent).toMatch(/nothing you did/i)
+  })
+})

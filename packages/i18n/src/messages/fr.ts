@@ -138,6 +138,17 @@ export const fr: Messages = {
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',
   'error.unexpected': 'Une erreur est survenue',
+  'error.conflict': 'Quelqu’un a modifié ceci avant vous',
+  'error.mediaInUse': 'Cette image est encore utilisée par un document',
+  'error.unreachable': 'L’API n’a pas répondu.',
+  'error.timeout': 'L’API n’a pas répondu à temps.',
+  'error.malformedResponse':
+    'L’API a répondu quelque chose que cette interface ne comprend pas. Elle tourne peut-être dans une autre version.',
+  'error.server': 'Le serveur a rencontré un problème. Vous n’y êtes pour rien.',
+  'content.loadMore': 'Charger la suite',
+  'content.shownOf': '{shown} sur {total} affichés',
+  'media.loadMore': 'Charger la suite',
+  'editor.translationsFailed': 'Les autres langues n’ont pas pu être chargées.',
   'error.apiUnreachable': 'L’API à l’adresse {url} n’a pas répondu.',
   'error.apiUnreachableHint':
     'Elle n’est peut-être pas démarrée, ou une autre chose occupe cette adresse. Lancez pnpm dev, puis réessayez.',

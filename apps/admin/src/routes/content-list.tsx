@@ -1,13 +1,14 @@
 import type { ContentStatus } from '@presslabz/core'
-import { formatDate, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
+import { formatDate, type MessageKey } from '@presslabz/i18n'
 import { Link, useParams } from '@tanstack/react-router'
 import {
   type ContentSummary,
-  groupTranslations,
-  type TranslationGroup,
+  groupsOf,
+  type TranslationGroupSummary,
   useContentList,
   useContentTypes,
 } from '../lib/content.ts'
+import { messageForError, worthRetrying } from '../lib/errors.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const TYPE_LABELS: Record<string, MessageKey> = {
@@ -64,7 +65,7 @@ function Row({ row, primary }: { row: ContentSummary; primary: boolean }) {
  * bracket in the margin is the whole point: in a WordPress list table these
  * are two unrelated posts that a plugin hopes it has associated correctly.
  */
-function Group({ group }: { group: TranslationGroup }) {
+function Group({ group }: { group: TranslationGroupSummary }) {
   const siblings = Object.values(group.siblings)
   if (siblings.length === 0) return <Row row={group.primary} primary />
 
@@ -82,27 +83,43 @@ export function ContentListPage() {
   const { t, locale } = useLocale()
   const { type } = useParams({ from: '/content/$type' })
 
-  const others = LOCALES.filter((candidate) => candidate !== locale)
   const types = useContentTypes()
-  const primary = useContentList(type, locale)
-  // One request per other language. A dedicated endpoint replaces this the
-  // moment the list needs to paginate; two languages do not justify one yet.
-  const sibling = useContentList(type, (others[0] ?? locale) as Locale)
+  const listing = useContentList(type, locale)
 
-  if (primary.isPending) return <main className="content muted">{t('common.loading')}</main>
-  if (primary.isError) {
+  if (listing.isPending) return <main className="content muted">{t('common.loading')}</main>
+
+  /*
+   * Nothing arrived at all: the whole screen is the error. A page that failed
+   * *after* the first one is a different case — the rows already on screen are
+   * still true, and replacing them with one message would throw away work the
+   * reader can see — so that one is reported underneath them, below.
+   */
+  if (listing.isError && !listing.data) {
     return (
       <main className="content">
         <p className="error" role="alert">
-          {t('error.unexpected')}
+          {t(messageForError(listing.error))}
         </p>
+        {worthRetrying(listing.error) && (
+          <button type="button" onClick={() => void listing.refetch()}>
+            {t('common.retry')}
+          </button>
+        )}
       </main>
     )
   }
 
-  const rows = primary.data
-  const groups = groupTranslations(rows, sibling.data ?? [])
-  const drafts = rows.filter((row) => row.status === 'draft').length
+  const groups = groupsOf(listing.data?.pages)
+  /*
+   * The counts describe the whole set, not the rows in hand. Counting what has
+   * been fetched would make the heading say "so far", which is a different and
+   * useless statement — and one that changed every time somebody pressed
+   * "load more".
+   */
+  const first = listing.data?.pages[0]
+  const total = first?.total ?? 0
+  const drafts = first?.drafts ?? 0
+
   const gaps = groups.filter(
     (group) => group.primary.status === 'published' && Object.keys(group.siblings).length === 0,
   ).length
@@ -117,7 +134,7 @@ export function ContentListPage() {
       <div className="title-row">
         <h1 className="page-title">{labelKey ? t(labelKey) : type}</h1>
         <span className="rule" />
-        <span className="data count">{t('content.count', { total: rows.length, drafts })}</span>
+        <span className="data count">{t('content.count', { total, drafts })}</span>
         {canCreate && (
           <Link to="/content/$type/new" params={{ type }} className="button-link">
             {t('content.new')}
@@ -125,7 +142,7 @@ export function ContentListPage() {
         )}
       </div>
 
-      {rows.length === 0 ? (
+      {groups.length === 0 ? (
         <p className="muted">{t('content.empty')}</p>
       ) : (
         <div className="list">
@@ -145,6 +162,36 @@ export function ContentListPage() {
             <p className="gap-note">
               <b className="data">{t('content.gap')}</b>
               <span>{t('content.gapCount', { count: gaps })}</span>
+            </p>
+          )}
+
+          {/*
+           * A button rather than a scroll listener. Infinite scrolling in an
+           * admin list steals the end of the page — the counts, the note
+           * about translation gaps — and gives no way back to it.
+           */}
+          {listing.hasNextPage && (
+            <div className="list-more">
+              <button
+                type="button"
+                onClick={() => void listing.fetchNextPage()}
+                disabled={listing.isFetchingNextPage}
+              >
+                {listing.isFetchingNextPage ? t('common.loading') : t('content.loadMore')}
+              </button>
+              <span className="data">{t('content.shownOf', { shown: groups.length, total })}</span>
+            </div>
+          )}
+
+          {/*
+           * A page that failed after the first one leaves what was already
+           * fetched on screen: the rows above are still true, and throwing
+           * them away to show one error would be a worse answer than saying
+           * this page did not arrive.
+           */}
+          {listing.isError && (
+            <p className="error" role="alert">
+              {t(messageForError(listing.error))}
             </p>
           )}
         </div>

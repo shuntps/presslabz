@@ -3,7 +3,7 @@ import { inlineToPlainText, replaceInlineText } from '@presslabz/blocks'
 import { useState } from 'react'
 import { BLOCK_LABELS, setOptionalText } from '../lib/blocks.ts'
 import { useLocale } from '../lib/i18n.tsx'
-import { useMediaLibrary } from '../lib/media.ts'
+import { assetsOf, useMediaLibrary } from '../lib/media.ts'
 import { MediaPicker } from './media-picker.tsx'
 
 /**
@@ -304,7 +304,12 @@ function ImageBlockBody({
   const library = useMediaLibrary()
   const [picking, setPicking] = useState(false)
 
-  const media = library.data?.media.find((item) => item.id === block.mediaId)
+  /*
+   * Only what has been fetched. An image whose asset is on a page nobody has
+   * loaded renders as "missing" until it is — which is honest, and better than
+   * a request per block to prove otherwise.
+   */
+  const media = assetsOf(library.data?.pages).find((asset) => asset.id === block.mediaId)
 
   return (
     <>

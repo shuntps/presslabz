@@ -353,6 +353,12 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
             current={existing.data}
             siblings={siblings.data?.translations ?? []}
             /*
+             * A panel that failed to load used to look exactly like a document
+             * with no translations — an empty list is a claim, and it was
+             * being made about a request that never answered.
+             */
+            failed={siblings.isError}
+            /*
              * Not `onType.create`: joining a group also needs the right to
              * write one of its members as it stands, which is a fact about
              * this group and not about the type. The server answers it on the
@@ -407,11 +413,13 @@ function TranslationPanel({
   current,
   siblings,
   canCreate,
+  failed,
 }: {
   type: string
   current: ContentSummary
   siblings: ContentSummary[]
   canCreate: boolean
+  failed: boolean
 }) {
   const { t } = useLocale()
   /*
@@ -426,6 +434,12 @@ function TranslationPanel({
   return (
     <div className="translations">
       <p className="panel-heading">{t('editor.translations')}</p>
+
+      {failed && (
+        <p className="error" role="alert">
+          {t('editor.translationsFailed')}
+        </p>
+      )}
 
       {siblings
         .filter((row) => row.id !== current.id)

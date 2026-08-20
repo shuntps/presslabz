@@ -21,10 +21,15 @@ let api: ReturnType<typeof fakeApi>
  */
 const dialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototype)
 
+let opened = 0
+
 beforeEach(() => {
   window.history.pushState({}, '', '/')
+  window.dispatchEvent(new PopStateEvent('popstate'))
+  opened = 0
 
   HTMLDialogElement.prototype.showModal = function showModal() {
+    opened += 1
     this.open = true
   }
   HTMLDialogElement.prototype.close = function close() {
@@ -246,5 +251,83 @@ describe('adding to the library', () => {
     await screen.findAllByLabelText(/alt text/i)
     expect(screen.queryByLabelText(/^upload$/i)).toBeNull()
     expect(api.requests.some((request) => request.route === 'POST /media')).toBe(false)
+  })
+})
+
+describe('a library longer than one page', () => {
+  /** Five assets, so a page of two is three pages. */
+  const five = Array.from({ length: 5 }, (_, index) =>
+    fakeMedia({
+      id: `m${index + 1}`,
+      url: `http://localhost:9000/media/m${index + 1}.avif`,
+      alt: { en: `Asset ${index + 1}` },
+    }),
+  )
+
+  /*
+   * The picker asked for the whole library and received whatever the
+   * repository's default capped it at — sixty assets, with the sixty-first in
+   * the bucket, in the database, and unreachable from the interface that
+   * uploaded it.
+   */
+  it('shows the first page and offers the rest', async () => {
+    await open({ media: five, pageSize: 2 })
+    await screen.findAllByLabelText(/alt text/i)
+
+    expect(screen.getAllByRole('img')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /load more/i })).toBeDefined()
+  })
+
+  it('adds the next page to what is already shown', async () => {
+    await open({ media: five, pageSize: 2 })
+    await screen.findAllByLabelText(/alt text/i)
+
+    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+
+    await waitFor(() => expect(screen.getAllByRole('img')).toHaveLength(4))
+  })
+
+  it('stops offering more once the last page is in', async () => {
+    await open({ media: five, pageSize: 4 })
+    await screen.findAllByLabelText(/alt text/i)
+
+    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+    await waitFor(() => expect(screen.getAllByRole('img')).toHaveLength(5))
+
+    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+  })
+})
+
+describe('the dialog is opened after the render, not during it', () => {
+  /*
+   * `showModal()` used to be called from the component body and again from the
+   * ref callback — both during render. React may render more than once for a
+   * single commit and may throw a render away entirely, so a component that
+   * reaches into the DOM while rendering is relying on it doing neither.
+   *
+   * What that looked like from outside: every re-render of the editor asked
+   * the dialog to open again. Counting the calls is how this stays fixed —
+   * once the picker is open, typing in it must not reopen it.
+   */
+  it('opens once, however many times the screen re-renders', async () => {
+    const [field] = await openPicker([mine])
+    expect(opened).toBe(1)
+
+    await userEvent.type(field as HTMLInputElement, 'A description, typed slowly')
+
+    expect(opened).toBe(1)
+  })
+
+  it('does not open a picker nobody asked for', async () => {
+    // The editor mounts the picker closed; a render-phase call would open it
+    // on the first paint of every document that has an image block.
+    await open({ media: [mine] })
+    expect(opened).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(document.querySelector('dialog')?.open).toBe(false))
+
+    await userEvent.type(await screen.findByPlaceholderText(/^title$/i), 'Still closed')
+    expect(document.querySelector('dialog')?.open).toBe(false)
   })
 })

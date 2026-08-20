@@ -50,6 +50,13 @@
       "when": 1787251705112,
       "tag": "0006_lumpy_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787255728482,
+      "tag": "0007_conscious_beyonder",
+      "breakpoints": true
     }
   ]
 }

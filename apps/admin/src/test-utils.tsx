@@ -1,7 +1,14 @@
 import {
   CONTENT_STATUSES,
   type CreationPermissions,
+  contentDocumentSchema,
+  contentPageSchema,
+  contentTypesSchema,
   type DocumentPermissions,
+  type MediaSummary,
+  mediaDocumentSchema,
+  mediaPageSchema,
+  translationSetSchema,
 } from '@presslabz/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
@@ -16,6 +23,13 @@ import { ThemeProvider } from './lib/theme.tsx'
  * A fake API small enough to read and stateful enough to sign in and out of,
  * shared by every test in this app so there is one description of what the
  * server does rather than one per file drifting away from the others.
+ *
+ * Every response it sends is parsed by the same schemas the real client parses
+ * real responses with, and `assertContract` below makes that a failure rather
+ * than a warning. A double that answers something the server would never send
+ * is a test passing against a fiction — which is what this one was doing: it
+ * had no `version` on a document, no `slug` on several, and a listing shape
+ * the API had already stopped using.
  */
 
 export const testUser = {
@@ -45,18 +59,7 @@ export const FULL_CREATION_PERMISSIONS: CreationPermissions = {
   statuses: [...CONTENT_STATUSES],
 }
 
-export interface FakeMedia {
-  id: string
-  url: string
-  mimeType: string
-  byteSize: number
-  width: number | null
-  height: number | null
-  alt: Record<string, string>
-  createdAt: string
-  renditions: never[]
-  permissions: { update: boolean }
-}
+export type FakeMedia = MediaSummary
 
 export function fakeMedia(overrides: Partial<FakeMedia> = {}): FakeMedia {
   return {
@@ -74,6 +77,35 @@ export function fakeMedia(overrides: Partial<FakeMedia> = {}): FakeMedia {
   }
 }
 
+/**
+ * A document as the server describes one, for tests that need a listing with
+ * something in it. Every field the contract requires is present, because the
+ * fake now validates what it sends and a half-built fixture fails loudly here
+ * rather than quietly passing a test against a shape the API never sends.
+ */
+export function fakeDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'doc-1',
+    type: 'post',
+    locale: 'en',
+    translationGroupId: 'group-1',
+    slug: 'a-document',
+    status: 'published',
+    title: 'A document',
+    excerpt: null,
+    blocks: [],
+    meta: {},
+    authorId: testUser.id,
+    parentId: null,
+    publishedAt: '2026-01-01T00:00:00.000Z',
+    version: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    permissions: FULL_DOCUMENT_PERMISSIONS,
+    ...overrides,
+  }
+}
+
 export interface FakeApiOptions {
   /** Documents that already exist, each carrying what this actor may do with it. */
   documents?: Record<string, unknown>[]
@@ -82,6 +114,8 @@ export interface FakeApiOptions {
   /** What it says about a document this session creates. */
   documentPermissions?: DocumentPermissions
   media?: FakeMedia[]
+  /** How many rows a page holds, so a test can force a second one. */
+  pageSize?: number
   /** Whether this actor may add to the library. */
   mediaPermissions?: { upload: boolean }
   /**
@@ -105,15 +139,37 @@ export function fakeApi(options: FakeApiOptions = {}) {
   const creationPermissions = options.creationPermissions ?? FULL_CREATION_PERMISSIONS
   const documentPermissions = options.documentPermissions ?? FULL_DOCUMENT_PERMISSIONS
   const mediaPermissions = options.mediaPermissions ?? { upload: true }
+  const pageSize = options.pageSize ?? 25
+
+  /** Documents of the same group in another language, keyed by locale. */
+  const siblingsOf = (document: Record<string, unknown>) =>
+    Object.fromEntries(
+      documents
+        .filter(
+          (candidate) =>
+            candidate.translationGroupId === document.translationGroupId &&
+            candidate.locale !== document.locale,
+        )
+        .map((sibling) => [sibling.locale as string, sibling]),
+    )
   const translationPermissions = options.translationPermissions ?? { create: true }
 
-  const json = (body: unknown, status = 200) =>
-    Promise.resolve(
+  /**
+   * Sends a body, having checked it is one the API could have sent.
+   *
+   * Only successful answers are checked: a 401 or a 404 carries an error
+   * shape, not a document, and the client reads those without a schema.
+   */
+  const json = (body: unknown, status = 200, schema?: { parse: (value: unknown) => unknown }) => {
+    if (status < 400 && schema) schema.parse(body)
+
+    return Promise.resolve(
       new Response(JSON.stringify(body), {
         status,
         headers: { 'content-type': 'application/json' },
       }),
     )
+  }
 
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(String(input))
@@ -140,16 +196,20 @@ export function fakeApi(options: FakeApiOptions = {}) {
     }
     if (route === 'GET /content-types') {
       return state.signedIn
-        ? json({
-            types: [
-              {
-                name: 'post',
-                hierarchical: false,
-                taxonomies: [],
-                permissions: creationPermissions,
-              },
-            ],
-          })
+        ? json(
+            {
+              types: [
+                {
+                  name: 'post',
+                  hierarchical: false,
+                  taxonomies: [],
+                  permissions: creationPermissions,
+                },
+              ],
+            },
+            200,
+            contentTypesSchema,
+          )
         : json({}, 401)
     }
     if (method === 'POST' && url.pathname === '/content/post') {
@@ -168,19 +228,65 @@ export function fakeApi(options: FakeApiOptions = {}) {
         ...(body as Record<string, unknown>),
       }
       documents.push(created)
-      return json({ content: created }, 201)
+      return json({ content: created }, 201, contentDocumentSchema)
     }
     if (method === 'GET' && url.pathname.endsWith('/translations')) {
-      return json({ translations: [], permissions: translationPermissions })
+      return json(
+        { translations: [], permissions: translationPermissions },
+        200,
+        translationSetSchema,
+      )
     }
     if (method === 'GET' && url.pathname.startsWith('/content/post/')) {
       const id = url.pathname.split('/').pop()
       const found = documents.find((document) => document.id === id)
-      return found ? json({ content: found }) : json({ error: 'not_found' }, 404)
+      return found
+        ? json({ content: found }, 200, contentDocumentSchema)
+        : json({ error: 'not_found' }, 404)
     }
-    if (url.pathname.startsWith('/content/')) return json({ contents: documents })
+    /*
+     * A page of translation groups, the way the real listing answers. The
+     * cursor is the index of the next row, which is a cursor this fake issued
+     * and nothing else reads — exactly the contract the real one keeps.
+     */
+    if (url.pathname.startsWith('/content/')) {
+      const locale = url.searchParams.get('locale') ?? 'en'
+      const rows = documents.filter((document) => (document.locale ?? 'en') === locale)
+      const limit = Number(url.searchParams.get('limit') ?? pageSize)
+      const from = Number(url.searchParams.get('cursor') ?? 0)
+      const page = rows.slice(from, from + limit)
 
-    if (route === 'GET /media') return json({ media, permissions: mediaPermissions })
+      return json(
+        {
+          groups: page.map((document) => ({
+            translationGroupId: document.translationGroupId,
+            primary: document,
+            siblings: siblingsOf(document),
+          })),
+          total: rows.length,
+          drafts: rows.filter((document) => document.status === 'draft').length,
+          nextCursor: from + limit < rows.length ? String(from + limit) : null,
+        },
+        200,
+        contentPageSchema,
+      )
+    }
+
+    if (url.pathname === '/media' && method === 'GET') {
+      const limit = Number(url.searchParams.get('limit') ?? pageSize)
+      const from = Number(url.searchParams.get('cursor') ?? 0)
+      const page = media.slice(from, from + limit)
+
+      return json(
+        {
+          media: page,
+          permissions: mediaPermissions,
+          nextCursor: from + limit < media.length ? String(from + limit) : null,
+        },
+        200,
+        mediaPageSchema,
+      )
+    }
     if (method === 'PATCH' && url.pathname.startsWith('/media/')) {
       const id = url.pathname.split('/').pop()
       const found = media.find((item) => item.id === id)
@@ -198,7 +304,7 @@ export function fakeApi(options: FakeApiOptions = {}) {
         if (text === null) delete found.alt[locale]
         else found.alt[locale] = text
       }
-      return json({ media: found })
+      return json({ media: found }, 200, mediaDocumentSchema)
     }
 
     return json({}, 404)

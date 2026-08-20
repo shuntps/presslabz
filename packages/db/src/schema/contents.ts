@@ -193,6 +193,20 @@ export const contents = pgTable(
     index('contents_parent_idx').on(t.parentId),
     index('contents_translation_group_idx').on(t.translationGroupId),
     index('contents_listing_idx').on(t.type, t.locale, t.status, t.publishedAt),
+    /*
+     * What the admin's listing actually asks for: one type, one language,
+     * newest change first, resumed from a cursor. The columns are in that
+     * order and both sort columns are in the index, so a page is a range scan
+     * that stops after `limit` rows — no sort of the whole filtered set, and
+     * no cost that grows with how far in the reader has paged. Without it,
+     * every page read and sorted every document of that type and language.
+     */
+    index('contents_updated_idx').on(
+      t.type,
+      t.locale,
+      t.updatedAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
     index('contents_meta_gin').using('gin', t.meta),
     /*
      * So "is this asset used anywhere" is a question the database can answer.
