@@ -29,6 +29,8 @@ pnpm-debug.log*
 coverage/
 test-results/
 playwright-report/
+# A signed-in browser session: throwaway, and still a credential.
+e2e/.auth/
 
 # Editors
 .vscode/*

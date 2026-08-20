@@ -513,6 +513,16 @@ A module is a name and a function that registers handlers, returning one that re
 
 i18n and theming are load-bearing in phases 0 and 1 rather than polish at the end: both are far cheaper to build in than to retrofit, and both are cross-cutting enough that adding them late would touch nearly every file written before.
 
+## Browser tests
+
+`pnpm e2e` covers the faults that need a browser to exist at all: a router that keeps a component mounted, a dialog the platform owns, a request that actually goes somewhere. Everything else stays in Vitest, which is faster and does not need three containers.
+
+**Its own database, rebuilt every run.** `presslabz_e2e`, dropped and created by `e2e/scripts/prepare.ts`, then migrated and seeded through the same commands an installation runs — never by inserting rows, which would test a database this product cannot produce. The suite types into a real editor and presses a real save, so it must not be pointed at the database somebody is working in.
+
+**Its own ports and its own prefixes.** The API on 3100 and the admin on 5273, so a running `pnpm dev` is neither disturbed nor accidentally tested; `reuseExistingServer` is off for the same reason. Rate-limit counters and cached pages are namespaced to the run and cleared with the database, because they are as much its state as the rows are — sign-in is limited to ten attempts in fifteen minutes, and a suite that signs in per test walks into that rule by the third run of an afternoon. It signs in once, in a setup project, and every test borrows the session.
+
+**One hostname end to end**, `localhost` on both halves, for the reason the HTTP boundary section gives: the session cookie is host-only and `SameSite=Lax`, so mixing it with `127.0.0.1` drops the cookie with CORS perfectly satisfied.
+
 ## Commands
 
 Requires Node 24.12+, pnpm 11+ and Docker. First run:
@@ -533,6 +543,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm typecheck` | `tsc --noEmit` across all workspaces; the public site runs `astro sync` first, for the generated types |
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
+| `pnpm e2e` | Playwright, in a real browser, against its own database and its own pair of servers. Not part of `pnpm test`: it needs the service containers running |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |

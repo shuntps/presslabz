@@ -1,0 +1,20 @@
+{
+  "name": "@presslabz/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "//": "Browser tests. Not part of `pnpm test`: they need Postgres, Valkey, MinIO and two servers, which a unit run must not require.",
+  "scripts": {
+    "e2e": "node scripts/prepare.ts && playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@presslabz/db": "workspace:*",
+    "@types/node": "catalog:",
+    "iovalkey": "catalog:",
+    "postgres": "catalog:",
+    "typescript": "catalog:"
+  }
+}
