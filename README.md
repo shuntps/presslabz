@@ -47,16 +47,21 @@ Light and dark mode are built in, with three states — light, dark, and followi
 
 ## Stack
 
-| Concern | Choice |
-|---|---|
-| Core API | Fastify, tRPC and REST |
-| Admin | React, Vite, TanStack Router and Query |
-| Public rendering | Astro — zero JavaScript by default, islands where needed |
-| Database | PostgreSQL with Drizzle ORM |
-| Cache and sessions | Valkey |
-| Media | S3-compatible storage, `sharp` for AVIF and WebP |
-| Editor | Custom block model on Tiptap and ProseMirror |
-| Auth | httpOnly sessions, Argon2id, passkeys and TOTP |
+What is running is separated from what is committed to, because a stack table
+that mixes them is a promise dressed as a description.
+
+| Concern | Choice | State |
+|---|---|---|
+| Core API | Fastify, REST | Running |
+| Admin | React, Vite, TanStack Router and Query | Running |
+| Public rendering | Astro — zero JavaScript by default, islands where needed | Running |
+| Database | PostgreSQL with Drizzle ORM | Running |
+| Cache and sessions | Valkey | Running |
+| Media | S3-compatible storage, `sharp` for AVIF and WebP | Running |
+| Auth | httpOnly sessions, Argon2id | Running |
+| Editor | Custom block model on Tiptap and ProseMirror | Blocks and the whitelist renderer are running; the editor writes plain text until Tiptap arrives, which is what will let somebody *create* a link or an emphasis |
+| Auth, second factor | Passkeys / WebAuthn and TOTP | Committed to, not written |
+| Typed client transport | tRPC | Considered, not adopted — every route is REST today |
 
 Deployment targets self-hosted single-site installations on Node and Docker.
 

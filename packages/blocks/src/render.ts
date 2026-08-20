@@ -138,9 +138,13 @@ export function renderBlocksToHtml(blocks: Blocks, options: RenderOptions = {}):
 }
 
 /**
- * Everything a human would read, with no markup. Excerpts are generated from
- * it and search indexes it, so it must not silently skip a block type — a
- * paragraph that is invisible to search is worse than one that reads oddly.
+ * Everything a human would read, with no markup.
+ *
+ * The automatic excerpt is generated from this, and the search index will read
+ * it when there is one — the tsvector column exists, nothing queries it yet.
+ * Either way it must not silently skip a block type: a paragraph missing from
+ * an excerpt is a summary that misrepresents the document, and one missing
+ * from an index is a document nobody can find.
  */
 export function blocksToPlainText(blocks: Blocks): string {
   const parts: string[] = []

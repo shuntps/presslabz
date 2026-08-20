@@ -27,7 +27,7 @@ export const en = {
   'dashboard.name': 'Name',
   'dashboard.role': 'Role',
   'dashboard.capabilities': 'Capabilities',
-  'dashboard.empty': 'There is nothing here yet. Content arrives in the next phase.',
+  'dashboard.empty': 'Nothing to report here yet. Your documents are under Posts and Pages.',
 
   'content.status.draft': 'Draft',
   'content.status.scheduled': 'Scheduled',

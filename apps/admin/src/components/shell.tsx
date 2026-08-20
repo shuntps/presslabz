@@ -1,7 +1,7 @@
-import type { MessageKey } from '@presslabz/i18n'
 import { Link, Outlet } from '@tanstack/react-router'
 import { useContentTypes } from '../lib/content.ts'
 import { useLocale } from '../lib/i18n.tsx'
+import { TYPE_LABELS } from '../lib/labels.ts'
 import { useSignOut } from '../lib/session.ts'
 import { LocaleSwitcher } from './locale-switcher.tsx'
 import { ThemeSwitcher } from './theme-switcher.tsx'
@@ -14,16 +14,6 @@ import { ThemeSwitcher } from './theme-switcher.tsx'
  * A word is already translated by the catalogue that translates everything
  * else, and it says exactly one thing.
  */
-
-/**
- * Labels for the types PressLabz declares. A type from a plugin will bring
- * its own catalogue in phase 5; until then an unknown name renders as itself
- * rather than as a missing-key placeholder.
- */
-const TYPE_LABELS: Record<string, MessageKey> = {
-  post: 'content.type.post.plural',
-  page: 'content.type.page.plural',
-}
 
 export function Shell() {
   const { t } = useLocale()

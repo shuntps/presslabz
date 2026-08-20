@@ -19,14 +19,7 @@ import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '..
 import { messageForError } from '../lib/errors.ts'
 import { growWithContent } from '../lib/growing.ts'
 import { useLocale } from '../lib/i18n.tsx'
-
-const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
-  draft: 'content.status.draft',
-  scheduled: 'content.status.scheduled',
-  published: 'content.status.published',
-  archived: 'content.status.archived',
-  trash: 'content.status.trash',
-}
+import { STATUS_LABELS } from '../lib/labels.ts'
 
 interface Draft {
   title: string

@@ -25,7 +25,7 @@ export const fr: Messages = {
   'dashboard.name': 'Nom',
   'dashboard.role': 'Rôle',
   'dashboard.capabilities': 'Capacités',
-  'dashboard.empty': 'Rien ici pour l’instant. Le contenu arrive à la phase suivante.',
+  'dashboard.empty': 'Rien à signaler ici pour l’instant. Vos documents sont dans Articles et Pages.',
 
   'content.status.draft': 'Brouillon',
   'content.status.scheduled': 'Planifié',

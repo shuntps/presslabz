@@ -50,14 +50,14 @@ These four rules are the point of the project. Designs that violate them should 
 
 | Concern | Choice | Rationale |
 |---|---|---|
-| Core / API | Fastify + tRPC + REST | Encapsulated-plugin architecture maps directly onto the extension model |
+| Core / API | Fastify, REST | Encapsulated-plugin architecture maps directly onto the extension model. tRPC was considered and is not adopted: every route is REST, and a second transport would be a second contract to keep |
 | Admin | React + Vite + TanStack Router/Query | An admin dashboard is a SPA; SSR buys nothing here |
 | Public rendering | Astro | Zero JS by default plus islands — the main lever for "fast". A theme is an Astro package |
 | Database | PostgreSQL + Drizzle ORM | Type-safe, migrations as code, native JSONB and full-text search |
 | Cache / sessions | Valkey (Redis-compatible) | |
 | Media | S3-compatible (MinIO locally) + `sharp` → AVIF/WebP | Nothing executable is ever served from uploads |
-| Editor | Custom block model on Tiptap/ProseMirror | Output is typed JSON blocks, not HTML |
-| Auth | httpOnly sessions, Argon2id, passkeys/WebAuthn + TOTP | Built in from the start, not a plugin |
+| Editor | Custom block model on Tiptap/ProseMirror | Output is typed JSON blocks, not HTML. The block model and the renderer are running; Tiptap is not in yet, which is why marks can be preserved and not created |
+| Auth | httpOnly sessions, Argon2id — passkeys/WebAuthn and TOTP committed to, not written | Built in from the start, not a plugin |
 | Validation | Zod at every boundary | |
 
 Monorepo via pnpm workspaces and Turborepo:
@@ -77,6 +77,7 @@ packages/i18n      locale config, message catalogues, formatting
 packages/theme-kit the theme contract: typed views, defineTheme, the head and
                    the block renderer no theme reimplements
 themes/default     the theme PressLabz ships with
+e2e                browser tests: its own database, its own pair of servers
 ```
 
 ## Data model
@@ -536,6 +537,16 @@ Both quiet weights moved rather than one. Raising only the faint token would hav
 **Placeholders are not labels.** A placeholder disappears at the first keystroke, which is exactly when a field stops being self-explanatory to somebody listening rather than looking. The galley's fields keep their look — a title looks like a title, and turning the editor into a form is the thing the design avoids — and carry a visually hidden label, or an `aria-label` with the same words the placeholder uses.
 
 **axe runs against the real pages, and a keyboard walks the real path.** The browser suite scans the sign-in screen, the dashboard, a listing, the editor with a document open, and the picker holding assets nobody described, at WCAG 2.2 AA; then it composes a document and saves it without touching the pointer. The scan found a genuine fault nobody's eye would have: the block controls were 1.35rem, under the 24px floor for a pointer target. They are 1.5rem now — not the full tap target, because they sit beside a line of text and a finger-sized row of them would cover the writing, which is the trade the standard's own floor exists for.
+
+## The fonts, and what shipping them obliges
+
+Three families travel with the product: Archivo for the interface, JetBrains Mono for machine-generated values, and the serif the reader's own writing is set in. Self-hosted, because a content manager that fetches its type from a font CDN on every admin page load has handed away the thing it was built to keep.
+
+**All three are under the SIL Open Font License, and each file here is a subset** — the characters the interface and the default theme actually draw. A subset is a *Modified Version* in the licence's terms, which is not a footnote: it is the reason the serif is called what it is. Source Serif's copyright reserves the name "Source", and clause 3 forbids a Modified Version from using a Reserved Font Name. What ships is Adobe's unmodified outlines under our own name — **PressLabz Serif**, in the font's name table and in `fonts.css` — with Adobe's copyright notice intact, which is exactly the shape the licence asks for. Archivo and JetBrains Mono declare no reserved name; their subsets keep theirs.
+
+**Provenance is checkable rather than asserted.** `pnpm --filter @presslabz/tokens fonts:build` downloads each family from a pinned commit or release tag, verifies its SHA-256 against a digest recorded in the script, subsets it, renames what has to be renamed, and writes the file. `packages/tokens/src/fonts/NOTICE.md` carries the table — file, family, upstream, pin, version, digest — beside the full licence text of each. A font in a repository is somebody else's work under somebody else's terms; the alternative to this is a sentence asking to be believed.
+
+The subset is why a reader whose *content* needs a letter outside Latin and the French diacritics gets it from their system's serif. That is a visible seam and a deliberate trade: the three files together are under 300 KB, where the unsubsetted originals are more than 2 MB.
 
 ## Nothing unused stays
 

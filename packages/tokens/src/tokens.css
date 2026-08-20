@@ -100,7 +100,7 @@
    * stays exactly as small no matter how far the reader zooms in.
    */
   --pl-font-machine: "Archivo", ui-sans-serif, system-ui, sans-serif;
-  --pl-font-content: "Source Serif 4", ui-serif, Georgia, serif;
+  --pl-font-content: "PressLabz Serif", ui-serif, Georgia, serif;
   --pl-font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /*

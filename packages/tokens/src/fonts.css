@@ -1,10 +1,10 @@
 /*
  * The three faces of the interface, self-hosted.
  *
- * A self-hosted CMS that fetches its type from a font CDN on every admin page
- * load has handed away the thing it was built to keep. These ship with the
- * product: 292 KB for all three, subset to Latin plus the French diacritics
- * and the punctuation the interface actually uses.
+ * A self-hosted content manager that fetches its type from a font CDN on every
+ * admin page load has handed away the thing it was built to keep. These ship
+ * with the product: subset to Latin plus the French diacritics, the
+ * typographic punctuation and the marks the interface uses as icons.
  *
  * All three are variable fonts under the SIL Open Font License, which is what
  * lets an AGPL product redistribute them without adding a licence question to
@@ -12,7 +12,12 @@
  * case every width too — the display setting and the interface setting are
  * the same file at different points on one axis.
  *
- * The family names are the roles, not the typefaces, so a theme author
+ * The serif carries a name of ours because a subset is a Modified Version and
+ * "Source" is a Reserved Font Name; ./fonts/NOTICE.md says so at length, along
+ * with the pins, the digests and the copyright notices. `pnpm --filter
+ * @presslabz/tokens fonts:build` regenerates every file here.
+ *
+ * The token names are the roles, not the typefaces, so a theme author
  * overrides the value rather than learning what we happened to pick. See the
  * --pl-font-* tokens in tokens.css.
  */
@@ -29,11 +34,11 @@
 
 /* Content: anything that is, or stands for, the reader's own writing. */
 @font-face {
-  font-family: "Source Serif 4";
+  font-family: "PressLabz Serif";
   font-style: normal;
   font-weight: 200 900;
   font-display: swap;
-  src: url("./fonts/SourceSerif4.woff2") format("woff2-variations");
+  src: url("./fonts/PressLabzSerif.woff2") format("woff2-variations");
 }
 
 /* Data: slugs, capability names, locale codes, dates, counts. */

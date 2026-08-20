@@ -14,11 +14,14 @@
   "//": "Import ./breakpoints or ./preferences from anything without a DOM \u2014 the root entry pulls in document and HTMLElement.",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "fonts:build": "node scripts/build-fonts.mjs",
     "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "subset-font": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "wawoff2": "catalog:"
   }
 }

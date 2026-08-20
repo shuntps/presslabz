@@ -1,5 +1,5 @@
 import type { ContentStatus } from '@presslabz/core'
-import { formatDate, type MessageKey } from '@presslabz/i18n'
+import { formatDate } from '@presslabz/i18n'
 import { Link, useParams } from '@tanstack/react-router'
 import {
   type ContentSummary,
@@ -10,19 +10,7 @@ import {
 } from '../lib/content.ts'
 import { messageForError, worthRetrying } from '../lib/errors.ts'
 import { useLocale } from '../lib/i18n.tsx'
-
-const TYPE_LABELS: Record<string, MessageKey> = {
-  post: 'content.type.post.plural',
-  page: 'content.type.page.plural',
-}
-
-const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
-  draft: 'content.status.draft',
-  scheduled: 'content.status.scheduled',
-  published: 'content.status.published',
-  archived: 'content.status.archived',
-  trash: 'content.status.trash',
-}
+import { STATUS_LABELS, TYPE_LABELS } from '../lib/labels.ts'
 
 /**
  * The marginal rubric: a scribe's mark beside what mattered, carrying
