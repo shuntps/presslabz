@@ -112,6 +112,18 @@ export const en = {
   'nav.dashboard': 'Dashboard',
   'nav.compose': 'Compose',
 
+  /* Public site. Everything a reader sees that the site says on its own behalf. */
+  'web.notFound.title': 'Page not found',
+  'web.notFound.body': 'That page does not exist, or is not published yet.',
+  'web.notFound.home': 'Go to the home page',
+  'web.archive.title': 'Writing',
+  'web.archive.empty': 'Nothing published yet.',
+  'web.archive.older': 'Older',
+  'web.archive.newer': 'Newer',
+  'web.archive.page': 'Page {page} of {pages}',
+  'web.home.latest': 'Latest',
+  'web.home.readMore': 'Read',
+
   'error.notFound': 'Not found',
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',

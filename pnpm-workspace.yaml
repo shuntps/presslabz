@@ -43,6 +43,12 @@ catalog:
   # Auth
   '@node-rs/argon2': 2.1.0
 
+  # Public site. Astro 7 ships route caching with tag invalidation and a
+  # Cache Provider API, which is what packages/cache plugs into: the API is a
+  # separate process, so an in-process invalidate() could never reach it.
+  astro: 7.2.4
+  '@astrojs/node': 11.1.4
+
   # Admin
   react: 19.2.8
   react-dom: 19.2.8

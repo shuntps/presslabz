@@ -8,6 +8,7 @@
     "dev": "node --env-file-if-exists=../../.env --watch src/index.ts",
     "start": "node --env-file-if-exists=../../.env src/index.ts",
     "seed": "node --env-file-if-exists=../../.env src/seed.ts",
+    "seed:demo": "node --env-file-if-exists=../../.env src/seed-demo.ts",
     "typecheck": "tsc --noEmit",
     "check:native": "node --env-file-if-exists=../../.env scripts/native-load-check.ts",
     "test": "vitest run --passWithNoTests"
@@ -21,6 +22,7 @@
     "@fastify/proxy-addr": "catalog:",
     "@fastify/rate-limit": "catalog:",
     "@node-rs/argon2": "catalog:",
+    "@presslabz/blocks": "workspace:*",
     "@presslabz/core": "workspace:*",
     "@presslabz/db": "workspace:*",
     "@presslabz/i18n": "workspace:*",

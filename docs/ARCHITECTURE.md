@@ -267,6 +267,20 @@ The rule is stricter than status alone: a row carrying `published` with a date i
 
 **Pages nest, but the unique index is on `(type, locale, slug)`.** A slug therefore already identifies a row, and the ancestor chain is only needed to know which URL is canonical. The walk is one recursive query, restricted to the same type and locale — a parent in another language is not part of this language's path — and it is depth-capped, because `parentId` has no cycle check behind it yet and a recursive query over a cycle does not terminate.
 
+### Routing
+
+`apps/web` is Astro 7 with the Node adapter in standalone mode, rendering on demand — every page is a database read, so there is nothing to prerender. Astro's telemetry is turned off in the package scripts rather than by a per-machine opt-out: a CMS whose argument is that it keeps what it runs does not phone home about its builds.
+
+**Every locale is prefixed, the default one included.** `/en/…` and `/fr/…`, with no unprefixed form. An unprefixed default means changing `DEFAULT_LOCALE` later moves every URL on the site, and it makes `hreflang` describe two different URL shapes. Astro's own i18n block does the routing; its automatic root redirect is turned off, because `/` belongs to the reader: `negotiateLocale` answers it from `Accept-Language`, restricted to what the installation actually serves, with a 302 and `Vary: Accept-Language`. A permanent redirect there would be cached by the browser and handed to the next person at that machine.
+
+`SITE_URL`, `DEFAULT_LOCALE`, `SUPPORTED_LOCALES`, `WEB_HOST` and `WEB_PORT` are declared on the `build` task in `turbo.json` for that reason. **Turbo runs in strict env mode**, which is the rule behind every `env` list in that file and is worth stating once here, since the file itself carries no comments: a variable missing from a task's list is filtered out of that task's environment and takes no part in its cache key. A build would then be made against the schema defaults while the installation runs on something else, and the cache would hand that build back afterwards. The same applies to `test`, where it has already cost 45 tests that vanished from a green run.
+
+Consequence worth stating: the locale list is fixed when the site is built, because that block is build-time configuration. Narrowing `SUPPORTED_LOCALES` at runtime is fine; adding a language to a built site is refused at boot rather than half-working, since Astro would not know the route exists.
+
+**The routes come from the declared content types, not from the pages directory.** There is one catch-all under `[locale]`, and it resolves a path against the registry: a type's `basePath` is part of its declaration — `blog` for posts, the locale root for pages — so moving a type moves its URLs, and a type declared by a plugin is routable without a file being added. `basePath` has to be declared because the unique index is `(type, locale, slug)`: a post and a page may both be called `about`, and without a segment to tell them apart one of them is unreachable. Two types claiming one segment is refused by the registry, since which one wins would otherwise depend on plugin load order.
+
+**A document has one URL.** `trailingSlash` is `never`, and a nested page reached by any other path — its bare slug, or a wrong ancestor — is answered with a 301 to its canonical path rather than rendered there. The slug identifies the document and the path presents it; serving both would mean two things to index, two cache entries, and two purges to get right. A page number past the end of an archive, or one that is not a positive integer, is a 404 for the same reason: an archive that answers 200 for every number has an unbounded set of URLs that all say nothing.
+
 ### The page cache
 
 `packages/cache` holds both halves: the site collects tags while it renders, the API purges them when content changes. A tag is built by that package or not at all, since a site writing `content:x` while the API purges `contents:x` is a cache that looks like it works — a miss is invisible and a stale page is only ever noticed by a reader.
@@ -276,6 +290,14 @@ Collection is `AsyncLocalStorage`, so a theme declares nothing and cannot forget
 Everything that touches more than one key is one Lua script, for the same reason the rate limiter's counter is. The interleaving that matters is a publish landing *between* a render and its store: the purge finds nothing to delete because the page is not written yet, and the render then stores what it read. Every lookup therefore returns Valkey's own clock, and a store is refused when a tag it carries was purged at or after that instant. A tie counts as the purge winning — that costs one uncached render, where the other reading keeps a page that is already wrong for a whole ttl.
 
 The ttl is a backstop for a purge that never arrived, not the invalidation. Caching is single-instance Valkey by design: purging fans out to keys the caller cannot name in advance, and a tag set has to live with its members.
+
+Astro 7 ships route caching of its own — `Astro.cache.set({ tags })`, `routeRules`, and a Cache Provider API — and `packages/cache` is what will back it rather than compete with it. The deciding fact is that `cache.invalidate()` runs inside the Astro process, and the process that knows a document was published is the API. The default in-memory provider dies with the process and is shared with nobody, so a store both processes can reach is required whatever the framework offers; using the provider seam means the framework keeps handling `Vary`, `swr` and revalidation.
+
+### Tooling the public site cannot use yet
+
+`astro check` cannot run: the Astro language server needs the TypeScript programmatic API, and the native TS 7 compiler this repository runs does not ship it (withastro/roadmap#1321). `.ts` modules are checked with `tsc`, and `astro build` — which CI runs — is what rejects a broken `.astro` template. Reinstating `astro check` is a one-line change once that lands.
+
+Biome reads only the frontmatter of an `.astro` file, so every import used solely in the template looks unused to it. `noUnusedImports` and `noUnusedVariables` are turned off for `**/*.astro` in `biome.json`; without that, `lint:fix` deletes imports the page needs. Nothing else about those files is exempt.
 
 ## Hook API
 
@@ -309,17 +331,19 @@ pnpm install
 pnpm services:up      # Postgres, Valkey, MinIO — waits until all are healthy
 pnpm db:migrate
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
-pnpm dev              # API on :3000, admin on :5173
+pnpm seed:demo        # optional: fixture posts and pages, for development
+pnpm dev              # API on :3000, admin on :5173, public site on :4321
 ```
 
 | Command | Purpose |
 |---|---|
 | `pnpm dev` | Run every app in watch mode |
-| `pnpm typecheck` | `tsc --noEmit` across all workspaces |
+| `pnpm typecheck` | `tsc --noEmit` across all workspaces; the public site runs `astro sync` first, for the generated types |
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
+| `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |
 | `pnpm db:generate` | Write a migration from the schema diff |
 | `pnpm db:migrate` | Apply pending migrations |
 | `pnpm db:studio` | Browse the database |

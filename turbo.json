@@ -6,7 +6,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "env": ["SITE_URL", "DEFAULT_LOCALE", "SUPPORTED_LOCALES", "WEB_HOST", "WEB_PORT"]
     },
     "dev": {
       "cache": false,
@@ -17,11 +18,6 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      // Strict mode is the default: a variable missing from this list is
-      // filtered out of the task's environment and takes no part in the cache
-      // key. A suite would then quietly test the schema defaults while the
-      // installation runs on something else, and the cache would hand back a
-      // result computed under a different configuration.
       "env": [
         "CI",
         "DATABASE_URL",
@@ -32,6 +28,9 @@
         "S3_ACCESS_KEY_ID",
         "S3_SECRET_ACCESS_KEY",
         "MEDIA_BASE_URL",
+        "SITE_URL",
+        "WEB_HOST",
+        "WEB_PORT",
         "ADMIN_ORIGIN",
         "DEFAULT_LOCALE",
         "SUPPORTED_LOCALES",

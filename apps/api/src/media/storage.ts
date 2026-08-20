@@ -6,6 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
+import { resolveMediaBase, mediaUrl as sharedMediaUrl } from '@presslabz/core'
 import { env } from '../env.ts'
 
 /**
@@ -93,8 +94,17 @@ export async function deleteObjects(keys: readonly string[]): Promise<void> {
   )
 }
 
-const mediaBase = env.MEDIA_BASE_URL ?? `${env.S3_ENDPOINT}/${env.S3_BUCKET}`
+/*
+ * Resolved in packages/core, because the public site has to build the same URL
+ * for the same asset: one host here and another there is a broken image that
+ * only shows up in production.
+ */
+const mediaBase = resolveMediaBase({
+  mediaBaseUrl: env.MEDIA_BASE_URL,
+  s3Endpoint: env.S3_ENDPOINT,
+  s3Bucket: env.S3_BUCKET,
+})
 
 export function mediaUrl(storageKey: string): string {
-  return `${mediaBase}/${storageKey}`
+  return sharedMediaUrl(mediaBase, storageKey)
 }

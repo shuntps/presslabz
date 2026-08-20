@@ -22,6 +22,7 @@
     "db:migrate": "pnpm --filter @presslabz/db migrate",
     "db:studio": "pnpm --filter @presslabz/db studio",
     "seed": "pnpm --filter @presslabz/api seed",
+    "seed:demo": "pnpm --filter @presslabz/api seed:demo",
     "services:up": "docker compose up -d --wait",
     "services:down": "docker compose down",
     "services:reset": "docker compose down -v && docker compose up -d --wait"

@@ -87,6 +87,22 @@ export interface ContentTypeOptions<TMeta extends z.ZodType = typeof metaDefault
   readonly meta?: TMeta
   /** Overrides the defaults above, one operation at a time. */
   readonly access?: Partial<Record<ContentOperation, OperationAccess>>
+  /**
+   * The path segment this type's documents live under on the public site:
+   * `blog` puts a post at `/en/blog/hello`, and `''` puts a page at
+   * `/en/about`.
+   *
+   * It has to be declared rather than derived, because the unique index is on
+   * `(type, locale, slug)` — a post and a page may both be called `about`, and
+   * without a segment to tell them apart one of the two would be unreachable.
+   *
+   * Defaults to the type's own name, which is the choice that can never
+   * collide. Only one type may sit at the root, and a document there cannot
+   * use a slug that is another type's base path: the more specific route wins,
+   * which is what makes `/en/blog` the archive rather than a page called
+   * "blog".
+   */
+  readonly basePath?: string
 }
 
 /**
@@ -102,6 +118,8 @@ export interface ContentTypeOptions<TMeta extends z.ZodType = typeof metaDefault
 export interface AnyContentType {
   readonly name: string
   readonly hierarchical: boolean
+  /** Public URL segment. Empty means this type sits at the locale root. */
+  readonly basePath: string
   readonly taxonomies: readonly string[]
   readonly meta: z.ZodType
   readonly access: Readonly<Record<ContentOperation, OperationAccess>>
@@ -132,6 +150,11 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
 ) {
   if (!CONTENT_TYPE_NAME_PATTERN.test(options.name)) {
     throw new Error(`Content type name "${options.name}" must match ${CONTENT_TYPE_NAME_PATTERN}`)
+  }
+
+  const basePath = options.basePath ?? options.name
+  if (basePath !== '' && !CONTENT_TYPE_NAME_PATTERN.test(basePath)) {
+    throw new Error(`Content type "${options.name}" has a base path that is not a path segment`)
   }
 
   const hierarchical = options.hierarchical ?? false
@@ -204,6 +227,7 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
 
   return {
     name: options.name,
+    basePath,
     hierarchical,
     taxonomies: options.taxonomies ?? [],
     meta,
@@ -429,10 +453,26 @@ export interface ContentTypeRegistry {
 export function createContentTypeRegistry(types: readonly AnyContentType[]): ContentTypeRegistry {
   const byName = new Map<string, AnyContentType>()
 
+  const byBasePath = new Map<string, string>()
+
   for (const type of types) {
     if (byName.has(type.name)) {
       throw new Error(`Content type "${type.name}" is registered twice`)
     }
+
+    /*
+     * Two types under one segment is a site where one of them is unreachable,
+     * and the unreachable one is decided by registration order — which is a
+     * plugin load order, so it would differ between installations. Refusing
+     * here is the only place that can see both declarations at once.
+     */
+    const taken = byBasePath.get(type.basePath)
+    if (taken !== undefined) {
+      const where = type.basePath === '' ? 'the locale root' : `"/${type.basePath}"`
+      throw new Error(`Content types "${taken}" and "${type.name}" both claim ${where}`)
+    }
+
+    byBasePath.set(type.basePath, type.name)
     byName.set(type.name, type)
   }
 

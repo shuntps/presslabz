@@ -54,3 +54,24 @@ describe('createTranslator', () => {
     expect('Hello {name}'.replace(/\{(\w+)\}/g, () => 'world')).toBe('Hello world')
   })
 })
+
+describe('negotiating against what the site serves', () => {
+  it('never answers with a language the installation does not run', () => {
+    expect(negotiateLocale('en-GB,en;q=0.9', ['fr'])).toBe('fr')
+    expect(negotiateLocale('fr,en;q=0.8', ['en'])).toBe('en')
+  })
+
+  it('still prefers the reader among the languages it does run', () => {
+    expect(negotiateLocale('fr-CA,fr;q=0.9,en;q=0.5', ['en', 'fr'])).toBe('fr')
+  })
+
+  /*
+   * A site can be narrowed to a language that is not the catalogue's default,
+   * and falling back to that default would answer with content that does not
+   * exist.
+   */
+  it('falls back inside the supported list', () => {
+    expect(negotiateLocale(null, ['fr'])).toBe('fr')
+    expect(negotiateLocale('de', ['fr'])).toBe('fr')
+  })
+})

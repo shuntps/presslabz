@@ -1,0 +1,49 @@
+---
+import { createBuiltinRegistry } from '@presslabz/core'
+import { createTranslator, formatDate } from '@presslabz/i18n'
+import NotFound from '../../components/NotFound.astro'
+import { loadArchive } from '../../data/content.ts'
+import Base from '../../layouts/Base.astro'
+import { archivePath, documentPath, primaryType } from '../../lib/routes.ts'
+
+const locale = Astro.locals.locale
+const registry = createBuiltinRegistry()
+const type = primaryType(registry)
+
+const archive = locale && type ? await loadArchive({ type, locale, page: 1 }) : null
+const t = createTranslator(locale ?? undefined)
+---
+
+{
+  locale === null || type === undefined || archive === null ? (
+    <NotFound locale={locale ?? 'en'} />
+  ) : (
+    <Base locale={locale} title="PressLabz">
+      <main>
+        <h1 class="pl-title">{t('web.home.latest')}</h1>
+
+        {archive.rows.length === 0 ? <p>{t('web.archive.empty')}</p> : null}
+
+        {archive.rows.map((row) => (
+          <article>
+            <h2 class="pl-title">
+              <a href={documentPath(locale, type, [row.slug])}>{row.title}</a>
+            </h2>
+            {row.publishedAt ? (
+              <time datetime={row.publishedAt.toISOString()}>
+                {formatDate(row.publishedAt, locale, { dateStyle: 'long' })}
+              </time>
+            ) : null}
+            {row.excerpt ? <p>{row.excerpt}</p> : null}
+          </article>
+        ))}
+
+        {archive.total > archive.rows.length ? (
+          <p>
+            <a href={archivePath(locale, type)}>{t('web.archive.title')}</a>
+          </p>
+        ) : null}
+      </main>
+    </Base>
+  )
+}

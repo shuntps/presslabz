@@ -49,3 +49,28 @@ export function canPerformOnMedia(
 export function canEditMedia(actor: Actor, resource: MediaResource): boolean {
   return canPerformOnMedia('update', actor, resource)
 }
+
+/**
+ * Where readers fetch an asset from.
+ *
+ * Two apps need this answer — the API when it reports an upload, the public
+ * site when it renders a block — and they must agree, because a page holding
+ * one host while the CDN is configured as another is a broken image that only
+ * appears in production.
+ *
+ * `mediaBaseUrl` is the CDN in front of the bucket; without it the endpoint the
+ * API writes to is also the one readers use, which is what MinIO serves
+ * locally.
+ */
+export function resolveMediaBase(config: {
+  readonly mediaBaseUrl?: string | undefined
+  readonly s3Endpoint: string
+  readonly s3Bucket: string
+}): string {
+  const base = config.mediaBaseUrl ?? `${config.s3Endpoint}/${config.s3Bucket}`
+  return base.endsWith('/') ? base.slice(0, -1) : base
+}
+
+export function mediaUrl(base: string, storageKey: string): string {
+  return `${base}/${storageKey}`
+}
