@@ -592,6 +592,16 @@ The baseline is deprecation-free by intention, which only means anything if some
 
 **One deprecation is not ours to remove.** `drizzle-kit` pulls `@esbuild-kit/esm-loader`, replaced upstream by `tsx`, and with it an esbuild old enough to carry a known advisory. The pnpm override keeps that esbuild out of this repository; the upstream tickets are named in `pnpm-workspace.yaml` beside it, with the date they were last checked. It goes when drizzle-kit stops depending on the loader, not before.
 
+## The supply chain, and how it is kept current
+
+**Everything a build executes is pinned to something that cannot move.** Third-party actions are referenced by full commit SHA with the version in a comment beside them, because a tag is a name its owner can move: `@v7` today and `@v7` tomorrow can be different code, and no diff in this repository would show it. Service images are pinned by digest for the same reason — a tag can be repushed, a digest cannot.
+
+**pnpm is installed from npm rather than from an action.** `pnpm/action-setup` bundles a `brace-expansion` affected by GHSA-3jxr-9vmj-r5cp, and the shortest way to stop shipping a vulnerable dependency is to stop depending on the thing that carries it. The version comes from `packageManager` in the root `package.json`, read at install time, so the workflow and the repository cannot disagree about which pnpm this is — the one drawback of installing it by hand, removed.
+
+**Dependabot watches three ecosystems**: the actions, the workspace (npm, which is how pnpm is watched — the lockfile is format 9.0), and the service images (`docker-compose`, which is a separate ecosystem from `docker`; this repository has no Dockerfile). Development dependencies are grouped into one pull request, because a type checker, a linter and a test runner that move as a set cannot be merged apart.
+
+Pinning by SHA and automated updates are not alternatives: the pin is what makes an update *visible*, and Dependabot is what stops a pin from quietly becoming ancient. Without the first, a moved tag changes what runs with no record; without the second, nothing in the repository can tell you a pin is two years old.
+
 ## Nothing unused stays
 
 **An export nothing imports is not an API, it is a claim.** `pnpm lint:unused` reports files, exports and dependencies that nothing reaches — it needs no installation, and it is the check that found two functions nobody called, seventeen exports narrowed back to their own module, four dependencies declared and never imported, and ten message keys in two languages that no screen renders. A constant that names a policy stays where it is; what goes is the `export` in front of it, because the surface should say what is actually used and can widen again the day something needs it.

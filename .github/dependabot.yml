@@ -1,14 +1,47 @@
 version: 2
 
+# What is watched, and why each entry exists. An ecosystem listed here that has
+# no manifest is an error in the Dependabot log rather than a silent no-op, so
+# entries are added beside the files they track and removed with them.
 updates:
-  # Actions pinned in CI workflows. npm ecosystems are added in phase 0, once the
-  # workspace manifests exist — Dependabot reports an error for a directory that
-  # has no manifest, so entries are added alongside the package.json they track.
+  # The actions the workflow runs. They are pinned to full commit SHAs, which
+  # is what stops a moved tag from changing executed code — and which also
+  # means nothing but this can tell us a new release exists. Dependabot
+  # rewrites the SHA and puts the version in the comment beside it.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     commit-message:
       prefix: ci
+    labels:
+      - dependencies
+
+  # The workspace. One entry covers every package.json in it, and the
+  # catalogues in pnpm-workspace.yaml with them: the lockfile is format 9.0,
+  # which is what Dependabot reads.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+    groups:
+      # One pull request for a coordinated bump rather than four that cannot be
+      # merged independently — the type checker, the linter and the test runner
+      # each move as a set.
+      development:
+        dependency-type: development
+
+  # The service containers. docker-compose is its own ecosystem, separate from
+  # `docker`, which reads Dockerfiles — and this repository has none.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
     labels:
       - dependencies
