@@ -28,7 +28,7 @@
   },
   "//dev": "--force because Astro 7 keeps one dev server per project and refuses a second. Under turbo that refusal fails the whole `pnpm dev` pipeline \u2014 the API and the admin go down with it \u2014 over a server left running by an earlier session. Replacing it is what a person means by running dev again.",
   "//telemetry": "Astro phones home with anonymous build data by default. A self-hosted CMS whose whole argument is that it keeps what it runs does not do that, so every script here opts out rather than relying on a per-machine `astro telemetry disable`.",
-  "//typecheck": "tsc rather than `astro check`: the Astro language server needs the TypeScript programmatic API, which the native TS 7 compiler this repository runs does not ship (withastro/roadmap#1321). tsc covers the .ts modules; `astro build` is what compiles and rejects a broken .astro template, which is why CI runs it.",
+  "//typecheck": "tsc rather than `astro check`: the Astro language server needs the TypeScript programmatic API, which the native TS 7 compiler this repository runs does not ship (discussion https://github.com/withastro/roadmap/discussions/1321). tsc covers the .ts modules; `astro build` is what compiles and rejects a broken .astro template, which is why CI runs it.",
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",

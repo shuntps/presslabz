@@ -474,7 +474,7 @@ Issuing a link is authorized by the same function that authorizes reading the do
 
 ### Tooling the public site cannot use yet
 
-`astro check` cannot run: the Astro language server needs the TypeScript programmatic API, and the native TS 7 compiler this repository runs does not ship it (withastro/roadmap#1321). `.ts` modules are checked with `tsc`, and `astro build` — which CI runs — is what rejects a broken `.astro` template. Reinstating `astro check` is a one-line change once that lands.
+`astro check` cannot run: the Astro language server needs the TypeScript programmatic API, and the native TS 7 compiler this repository runs does not ship it (discussion https://github.com/withastro/roadmap/discussions/1321). `.ts` modules are checked with `tsc`, and `astro build` — which CI runs — is what rejects a broken `.astro` template. Reinstating `astro check` is a one-line change once that lands.
 
 **A running dev server caches a package's export conditions.** Adding an entry to a workspace package's `exports` map makes the new module resolve to *"is not exported under the conditions…"* until the dev server is restarted, and nothing in the message suggests that is the cause. `packages/theme-kit` therefore exports its components through one wildcard — `"./*.astro": "./src/*.astro"` — so adding a component never edits `package.json` and never trips it. Only components live in that directory, so the wildcard exposes exactly what it should.
 

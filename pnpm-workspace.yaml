@@ -10,12 +10,19 @@ packages:
 # legacy baggage.
 #
 # Not ours to remove: it is a transitive dependency of a tool we do not
-# control. Upstream is aware — drizzle-team/drizzle-orm#5304 asks for the
-# replacement by tsx, #5689 proposes dropping the loader, and #5481 tracks the
-# esbuild versions that come with it; all three were open when this was last
-# checked, on 2026-08-20. The override is what keeps the vulnerable esbuild out
-# of this repository until one of them lands, and it goes the day drizzle-kit
-# stops depending on the loader.
+# control. Upstream is aware, and the references are written in full because a
+# bare "#5689" means this repository's 5689 to anything that reads it:
+#
+#   issue https://github.com/drizzle-team/drizzle-orm/issues/5304
+#     asks for the replacement of @esbuild-kit/* by tsx
+#   pull request https://github.com/drizzle-team/drizzle-orm/pull/5689
+#     drops the @esbuild-kit/esm-loader dependency
+#   issue https://github.com/drizzle-team/drizzle-orm/issues/5481
+#     tracks the vulnerable esbuild versions that come with it
+#
+# All three were open when this was last checked, on 2026-08-20. The override
+# is what keeps the vulnerable esbuild out of this repository until one of them
+# lands, and it goes the day drizzle-kit stops depending on the loader.
 overrides:
   esbuild@<0.25.0: '>=0.25.0'
 
