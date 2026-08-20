@@ -8,9 +8,11 @@ The decisions the implementation follows, written down before the code exists so
 
 All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site: the suite starts what production starts and asks it questions over a socket.
 
+**What is not built.** Phase 5 in its entirety — the `isolated-vm` sandbox, the permission manifest and the signed registry — so an extension is first-party code and nothing yet makes somebody else's safe to install. Beneath that, four gaps named where they live rather than tracked elsewhere: the editor preserves inline marks but cannot create one until Tiptap arrives; `defineTaxonomy()` does not exist, so a content type lists taxonomies as plain strings; nothing observes `request.signal`, which is why the handler timeout stays at zero; and passkeys and TOTP are committed to in the stack and not written.
+
 Everything below is settled, not proposed.
 
-PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It deliberately borrows WordPress's UX vocabulary — admin dashboard, themes, plugins, roles and capabilities — while rejecting its data model and security model.
+PressLabz is a from-scratch content management system: modern, secure, fast. It deliberately borrows the UX vocabulary the classic content managers taught the web — admin dashboard, themes, plugins, roles and capabilities — while rejecting the data model and the security model that usually come with it.
 
 ## Conventions
 
@@ -22,23 +24,25 @@ PressLabz is a from-scratch alternative to WordPress: modern, secure, fast. It d
 
 **A module that exports a React component exports nothing else.** This is a project convention, deliberately stricter than the plugin's rule: `@vitejs/plugin-react` tolerates some simple constant exports and invalidates the module when an incompatible export changes. What was observed is the second half of that — `BLOCK_LABELS`, `CREATABLE_BLOCKS` and the two block constructors sat beside `BlockEditor`, and every edit answered `Could not Fast Refresh ("BLOCK_LABELS" export is incompatible)` and reloaded the page. An object, an array or a function is rebuilt on each evaluation, so it cannot be matched against the previous one; a reload in an editor costs the draft being typed. The convention avoids having to reason about which exports are comparable while writing UI. Block metadata and constructors live in `lib/blocks.ts`, and anything similar belongs beside them rather than next to a component.
 
+**A test that reads a page asserts the status first.** Astro answers a template that throws with a complete, correct-looking document and a failed status, so `expect(html).toContain(…)` was true of a response no browser would show: seventy-three tests stayed green while `/en/blog` returned 500, and the defect reached the owner by being clicked. Page reads go through a helper that insists on 200 before returning a body. The same reasoning applies anywhere a body is easier to assert than the envelope around it.
+
 **A promise a test starts now and asserts on later must be held.** The suites that prove a lock actually blocks have to start an operation, check that it is waiting, release the transaction holding it, and only then assert on the outcome. If it rejects before that last step — which is exactly what a refusal test expects — Node reports an unhandled rejection and **Vitest fails the whole run while every test in it passes**. It is a scheduling window, so it fires in CI and not locally: it turned a documentation-only pull request red and was green on a re-run. `held()` in `packages/db/src/testing.ts` attaches a handler at creation and changes nothing else — the rejection is still there for `await expect(p).rejects`, and an unexpected one still fails the assertion rather than being swallowed.
 
 ## Architecture principles
 
 These four rules are the point of the project. Designs that violate them should be rejected in review.
 
-1. **Content is structured JSON, never HTML.** Every block has a Zod schema and renders through a whitelist renderer. WordPress's `post_content` HTML-plus-shortcode blob is the origin of most of its XSS surface and makes content non-portable. Never store rendered HTML as the source of truth.
+1. **Content is structured JSON, never HTML.** Every block has a Zod schema and renders through a whitelist renderer. A single content column holding HTML and shortcodes is where most of a classic CMS's cross-site-scripting surface comes from, and it makes content unportable: nothing but that CMS can read it back. Never store rendered HTML as the source of truth.
 
-2. **Metadata lives in JSONB, never in an EAV table.** A `wp_postmeta`-style `(key, value)` table causes N+1 queries and unmanageable joins at scale. Metadata is a JSONB column on the owning row, with a GIN index.
+2. **Metadata lives in JSONB, never in an EAV table.** A `(key, value)` table beside the content, one row per field, causes N+1 queries and unmanageable joins at scale. Metadata is a JSONB column on the owning row, with a GIN index.
 
-3. **Plugins declare capabilities; they never hold ambient authority.** In WordPress any installed plugin gets full database, filesystem, network and `eval` access, which is why plugin vulnerabilities are consistently the most commonly reported route into a WordPress site. Here a plugin ships a manifest (`content:read`, `http:fetch:<host>`, …) and untrusted third-party code runs isolated.
+3. **Plugins declare capabilities; they never hold ambient authority.** In the ecosystems this borrows its vocabulary from, an installed plugin gets full database, filesystem, network and `eval` access, which is why extensions are consistently the most commonly reported route into a site. Here a plugin ships a manifest (`content:read`, `http:fetch:<host>`, …) and untrusted third-party code runs isolated.
 
 4. **Cache invalidation is native and tag-based.** Rendering collects tags (`content:<id>`, `list:post:en`) via `AsyncLocalStorage`, so themes declare nothing manually; publishing purges exactly the pages that read the changed content. Caching is core, not a bolt-on plugin.
 
 ## Scope decisions
 
-- **Self-hosted single-site.** One instance per site, like WordPress. Multi-tenant SaaS is explicitly out of scope — do not add `tenant_id` columns, domain-based routing, or per-tenant quotas.
+- **Self-hosted single-site.** One instance per site. Multi-tenant SaaS is explicitly out of scope — do not add `tenant_id` columns, domain-based routing, or per-tenant quotas.
 - **Third-party plugins are wanted, but later.** The hook API and permission manifest are designed up front so the core stays extensible; the sandbox and signed registry come after the CMS works. Consequence: build first-party features *against the public hook API*, never beside it — that is the only way to know the API is sufficient before exposing it to third-party code.
 - **Node and Docker hosting is assumed.** There is no shared-hosting or cPanel constraint, which is why PHP was ruled out.
 
@@ -68,7 +72,7 @@ packages/blocks    block schemas + whitelist renderers
 packages/db        Drizzle schema + migrations
 packages/cache     tag collection and the page cache Valkey holds
 packages/tokens    design tokens — the only place colors and theming exist
-packages/ui        shared UI primitives, built on tokens
+packages/ui        shared UI primitives, built on tokens — planned, not written
 packages/i18n      locale config, message catalogues, formatting
 packages/theme-kit the theme contract: typed views, defineTheme, the head and
                    the block renderer no theme reimplements
@@ -77,16 +81,18 @@ themes/default     the theme PressLabz ships with
 
 ## Data model
 
-Content types and taxonomies are **declared in code**, not stored as rows — the WordPress custom-post-type idea, but typed: one `defineContentType()` call yields the Zod validation, the TS types, and the API routes together.
+Content types and taxonomies are **declared in code**, not stored as rows — the custom-content-type idea the classic managers made familiar, but typed: one `defineContentType()` call yields the Zod validation, the TS types, and the API routes together.
 
-| WordPress | PressLabz |
+The left column is the shape a classic content manager tends to have, and the reason each one is rejected is in the principles above.
+
+| The usual shape | PressLabz |
 |---|---|
-| `wp_posts` (`post_content` = HTML) | `contents` — `blocks JSONB`, `meta JSONB`, `locale`, `translation_group_id` |
-| `wp_postmeta` (EAV) | `meta JSONB` column on the same row + GIN index |
-| `wp_options` with `autoload` | `settings` (key, `value JSONB`), explicit loading |
-| `wp_terms` + `wp_term_taxonomy` + `wp_term_relationships` | `terms` + `content_terms` |
-| revisions as ghost rows in `wp_posts` | dedicated `content_revisions` table |
-| no native content i18n (WPML/Polylang bolted on) | `locale` + `translation_group_id` in the core schema |
+| one posts table whose content column holds HTML | `contents` — `blocks JSONB`, `meta JSONB`, `locale`, `translation_group_id` |
+| metadata as key-value rows in a side table | `meta JSONB` column on the same row + GIN index |
+| a settings table loaded in its entirety on every request | `settings` (key, `value JSONB`), explicit loading |
+| three tables to say that a document has a tag | `terms` + `content_terms` |
+| revisions as ghost rows in the posts table | dedicated `content_revisions` table |
+| translation bolted on by a plugin | `locale` + `translation_group_id` in the core schema |
 
 Search uses a generated `tsvector` column with a GIN index, with the text-search configuration selected per locale — no external search service until there is a measured reason for one.
 
@@ -176,7 +182,7 @@ A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text
 
 ## Authentication and permissions
 
-**Capabilities are what the system checks. Roles are only named bundles of them.** No code outside `packages/core/src/capabilities.ts` may branch on a role. WordPress lets `current_user_can()` take either, and the two drift; here the type system prevents it.
+**Capabilities are what the system checks. Roles are only named bundles of them.** No code outside `packages/core/src/capabilities.ts` may branch on a role. A permission check that accepts either a capability or a role name lets the two drift — one call site asks "may they publish", the next asks "are they an editor", and the answers diverge the first time a role's bundle changes. Here the type system prevents it.
 
 Capabilities distinguish `:own` from `:any` — a contributor edits their own drafts and nobody else's, which a single `content:update` cannot express. The comparison that decides it lives in `allows()` in `packages/core/src/access.ts` and is written exactly once: content asks it about `authorId`, media about `uploadedById`. A row whose owner was deleted is owned by nobody — both columns null out with the account — so an `:own` capability does not match it and the `:any` capability is required.
 
@@ -184,7 +190,7 @@ Role bundles are built by composition rather than by an implicit "higher role in
 
 **`content:publish` is the cost of being in front of the public, not of the keystroke that got it there.** `published` and `scheduled` are the editorial states — `scheduled` sits with `published` because a schedule needs no further human act to go live. A write costs `content:publish` whenever it touches one of them at either end: entering it, *staying* in it, or leaving it. Deleting one costs it too, or the rule gating the gentle verb would be escaped by choosing the destructive one.
 
-The middle case is the one that reads as an omission until it bites. A contributor writes a draft, an editor publishes it, and the contributor still holds `content:update:own` over the row — so without this they keep rewriting a live page, and the request that does it carries no `status` field at all. This is WordPress's `edit_published_posts`, expressed through the capability that already exists rather than as a new one, because the question is the same: may this actor decide what the public sees. An author manages their own published work because they hold `content:publish`; a contributor does not, and so cannot edit, unpublish or delete anything that went live. Statuses the public never sees — draft, archived, trash — stay ungated between themselves.
+The middle case is the one that reads as an omission until it bites. A contributor writes a draft, an editor publishes it, and the contributor still holds `content:update:own` over the row — so without this they keep rewriting a live page, and the request that does it carries no `status` field at all. This is the familiar "may edit published posts" permission, expressed through the capability that already exists rather than as a new one, because the question is the same: may this actor decide what the public sees. An author manages their own published work because they hold `content:publish`; a contributor does not, and so cannot edit, unpublish or delete anything that went live. Statuses the public never sees — draft, archived, trash — stay ungated between themselves.
 
 `operationsForWrite` and `operationsForDelete` name the operations a write needs, and `canWrite`/`canDelete` are the single question a route asks, so no caller can consult one and forget the other. **Where the answer depends on a row that already exists — updating, publishing, unpublishing, deleting — it is decided inside the transaction, against that row locked `FOR UPDATE` and the state the write would produce.** Authorizing outside would read a status, decide, and then write against a row that had moved in between, which is exactly the gap a publish slips through. A creation has no such row: it is authorized from the intent it declares and the type's access declaration, before the insert.
 
@@ -325,7 +331,7 @@ A stored publication date is a UTC instant; a `datetime-local` field speaks the 
 
 The field shows the instant in the editor's own zone, and what they type means their own zone, with the zone named beside the field and the resulting UTC instant spelled out. Both conversions defer to the platform's zone rules, so daylight saving is handled by the same table the browser's clock uses; the tests cross both transitions, including the local hour that does not exist and the one that happens twice.
 
-One editorial timezone for the whole installation — the way WordPress does it — is the alternative, and it is a setting, a migration and a second conversion. It would be worth that for a newsroom scheduling to the minute across countries. Naming the zone is what keeps the current choice visible rather than assumed.
+One editorial timezone for the whole installation — a single site-wide setting every date is read against — is the alternative, and it is a setting, a migration and a second conversion. It would be worth that for a newsroom scheduling to the minute across countries. Naming the zone is what keeps the current choice visible rather than assumed.
 
 ### What a parent may be
 
@@ -381,7 +387,7 @@ A theme is a workspace package under `themes/`, exporting `.astro` components. T
 
 `ThemeHead.astro` is the other thing a theme does not write. It carries the tokens, the viewport declaration and the pre-paint theme script, so dark mode stays implemented exactly once — a theme that forgot the script would flash the wrong theme at every reader, and one that wrote its own would be a second implementation of the cookie contract.
 
-**A theme is selected by a static import, and changing it means building again.** That is not a limitation of the resolver but of what Astro components are: a `.astro` file goes through the compiler, so nothing can load a theme's source at runtime. Installing and activating a theme the way WordPress does would require themes to ship compiled — a distribution question that belongs with the signed registry rather than here. What the seam buys is that `apps/web/src/theme.ts` is the only module naming a theme.
+**A theme is selected by a static import, and changing it means building again.** That is not a limitation of the resolver but of what Astro components are: a `.astro` file goes through the compiler, so nothing can load a theme's source at runtime. Installing and activating a theme from an uploaded archive would require themes to ship compiled — a distribution question that belongs with the signed registry rather than here. What the seam buys is that `apps/web/src/theme.ts` is the only module naming a theme.
 
 The rules a theme must keep are asserted rather than described: no colour literals, no `max-width` query, breakpoints from the registry, and colour overrides paired across both schemes. That last check lives in `packages/tokens` and runs against the core palette too, because the rule it enforces — never define a colour only inside a media query or a `[data-theme]` block — is what makes an explicit choice win in both directions.
 
@@ -454,14 +460,14 @@ A module is a name and a function that registers handlers, returning one that re
 
 ## Roadmap
 
-| Phase | Scope | Done when |
-|---|---|---|
-| 0 | Monorepo, docker-compose (Postgres/Valkey/MinIO), Drizzle schema **with `locale` present from the first migration**, `packages/tokens`, `packages/i18n`, CI | `pnpm dev` brings the stack up |
-| 1 | Auth, users, roles and capabilities, admin shell with working locale switch and theme switch | you can log in, in either language, in either theme |
-| 2 | Content model, block editor, media library, translation linking UI | you can publish a post and its translation |
-| 3 | Astro rendering, theme contract, tag-based cache, `hreflang` and language switcher | the public site exists in both locales |
-| 4 | Hook API exposed, first-party modules dogfooding it | the extension API is validated |
-| 5 | `isolated-vm` sandbox, permission manifest, signed registry | third-party plugins |
+| Phase | Scope | Done when | State |
+|---|---|---|---|
+| 0 | Monorepo, docker-compose (Postgres/Valkey/MinIO), Drizzle schema **with `locale` present from the first migration**, `packages/tokens`, `packages/i18n`, CI | `pnpm dev` brings the stack up | Done |
+| 1 | Auth, users, roles and capabilities, admin shell with working locale switch and theme switch | you can log in, in either language, in either theme | Done |
+| 2 | Content model, block editor, media library, translation linking UI | you can publish a post and its translation | Done |
+| 3 | Astro rendering, theme contract, tag-based cache, `hreflang` and language switcher | the public site exists in both locales | Done |
+| 4 | Hook API exposed, first-party modules dogfooding it | the extension API is validated | Done |
+| 5 | `isolated-vm` sandbox, permission manifest, signed registry | third-party plugins | Not started. Three decisions come before the code: what may cross the sandbox boundary, what vocabulary the manifest speaks and who grants it, and who signs a plugin — including how a key is revoked and what an installation does when a signature stops verifying. A theme must ship compiled, since an `.astro` file cannot be loaded from source at runtime, so themes and plugins share that question |
 
 i18n and theming are load-bearing in phases 0 and 1 rather than polish at the end: both are far cheaper to build in than to retrofit, and both are cross-cutting enough that adding them late would touch nearly every file written before.
 

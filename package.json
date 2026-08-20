@@ -2,7 +2,7 @@
   "name": "presslabz",
   "version": "0.0.0",
   "private": true,
-  "description": "A modern, secure and fast alternative to WordPress",
+  "description": "A modern, secure and fast content management system",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
