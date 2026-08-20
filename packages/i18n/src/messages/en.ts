@@ -132,6 +132,9 @@ export const en = {
   'web.home.latest': 'Latest',
   'web.home.readMore': 'Read',
 
+  'error.staleVersion':
+    'Somebody else saved this document while you were editing it. Nothing was overwritten — reload to see what is there now.',
+  'editor.reload': 'Reload',
   'error.notFound': 'Not found',
   'error.unauthorized': 'You are not signed in',
   'error.forbidden': 'You do not have permission to do that',

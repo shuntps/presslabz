@@ -154,13 +154,29 @@ describe.skipIf(!ready)('content routes', () => {
     return response
   }
 
+  /**
+   * Reads the document's current version and sends it back with the patch.
+   *
+   * That is what a client does: it edits what it was shown. A test that
+   * hardcoded a version would stop exercising the precondition the moment the
+   * document was written to twice, and the tests that are *about* staleness
+   * say so by passing expectedVersion themselves.
+   */
   async function patch(role: string, id: string, body: Record<string, unknown>) {
+    const payload =
+      'expectedVersion' in body ? body : { ...body, expectedVersion: await versionOf(role, id) }
+
     return app.inject({
       method: 'PATCH',
       url: `/content/post/${id}`,
       cookies: as(role),
-      payload: body,
+      payload,
     })
+  }
+
+  async function versionOf(role: string, id: string): Promise<number> {
+    const response = await app.inject({ url: `/content/post/${id}`, cookies: as(role) })
+    return response.statusCode === 200 ? (response.json().content.version as number) : 1
   }
 
   async function remove(role: string, id: string) {
@@ -691,6 +707,15 @@ describe.skipIf(!ready)('content routes', () => {
      * the site stored.
      */
     async function cacheAPage(key: string, tags: readonly string[]): Promise<void> {
+      /*
+       * Past the purge the creation just made. The store refuses an entry
+       * whose render began at or before a purge of one of its tags — a tie
+       * counts as the purge winning, by design — and creating a document
+       * purges its own tag in the same millisecond this fixture would
+       * otherwise be written.
+       */
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
       const lookup = await pageCache.lookup(key)
       const stored = await pageCache.store(
         key,
@@ -857,6 +882,254 @@ describe.skipIf(!ready)('content routes', () => {
 
       expect(names).not.toContain('content:published')
       expect(names).not.toContain('content:unpublished')
+    })
+  })
+
+  describe('two editors on one document', () => {
+    /*
+     * The acceptance criterion of the issue this closes: the lock serialized
+     * the writes and neither of them was told anything, so the second author's
+     * save silently replaced the first author's work.
+     */
+    it('refuses a save composed against a version that has moved', async () => {
+      const created = await post('editor', draft('contested'))
+      const id = created.json().content.id as string
+      const opened = created.json().content.version as number
+
+      // Both editors opened version 1. The first one saves.
+      const first = await patch('editor', id, { title: 'First writer', expectedVersion: opened })
+      expect(first.statusCode).toBe(200)
+
+      // The second saves what they were looking at, which is now stale.
+      const second = await patch('editor', id, { title: 'Second writer', expectedVersion: opened })
+
+      expect(second.statusCode).toBe(409)
+      expect(second.json().reason).toBe('stale-version')
+
+      // And the first writer's work is still there.
+      const stored = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      expect(stored.json().content.title).toBe('First writer')
+    })
+
+    it('accepts the same save once the client has reloaded', async () => {
+      const created = await post('editor', draft('reloaded'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { title: 'One' })
+      const reloaded = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+
+      const again = await patch('editor', id, {
+        title: 'Two',
+        expectedVersion: reloaded.json().content.version,
+      })
+
+      expect(again.statusCode).toBe(200)
+      expect(again.json().content.title).toBe('Two')
+    })
+
+    it('counts up on every write, so the number means something', async () => {
+      const created = await post('editor', draft('counting'))
+      const id = created.json().content.id as string
+
+      expect(created.json().content.version).toBe(1)
+      expect((await patch('editor', id, { title: 'Second' })).json().content.version).toBe(2)
+      expect((await patch('editor', id, { title: 'Third' })).json().content.version).toBe(3)
+    })
+
+    /*
+     * Without a precondition a client is back to overwriting silently, so
+     * forgetting it is a refusal rather than a default.
+     */
+    it('refuses a save that states no version at all', async () => {
+      const created = await post('editor', draft('unversioned'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/content/post/${id}`,
+        cookies: as('editor'),
+        payload: { title: 'No precondition' },
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json().reason).toBe('expected_version_required')
+    })
+  })
+
+  describe('clearing a field rather than leaving it', () => {
+    /*
+     * A patch omits what it does not touch, so before this there was no way to
+     * remove an excerpt: the admin sent no key for an empty field, the merge
+     * kept the stored value, and the author watched their deletion do nothing.
+     */
+    it('removes an excerpt when the field is explicitly emptied', async () => {
+      const created = await post('editor', { ...draft('clearable'), excerpt: 'Written' })
+      const id = created.json().content.id as string
+
+      expect(created.json().content.excerpt).toBe('Written')
+
+      const cleared = await patch('editor', id, { excerpt: null })
+
+      expect(cleared.statusCode).toBe(200)
+      expect(cleared.json().content.excerpt).toBeNull()
+    })
+
+    it('leaves it alone when the field is simply absent', async () => {
+      const created = await post('editor', { ...draft('kept'), excerpt: 'Written' })
+      const id = created.json().content.id as string
+
+      const patched = await patch('editor', id, { title: 'Renamed' })
+
+      expect(patched.json().content.excerpt).toBe('Written')
+    })
+
+    it('removes a publication date the same way', async () => {
+      const created = await post('editor', {
+        ...draft('dated'),
+        publishedAt: '2026-09-01T09:00:00.000Z',
+      })
+      const id = created.json().content.id as string
+
+      const cleared = await patch('editor', id, { publishedAt: null })
+
+      expect(cleared.statusCode).toBe(200)
+      expect(cleared.json().content.publishedAt).toBeNull()
+    })
+  })
+
+  describe('history, and putting a document back', () => {
+    async function historyOf(role: string, id: string) {
+      const response = await app.inject({
+        url: `/content/post/${id}/revisions`,
+        cookies: as(role),
+      })
+      return response
+    }
+
+    /*
+     * The acceptance criterion: a revision has to carry enough to restore
+     * every editorial field. It used to hold the title, the blocks and the
+     * metadata, which reads like "the document" until somebody tries.
+     */
+    it('restores every field the editor could have changed', async () => {
+      const created = await post('editor', {
+        ...draft('restorable'),
+        excerpt: 'The first summary',
+      })
+      const id = created.json().content.id as string
+      const original = created.json().content
+
+      await patch('editor', id, {
+        title: 'Renamed',
+        slug: 'renamed-entirely',
+        excerpt: 'A different summary',
+        status: 'published',
+        publishedAt: '2026-09-01T09:00:00.000Z',
+      })
+
+      const history = await historyOf('editor', id)
+      expect(history.statusCode).toBe(200)
+
+      const first = history.json().revisions.at(-1)
+      expect(first.version).toBe(1)
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const restored = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${first.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect(restored.statusCode).toBe(200)
+
+      const document = restored.json().content
+      expect(document.title).toBe(original.title)
+      expect(document.slug).toBe(original.slug)
+      expect(document.excerpt).toBe('The first summary')
+      expect(document.status).toBe('draft')
+      expect(document.publishedAt).toBeNull()
+    })
+
+    /*
+     * A restore is an edit, so it leaves a revision of its own — restoring the
+     * wrong one has to be undoable too.
+     */
+    it('records the version it replaced, so a restore can itself be undone', async () => {
+      const created = await post('editor', draft('undoable'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { title: 'Second' })
+      const before = (await historyOf('editor', id)).json().revisions.length
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const first = (await historyOf('editor', id)).json().revisions.at(-1)
+
+      await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${first.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect((await historyOf('editor', id)).json().revisions.length).toBe(before + 1)
+    })
+
+    /*
+     * Reading history is reading earlier versions of the same text. Anything
+     * looser would be a way to read a document through its past.
+     */
+    it('costs exactly what reading the document costs', async () => {
+      const created = await post('contributor', draft('private-history'))
+      const id = created.json().content.id as string
+
+      expect((await historyOf('subscriber', id)).statusCode).toBe(403)
+      expect((await historyOf('contributor', id)).statusCode).toBe(200)
+    })
+
+    it('refuses a revision id that belongs to another document', async () => {
+      const mine = await post('editor', draft('mine-to-restore'))
+      const other = await post('editor', draft('someone-elses'))
+      const mineId = mine.json().content.id as string
+      const otherId = other.json().content.id as string
+
+      await patch('editor', otherId, { title: 'Changed' })
+      const otherRevision = (await historyOf('editor', otherId)).json().revisions[0]
+
+      const current = await app.inject({ url: `/content/post/${mineId}`, cookies: as('editor') })
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${mineId}/revisions/${otherRevision.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      expect(response.statusCode).toBe(404)
+    })
+
+    /*
+     * A restore that bypassed the write rules would be a way to publish — or
+     * to take a document down — without the permission either costs.
+     */
+    it('is refused when the state it would restore is one the actor may not write', async () => {
+      const created = await post('contributor', draft('contributor-history'))
+      const id = created.json().content.id as string
+
+      await patch('editor', id, { status: 'published' })
+      const revisions = (await historyOf('editor', id)).json().revisions
+      const draftRevision = revisions.at(-1)
+
+      const current = await app.inject({ url: `/content/post/${id}`, cookies: as('editor') })
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${draftRevision.id}/restore`,
+        cookies: as('contributor'),
+        payload: { expectedVersion: current.json().content.version },
+      })
+
+      // Taking a published document back to a draft costs content:publish,
+      // which a contributor does not have.
+      expect(response.statusCode).toBe(403)
     })
   })
 })

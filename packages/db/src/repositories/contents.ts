@@ -1,6 +1,6 @@
 import type { Blocks } from '@presslabz/blocks'
 import { type AnyContentType, type ContentStatus, PUBLIC_CONTENT_STATUSES } from '@presslabz/core'
-import { and, desc, eq, inArray, isNotNull, lte, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
 
@@ -33,6 +33,8 @@ export type ContentConflictReason =
   | 'group-type-mismatch'
   | 'translation-exists'
   | 'slug-taken'
+  /** The document moved on since the client last read it. */
+  | 'stale-version'
 
 /**
  * Assigned in the body rather than declared as a constructor parameter
@@ -405,6 +407,22 @@ export interface UpdateContentOptions {
    * through. Returning false aborts the transaction.
    */
   readonly authorize?: (current: ContentRow, next: ContentState) => boolean
+
+  /**
+   * The version the caller believes it is editing, or `'any'` to say it does
+   * not care.
+   *
+   * Required rather than optional, and a union rather than a nullable number,
+   * because "I did not think about concurrency" and "I know this write cannot
+   * conflict" have to look different in the code. The lock below serializes
+   * writes; it does not notice that the second one was composed against a
+   * version the first has already replaced, and without this the later save
+   * wins silently and the earlier author's work is gone.
+   *
+   * `'any'` is for writes that are not somebody's edit of a document they were
+   * looking at — a restore of a revision, a migration, a scheduler.
+   */
+  readonly expectedVersion: number | 'any'
 }
 
 /**
@@ -427,7 +445,7 @@ export async function updateContent(
   type: AnyContentType,
   id: string,
   patch: Record<string, unknown>,
-  options: UpdateContentOptions = {},
+  options: UpdateContentOptions,
 ): Promise<ContentRow | null> {
   try {
     return await db.transaction(async (tx) => {
@@ -440,6 +458,19 @@ export async function updateContent(
 
       const current = locked[0]
       if (!current) return null
+
+      /*
+       * Before anything is merged: a stale write is refused rather than
+       * applied to a document it was not composed against. The check is inside
+       * the transaction, against the locked row, because a version read
+       * outside it could already have moved.
+       */
+      if (options.expectedVersion !== 'any' && options.expectedVersion !== current.version) {
+        throw new ContentConflictError(
+          'stale-version',
+          'This document changed since it was opened. Reload it and apply the change again.',
+        )
+      }
 
       const rawMerge = { ...toState(current), ...definedEntries(patch) } as ContentState
       const merged = options.derive ? options.derive(current, rawMerge) : rawMerge
@@ -459,15 +490,23 @@ export async function updateContent(
        */
       await tx.insert(contentRevisions).values({
         contentId: current.id,
+        slug: current.slug,
         title: current.title,
+        excerpt: current.excerpt,
+        status: current.status,
         blocks: current.blocks,
         meta: current.meta,
         authorId: current.authorId,
+        parentId: current.parentId,
+        publishedAt: current.publishedAt,
+        version: current.version,
       })
+
+      await pruneRevisions(tx, current.id)
 
       const rows = await tx
         .update(contents)
-        .set({ ...toColumns(next), updatedAt: new Date() })
+        .set({ ...toColumns(next), updatedAt: new Date(), version: current.version + 1 })
         .where(eq(contents.id, id))
         .returning()
 
@@ -599,4 +638,75 @@ export async function publishDueContent(
       ),
     )
     .returning()
+}
+
+/**
+ * How much history a document keeps.
+ *
+ * A cap rather than a duration: a document edited twice a year should keep its
+ * history, and one edited every minute by an automation should not fill the
+ * table with it. Fifty is enough to walk back through a day's work and small
+ * enough that the rows are never the reason a backup is large.
+ *
+ * Pruned in the transaction that adds one, so the table cannot grow between a
+ * write and a sweep that might never run.
+ */
+export const REVISION_LIMIT = 50
+
+async function pruneRevisions(tx: Transaction, contentId: string): Promise<void> {
+  await tx.execute(sql`
+    delete from ${contentRevisions}
+    where ${contentRevisions.contentId} = ${contentId}
+      and ${contentRevisions.id} not in (
+        select id from ${contentRevisions}
+        where ${contentRevisions.contentId} = ${contentId}
+        order by ${contentRevisions.createdAt} desc, ${contentRevisions.version} desc
+        limit ${REVISION_LIMIT}
+      )
+  `)
+}
+
+export type ContentRevisionRow = typeof contentRevisions.$inferSelect
+
+/** A document's history, newest first. */
+export async function listRevisions(
+  db: Database,
+  contentId: string,
+  limit = REVISION_LIMIT,
+): Promise<ContentRevisionRow[]> {
+  return db
+    .select()
+    .from(contentRevisions)
+    .where(eq(contentRevisions.contentId, contentId))
+    .orderBy(desc(contentRevisions.createdAt), desc(contentRevisions.version))
+    .limit(Math.min(REVISION_LIMIT, Math.max(1, Math.trunc(limit))))
+}
+
+/**
+ * A revision as a patch that restores it.
+ *
+ * Nulls rather than undefined, and that is the whole subtlety: in a patch,
+ * absent means "leave this alone", so a revision whose excerpt was empty would
+ * restore everything *except* the emptiness — the document would come back
+ * with a summary written after the version being restored. A restore states
+ * every field, including the ones that were empty.
+ */
+export function stateOfRevision(revision: ContentRevisionRow): Record<string, unknown> {
+  return {
+    slug: revision.slug,
+    title: revision.title,
+    excerpt: revision.excerpt,
+    status: revision.status,
+    blocks: revision.blocks,
+    meta: revision.meta,
+    publishedAt: revision.publishedAt,
+    parentId: revision.parentId,
+  }
+}
+
+/** One revision, by id. The caller checks it belongs to the document. */
+export async function findRevision(db: Database, id: string): Promise<ContentRevisionRow | null> {
+  const rows = await db.select().from(contentRevisions).where(eq(contentRevisions.id, id)).limit(1)
+
+  return rows[0] ?? null
 }

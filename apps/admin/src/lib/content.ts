@@ -25,6 +25,8 @@ export interface ContentSummary {
   authorId: string | null
   parentId: string | null
   publishedAt: string | null
+  /** What an edit of this document has to state to be accepted. */
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -118,11 +120,23 @@ export interface ContentDraft {
   locale: Locale
   slug: string
   title: string
-  excerpt?: string | undefined
+  /**
+   * Null clears, absent leaves alone.
+   *
+   * The editor sends null for a field it emptied rather than omitting it,
+   * because a patch that omits a field is saying "do not touch" — which is why
+   * an excerpt could be written and never removed.
+   */
+  excerpt?: string | null | undefined
   status: ContentStatus
   blocks: Blocks
-  publishedAt?: string | undefined
+  publishedAt?: string | null | undefined
   translationGroupId?: string | undefined
+  /**
+   * The version the editor was looking at. Required on every update: without
+   * it two editors overwrite each other with nothing to show for it.
+   */
+  expectedVersion?: number | undefined
 }
 
 /**

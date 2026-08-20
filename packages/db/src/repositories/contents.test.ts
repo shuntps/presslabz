@@ -14,8 +14,10 @@ import {
   findContentById,
   findContentBySlug,
   listContents,
+  listRevisions,
   listTranslations,
   publishDueContent,
+  REVISION_LIMIT,
   updateContent,
 } from './contents.ts'
 
@@ -616,7 +618,15 @@ describe.skipIf(!ready)('contents repository', () => {
 
       // The patch alone says nothing about whether a date exists. Only the
       // merge with the stored row does.
-      const updated = await updateContent(db, testType, row.id, { status: 'scheduled' })
+      const updated = await updateContent(
+        db,
+        testType,
+        row.id,
+        { status: 'scheduled' },
+        {
+          expectedVersion: 'any',
+        },
+      )
       expect(updated?.status).toBe('scheduled')
     })
 
@@ -628,7 +638,9 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state(),
       })
 
-      await expect(updateContent(db, testType, row.id, { status: 'scheduled' })).rejects.toThrow()
+      await expect(
+        updateContent(db, testType, row.id, { status: 'scheduled' }, { expectedVersion: 'any' }),
+      ).rejects.toThrow()
 
       const after = await findContentBySlug(db, { type: TYPE, locale: 'fr', slug: 'first' })
       expect(after?.status).toBe('draft')
@@ -642,14 +654,22 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state({ excerpt: 'Un extrait', title: 'Titre' }),
       })
 
-      const updated = await updateContent(db, testType, row.id, { title: 'Nouveau titre' })
+      const updated = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Nouveau titre' },
+        { expectedVersion: 'any' },
+      )
       expect(updated?.title).toBe('Nouveau titre')
       expect(updated?.excerpt).toBe('Un extrait')
     })
 
     it('returns null rather than throwing for a document that is not there', async () => {
       const missing = '00000000-0000-4000-8000-0000000000ff'
-      expect(await updateContent(db, testType, missing, { title: 'x' })).toBeNull()
+      expect(
+        await updateContent(db, testType, missing, { title: 'x' }, { expectedVersion: 'any' }),
+      ).toBeNull()
     })
   })
 
@@ -662,7 +682,7 @@ describe.skipIf(!ready)('contents repository', () => {
         state: state({ title: 'Avant' }),
       })
 
-      await updateContent(db, testType, row.id, { title: 'Après' })
+      await updateContent(db, testType, row.id, { title: 'Après' }, { expectedVersion: 'any' })
 
       const revisions = await db
         .select()
@@ -682,7 +702,16 @@ describe.skipIf(!ready)('contents repository', () => {
       })
 
       await expect(
-        updateContent(db, testType, row.id, { title: 'Après' }, { authorize: () => false }),
+        updateContent(
+          db,
+          testType,
+          row.id,
+          { title: 'Après' },
+          {
+            authorize: () => false,
+            expectedVersion: 'any',
+          },
+        ),
       ).rejects.toBeInstanceOf(ContentForbiddenError)
 
       const after = await findContentBySlug(db, { type: TYPE, locale: 'fr', slug: 'first' })
@@ -717,6 +746,7 @@ describe.skipIf(!ready)('contents repository', () => {
             sawTransition = [current.status, next.status]
             return true
           },
+          expectedVersion: 'any',
         },
       )
 
@@ -804,6 +834,173 @@ describe.skipIf(!ready)('contents repository', () => {
 
       expect((await publishDueContent(db, NOW)).length).toBeGreaterThan(0)
       expect(await publishDueContent(db, NOW)).toEqual([])
+    })
+  })
+
+  describe('clearing a field', () => {
+    const NESTING = 'test-nesting'
+    const nestingType = defineContentType({ name: NESTING, hierarchical: true })
+
+    it('removes a parent when the patch says null, and keeps it when silent', async () => {
+      const parent = await createContent(db, {
+        type: NESTING,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'le-parent' }),
+      })
+      const child = await createContent(db, {
+        type: NESTING,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'l-enfant', parentId: parent.id }),
+      })
+
+      const renamed = await updateContent(db, nestingType, child.id, { title: 'Renommé' }, {
+        expectedVersion: 1,
+      })
+      expect(renamed?.parentId).toBe(parent.id)
+
+      const detached = await updateContent(db, nestingType, child.id, { parentId: null }, {
+        expectedVersion: 2,
+      })
+      expect(detached?.parentId).toBeNull()
+    })
+  })
+
+  describe('history a restore can use', () => {
+    it('snapshots every editorial field, not the three somebody thought of', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({
+          slug: 'complete-snapshot',
+          title: 'Avant',
+          excerpt: 'Le résumé',
+          status: 'draft',
+        }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Après' }, { expectedVersion: 1 })
+
+      const [snapshot] = await listRevisions(db, row.id)
+
+      expect(snapshot).toMatchObject({
+        slug: 'complete-snapshot',
+        title: 'Avant',
+        excerpt: 'Le résumé',
+        status: 'draft',
+        version: 1,
+      })
+      expect(snapshot?.publishedAt).toBeNull()
+    })
+
+    it('counts the version up on every write', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'counted' }),
+      })
+
+      expect(row.version).toBe(1)
+
+      const second = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Deux' },
+        {
+          expectedVersion: 1,
+        },
+      )
+      expect(second?.version).toBe(2)
+
+      const third = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Trois' },
+        {
+          expectedVersion: 2,
+        },
+      )
+      expect(third?.version).toBe(3)
+    })
+
+    /*
+     * The lock serializes the two writes; it does not notice that the second
+     * was composed against a version the first replaced. Without this the
+     * later save wins and the earlier author's work is gone with no error.
+     */
+    it('refuses a write composed against a version that has moved', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'contested-row' }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Premier' }, { expectedVersion: 1 })
+
+      await expect(
+        updateContent(db, testType, row.id, { title: 'Second' }, { expectedVersion: 1 }),
+      ).rejects.toMatchObject({ reason: 'stale-version' })
+
+      expect((await findContentById(db, row.id))?.title).toBe('Premier')
+    })
+
+    it('lets a caller say it does not care, and only if it says so', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'restores-and-migrations' }),
+      })
+
+      await updateContent(db, testType, row.id, { title: 'Un' }, { expectedVersion: 1 })
+      const forced = await updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Deux' },
+        {
+          expectedVersion: 'any',
+        },
+      )
+
+      expect(forced?.title).toBe('Deux')
+    })
+
+    /*
+     * A cap rather than a duration: a document edited twice a year keeps its
+     * history, and one edited by an automation does not fill the table.
+     */
+    it('keeps a bounded history', async () => {
+      const row = await createContent(db, {
+        type: TYPE,
+        locale: 'fr',
+        authorId: null,
+        state: state({ slug: 'much-edited' }),
+      })
+
+      for (let index = 0; index < REVISION_LIMIT + 5; index += 1) {
+        await updateContent(
+          db,
+          testType,
+          row.id,
+          { title: `Version ${index}` },
+          {
+            expectedVersion: index + 1,
+          },
+        )
+      }
+
+      const kept = await listRevisions(db, row.id, REVISION_LIMIT)
+
+      expect(kept.length).toBe(REVISION_LIMIT)
+      // The oldest went, not the newest.
+      expect(kept[0]?.title).toBe(`Version ${REVISION_LIMIT + 3}`)
     })
   })
 })

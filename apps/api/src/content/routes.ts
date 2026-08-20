@@ -25,8 +25,11 @@ import {
   type Database,
   deleteContent,
   findContentById,
+  findRevision,
   listContents,
+  listRevisions,
   listTranslations,
+  stateOfRevision,
   updateContent,
 } from '@presslabz/db'
 import { isLocale } from '@presslabz/i18n'
@@ -110,6 +113,12 @@ function serializeContent(type: AnyContentType, actor: Actor, row: ContentRow) {
     authorId: row.authorId,
     parentId: row.parentId,
     publishedAt: row.publishedAt,
+    /*
+     * Sent so it can be sent back. An update states the version it was
+     * composed against, and the write is refused if the document has moved
+     * since — which is only possible if the client was told what it read.
+     */
+    version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -315,6 +324,127 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
    * exchange for a link that can be sent to somebody who has no account at
    * all — the reason previews exist.
    */
+  /**
+   * A document's history, and putting it back.
+   *
+   * Revisions were written from the first migration and never read, which made
+   * them a record nobody could use — and, until this issue, an incomplete one:
+   * the slug, the excerpt, the status, the parent and the date were not in the
+   * snapshot, so restoring was impossible even by hand.
+   *
+   * Reading history costs exactly what reading the document costs. It contains
+   * earlier versions of the same text, so anything looser would be a way to
+   * read a document through its past.
+   */
+  app.get(
+    '/content/:type/:id/revisions',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = idParams.safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const actor = actorOf(request.user)
+      if (!canReadDocument(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
+      const revisions = await listRevisions(db, row.id)
+
+      return reply.send({
+        revisions: revisions.map((revision) => ({
+          id: revision.id,
+          version: revision.version,
+          slug: revision.slug,
+          title: revision.title,
+          excerpt: revision.excerpt,
+          status: revision.status,
+          authorId: revision.authorId,
+          publishedAt: revision.publishedAt,
+          createdAt: revision.createdAt,
+        })),
+      })
+    },
+  )
+
+  /**
+   * Restoring is an edit, not a rewind.
+   *
+   * It goes through the same write path as any other: the same authorization
+   * against the state it would produce, the same version precondition, and it
+   * leaves a revision of its own — so restoring the wrong one is itself
+   * undoable. A restore that bypassed those would be a way to publish, or to
+   * take a document down, without the permission either costs.
+   */
+  app.post(
+    '/content/:type/:id/revisions/:revisionId/restore',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = z.object({ id: z.uuid(), revisionId: z.uuid() }).safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      const body = (request.body ?? {}) as Record<string, unknown>
+      const version = z.number().int().min(1).safeParse(body.expectedVersion)
+      if (!version.success) {
+        return reply.code(400).send({
+          error: 'invalid_request',
+          reason: 'expected_version_required',
+        })
+      }
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const revision = await findRevision(db, params.data.revisionId)
+      // Belonging to this document is part of the identity, not a detail: a
+      // revision id from another document would otherwise overwrite this one
+      // with somebody else's text.
+      if (!revision || revision.contentId !== row.id) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+
+      const actor = actorOf(request.user)
+      let previousStatus: ContentStatus | undefined
+
+      try {
+        const restored = await updateContent(db, type, row.id, stateOfRevision(revision), {
+          expectedVersion: version.data,
+          authorize: (current, next) => {
+            previousStatus = current.status
+            return (
+              current.type === type.name &&
+              canWrite(type, { currentStatus: current.status, nextStatus: next.status }, actor, {
+                authorId: current.authorId,
+              })
+            )
+          },
+        })
+
+        if (!restored) return reply.code(404).send({ error: 'not_found' })
+
+        const context = { locale: restored.locale, actorId: request.user.id }
+        for (const announcement of transitionsFor(
+          previousStatus ?? restored.status,
+          contentEventOf(restored),
+        )) {
+          await hooks.emit(announcement.name, announcement.payload, context)
+        }
+
+        return reply.send({ content: serializeContent(type, actor, restored) })
+      } catch (error) {
+        return replyForWriteError(error, reply)
+      }
+    },
+  )
+
   app.post(
     '/content/:type/:id/preview',
     { onRequest: [app.requireAuth] },
@@ -428,7 +558,24 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     const params = idParams.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
 
-    const parsed = type.updateSchema.safeParse(request.body)
+    /*
+     * The precondition is not a field of the document, so it is taken off the
+     * body before the patch is validated — updateSchema is strict, and an
+     * unknown key is refused rather than ignored.
+     */
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const { expectedVersion, ...fields } = body
+    const version = z.number().int().min(1).safeParse(expectedVersion)
+
+    if (!version.success) {
+      return reply.code(400).send({
+        error: 'invalid_request',
+        reason: 'expected_version_required',
+        issues: issuesOf(version.error),
+      })
+    }
+
+    const parsed = type.updateSchema.safeParse(fields)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_request', issues: issuesOf(parsed.error) })
     }
@@ -460,6 +607,7 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
            * the gap between the read and the write is exactly where a publish
            * slips past content:publish.
            */
+          expectedVersion: version.data,
           authorize: (current, next) => {
             previousStatus = current.status
             return (

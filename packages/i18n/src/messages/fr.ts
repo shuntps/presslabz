@@ -130,6 +130,9 @@ export const fr: Messages = {
   'web.home.latest': 'Derniers articles',
   'web.home.readMore': 'Lire',
 
+  'error.staleVersion':
+    'Quelqu’un a enregistré ce document pendant que vous l’éditiez. Rien n’a été écrasé — rechargez pour voir l’état actuel.',
+  'editor.reload': 'Recharger',
   'error.notFound': 'Introuvable',
   'error.unauthorized': 'Vous n’êtes pas connecté',
   'error.forbidden': 'Vous n’avez pas la permission de faire cela',

@@ -5,6 +5,7 @@ import {
   type AnyPgColumn,
   foreignKey,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -91,6 +92,21 @@ export const contents = pgTable(
     meta: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
     parentId: uuid().references((): AnyPgColumn => contents.id, { onDelete: 'set null' }),
+    /*
+     * What a client says it was editing, so two editors cannot silently
+     * overwrite each other.
+     *
+     * The row lock serializes the writes; it does not notice that the second
+     * one was composed against a version the first has already replaced. With
+     * only a lock, the later save wins and the earlier author's work is gone
+     * with no error anywhere — which is the failure this column exists to
+     * turn into a refusal.
+     *
+     * An integer rather than a timestamp: `updatedAt` is a moment, and a
+     * moment survives a JSON round trip, a clock adjustment and a
+     * millisecond-truncating client only by luck.
+     */
+    version: integer().notNull().default(1),
     publishedAt: timestamp({ withTimezone: true }),
     /**
      * Generated column, so it can never drift from the row it describes.
@@ -142,10 +158,32 @@ export const contentRevisions = pgTable(
     contentId: uuid()
       .notNull()
       .references(() => contents.id, { onDelete: 'cascade' }),
+    /*
+     * The whole editorial state, not the parts somebody happened to think of.
+     *
+     * It used to hold the title, the blocks and the metadata, which reads like
+     * "the document" until a restore is attempted: the slug, the excerpt, the
+     * status, the parent and the publication date were all missing, so putting
+     * a document back the way it was was impossible from its own history. A
+     * revision that cannot restore is a record nobody can use.
+     */
+    slug: text().notNull(),
     title: text().notNull(),
+    excerpt: text(),
+    status: contentStatus().notNull(),
     blocks: jsonb().$type<Blocks>().notNull(),
     meta: jsonb().$type<Record<string, unknown>>().notNull(),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    parentId: uuid().references((): AnyPgColumn => contents.id, { onDelete: 'set null' }),
+    /*
+     * withTimezone, not withTimeZone. Drizzle takes an options object and
+     * ignores a key it does not know, so the capitalised spelling produced a
+     * column with no time zone at all and said nothing — the generated SQL was
+     * the only place it showed.
+     */
+    publishedAt: timestamp({ withTimezone: true }),
+    /** The version this snapshot is of, so history reads in order. */
+    version: integer().notNull(),
     createdAt: timestamps.createdAt,
   },
   (t) => [index('content_revisions_content_idx').on(t.contentId, t.createdAt)],

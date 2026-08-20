@@ -144,10 +144,30 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         title: draft.title,
         status: draft.status,
         blocks: draft.blocks,
-        ...(draft.excerpt === '' ? {} : { excerpt: draft.excerpt }),
-        ...(fromLocalInput(draft.publishedAt) === null
-          ? {}
-          : { publishedAt: fromLocalInput(draft.publishedAt) as string }),
+        /*
+         * Emptied means emptied. Sending nothing for a field the author just
+         * cleared tells the server to leave it alone, which is how an excerpt
+         * became impossible to remove — so an empty field is sent as null on
+         * an edit. On a creation there is nothing to clear, and null would
+         * only be noise.
+         */
+        ...(id === null
+          ? {
+              ...(draft.excerpt === '' ? {} : { excerpt: draft.excerpt }),
+              ...(fromLocalInput(draft.publishedAt) === null
+                ? {}
+                : { publishedAt: fromLocalInput(draft.publishedAt) as string }),
+            }
+          : {
+              excerpt: draft.excerpt === '' ? null : draft.excerpt,
+              publishedAt: fromLocalInput(draft.publishedAt),
+              /*
+               * What this edit was composed against. The server refuses it if
+               * the document has moved since, rather than letting this save
+               * replace work the editor never saw.
+               */
+              expectedVersion: existing.data?.version,
+            }),
       },
       {
         onSuccess: (content) => {
@@ -342,6 +362,21 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
         {save.isError && (
           <p className="error" role="alert">
             {messageFor(save.error, t)}
+            {/*
+              A conflict is the one error the author can act on, and the action
+              is always the same: look at what is there now. Offering it here
+              means they do not have to work out that reloading is what "this
+              document changed" is asking for — and nothing is lost, because
+              the save was refused rather than half applied.
+            */}
+            {isConflict(save.error) && (
+              <>
+                {' '}
+                <button type="button" className="link" onClick={() => window.location.reload()}>
+                  {t('editor.reload')}
+                </button>
+              </>
+            )}
           </p>
         )}
 
@@ -424,6 +459,13 @@ const REASON_MESSAGES: Record<string, MessageKey> = {
   'group-not-found': 'error.groupNotFound',
   'group-type-mismatch': 'error.groupTypeMismatch',
   'group-forbidden': 'error.groupForbidden',
+  'stale-version': 'error.staleVersion',
+  expected_version_required: 'error.staleVersion',
+}
+
+/** A save refused because the document moved under the author. */
+function isConflict(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && error.reason === 'stale-version'
 }
 
 function messageFor(error: unknown, t: (key: MessageKey) => string): string {

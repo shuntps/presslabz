@@ -273,6 +273,30 @@ The public site reads the database directly, through the same repositories the A
 
 The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible whatever its date. A read is not where a schedule is resolved — it cannot write the row, announce it, or purge the cache — so the scheduler does that, and by the time a reader arrives the row says `published` like any other.
 
+### Two editors, one document
+
+A row lock serializes writes; it does not notice that the second one was composed against a version the first has already replaced. Without a precondition the later save wins, the earlier author's work is gone, and nothing anywhere says so — which is what happened here until this was added.
+
+Every document carries a **`version` integer**, incremented on each write, and an update must state the version it was composed against. Stating it is not optional and there is no default: `expectedVersion` is `number | 'any'` in the repository, so a caller that genuinely cannot conflict — a restore, a migration, the scheduler — says so in the code rather than by omission. A mismatch is a `409` naming `stale-version`, and the admin offers the one action that helps: reload and look at what is there now. Nothing was half applied, because the check happens inside the transaction against the locked row.
+
+An integer rather than `updatedAt`: a moment survives a JSON round trip, a clock adjustment and a millisecond-truncating client only by luck.
+
+### Absent, cleared, replaced
+
+A patch omits what it does not touch, so *absent* has to mean "leave alone". That left no way to say "remove this": an excerpt could be written and never deleted, because the admin sent no key for an empty field and the merge kept the stored value.
+
+**Null clears.** The update schema keeps a null as far as the merge, and the state schema — which is what the type's rules are checked against — normalises it to the absence the column stores. Writing that normalisation into both is what made the bug: `{ excerpt: null }` became `{}` before anything could tell it apart from an omission.
+
+The same rule is why restoring a revision states every field including the empty ones. A restore built from a patch of only the non-empty fields would bring a document back with a summary written after the version being restored.
+
+### History that can restore
+
+Revisions were written from the first migration and never read, and the snapshot held the title, the blocks and the metadata — which reads like "the document" until somebody tries to restore one. The slug, the excerpt, the status, the parent and the publication date were all missing.
+
+The snapshot is now the whole editorial state, taken in the transaction that supersedes it, and `content_revisions` is capped per document rather than by age: a document edited twice a year keeps its history, and one edited every minute by an automation does not fill the table. The prune runs in the same transaction as the insert, so the table cannot grow between a write and a sweep that might never run.
+
+**Restoring is an edit, not a rewind.** It goes through the same write path: the same authorization against the state it would produce, the same version precondition, and it leaves a revision of its own, so restoring the wrong one is undoable. A restore that bypassed those would be a way to publish — or to take a document down — without the permission either costs.
+
 ### Scheduled publication
 
 A timer in the API claims everything due in **one statement**: `UPDATE … WHERE status = 'scheduled' AND published_at <= now RETURNING *`. That is what makes several instances safe. Each row is locked by whichever instance touches it first, and the loser re-evaluates its condition after that commits, finds the row already published, and returns fewer rows — so a document is published once and, more importantly, *announced* once. Reading the due set and then updating it would hand the same rows to every instance and tell every hook handler about the same publication several times.
