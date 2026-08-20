@@ -77,9 +77,18 @@ function liveDocument(permissions: {
     authorId: testUser.id,
     parentId: null,
     publishedAt: '2026-01-01T00:00:00.000Z',
+    version: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     permissions,
+  }
+}
+
+/** The same document, carrying the marks an import would have brought. */
+function importedDocument(blocks: unknown[]) {
+  return {
+    ...liveDocument({ update: true, delete: true, statuses: ['draft', 'published'] }),
+    blocks,
   }
 }
 
@@ -332,5 +341,75 @@ describe('controls the actor may not use', () => {
     expect(screen.queryByRole('status')).toBeNull()
     const select = getInput(/state/i, 'select') as HTMLSelectElement
     expect(options(select)).toMatchObject({ draft: false, published: false, archived: true })
+  })
+})
+
+describe('editing content that came from somewhere else', () => {
+  const linked = {
+    id: '11111111-1111-4111-8111-111111111111',
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: 'Read ' },
+      { type: 'text', text: 'the guide', marks: [{ type: 'link', href: 'https://example.com' }] },
+      { type: 'text', text: ' today.' },
+    ],
+  }
+
+  /*
+   * The failure this closes: the editor rebuilt the run as one unmarked node
+   * on every keystroke, so a document imported with links lost them the first
+   * time somebody fixed a typo — and the save that followed made it permanent.
+   */
+  it('keeps a link the author never touched', async () => {
+    serverSays({ documents: [importedDocument([linked])] })
+    await open('/content/post/doc-1')
+
+    /*
+     * Typed at the end, which is an edit. Clearing the field first would be
+     * the author deleting the paragraph and writing another one — the marks
+     * are supposed to go in that case, and asserting they survive it would be
+     * asserting the wrong thing.
+     */
+    const field = await screen.findByPlaceholderText(/^paragraph$/i)
+    await userEvent.type(field, ' Tomorrow too.')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(true)
+    })
+
+    const sent = api.requests.find((request) => request.route.startsWith('PATCH'))?.body as {
+      blocks: { content: { text: string; marks?: unknown[] }[] }[]
+    }
+
+    const marked = sent.blocks[0]?.content.find((node) => node.marks !== undefined)
+    expect(marked?.text).toBe('the guide')
+    expect(marked?.marks).toEqual([{ type: 'link', href: 'https://example.com' }])
+  })
+
+  /*
+   * The editor addresses blocks by id, so two blocks sharing one would be
+   * edited and deleted together — and the schema refuses to store the
+   * document, which would leave it unsavable forever.
+   */
+  it('repairs a document that arrives with duplicate block ids', async () => {
+    const duplicate = { ...linked, content: [{ type: 'text', text: 'Twice' }] }
+    serverSays({ documents: [importedDocument([duplicate, { ...duplicate }])] })
+    await open('/content/post/doc-1')
+
+    await screen.findAllByPlaceholderText(/^paragraph$/i)
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(true)
+    })
+
+    const sent = api.requests.find((request) => request.route.startsWith('PATCH'))?.body as {
+      blocks: { id: string }[]
+    }
+
+    expect(sent.blocks).toHaveLength(2)
+    expect(sent.blocks[0]?.id).toBe(duplicate.id)
+    expect(sent.blocks[1]?.id).not.toBe(duplicate.id)
   })
 })

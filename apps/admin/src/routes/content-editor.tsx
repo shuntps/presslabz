@@ -1,4 +1,4 @@
-import type { Blocks } from '@presslabz/blocks'
+import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
 import { LOCALE_LABELS, LOCALES, type Locale, type MessageKey } from '@presslabz/i18n'
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
@@ -50,7 +50,14 @@ function draftFrom(content: ContentSummary | undefined): Draft {
      * untouched moved its publication by the zone's offset.
      */
     publishedAt: toLocalInput(content?.publishedAt),
-    blocks: content?.blocks ?? [],
+    /*
+     * Repaired on the way in. A document can arrive with repeated block ids —
+     * from an import, or a copy that duplicated one wholesale — and the editor
+     * addresses blocks by id, so it would replace or delete every copy at
+     * once. The schema refuses duplicates, so such a document could otherwise
+     * never be saved again; the first occurrence keeps its id.
+     */
+    blocks: withUniqueIds(content?.blocks ?? []),
   }
 }
 

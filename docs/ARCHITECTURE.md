@@ -273,6 +273,18 @@ The public site reads the database directly, through the same repositories the A
 
 The rule is stricter than status alone: a row carrying `published` with a date in the future stays invisible, and a `scheduled` row stays invisible whatever its date. A read is not where a schedule is resolved — it cannot write the row, announce it, or purge the cache — so the scheduler does that, and by the time a reader arrives the row says `published` like any other.
 
+### Editing text that carries marks
+
+The block vocabulary has always carried inline marks and the renderer has always whitelisted them; nothing in the editor can *create* one yet, because that arrives with Tiptap. What it could do — and did — was destroy them: every keystroke rebuilt the run as a single unmarked node, so a document imported with links and emphasis lost all of it the first time somebody fixed a typo, silently, with no way back short of a revision.
+
+An edit is now treated as what it is: **a splice**. The text either side of the change keeps its marks, and only the changed part is rewritten. What replaces the change inherits marks when the whole change happened inside one run — fixing a word in a bold sentence keeps it bold, which is what the author meant — and inherits none when it spans two differently marked runs, because it cannot inherit both and guessing is worse. Adjacent runs carrying the same marks are joined, or a paragraph edited fifty times becomes fifty nodes saying the same thing.
+
+**Block ids are unique, and the schema says so.** The editor addresses blocks by id — replacing one, deleting one — so two blocks sharing an id had operations that hit both. Nothing checked, and an import or a wholesale copy produces it easily. The schema now refuses it, which would leave such a document unsavable forever, so the editor repairs duplicates on the way in: the first occurrence keeps its id, later ones are renumbered in document order.
+
+**The palette comes from the vocabulary.** It used to be a hand-written list beside a comment claiming otherwise, so adding a block type left it out of the editor with nothing failing. It is derived now, and a type that cannot be created empty — an image needs a media id — is named as an exception rather than by being forgotten.
+
+An optional field on a block clears the same way an optional field on a document does: emptying it removes the key rather than spreading nothing over the previous value, which is why a quote's attribution and a code block's language could be written and never taken back.
+
 ### Two editors, one document
 
 A row lock serializes writes; it does not notice that the second one was composed against a version the first has already replaced. Without a precondition the later save wins, the earlier author's work is gone, and nothing anywhere says so — which is what happened here until this was added.

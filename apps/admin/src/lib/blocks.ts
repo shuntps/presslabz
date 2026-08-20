@@ -1,4 +1,4 @@
-import type { Block, BlockType, InlineContent } from '@presslabz/blocks'
+import { BLOCK_TYPES, type Block, type BlockType, type InlineContent } from '@presslabz/blocks'
 import type { MessageKey } from '@presslabz/i18n'
 
 /**
@@ -27,31 +27,63 @@ export const BLOCK_LABELS: Record<BlockType, MessageKey> = {
 }
 
 /**
- * What the palette offers. Image is here but handled apart from the rest: a
- * block that must name a media id cannot be created empty, so the palette
- * opens the picker and the block arrives already pointing at something.
+ * Types that cannot be created empty, because they need something from
+ * outside the palette. An image must name a media id, so the palette opens the
+ * picker and the block arrives already pointing at something.
  */
-export const CREATABLE_BLOCKS = [
-  'paragraph',
-  'heading',
-  'quote',
-  'list',
-  'code',
-  'divider',
-] as const satisfies readonly BlockType[]
+const NEEDS_INPUT: readonly BlockType[] = ['image']
+
+/**
+ * What the palette offers, derived from the vocabulary rather than listed
+ * again.
+ *
+ * It used to be a hand-written array beside a comment claiming the editor
+ * consumed the registry directly. Adding a block type to packages/blocks would
+ * have left it out of the palette with nothing failing — the list was still
+ * valid, just short. Now a new type appears here on its own, and one that
+ * needs input has to be named above to stay out.
+ */
+export const CREATABLE_BLOCKS = BLOCK_TYPES.filter(
+  (type) => !NEEDS_INPUT.includes(type),
+) as readonly CreatableBlockType[]
+
+export type CreatableBlockType = Exclude<BlockType, 'image'>
 
 export function imageBlock(mediaId: string): Block {
   return { id: crypto.randomUUID(), type: 'image', mediaId }
 }
 
 /**
- * Plain text as inline content. The vocabulary carries marks and the renderer
- * whitelists them, but nothing can produce one yet — that arrives with Tiptap.
+ * Plain text as inline content, for a field that had none.
+ *
+ * Editing existing content goes through `replaceInlineText` instead: this one
+ * rebuilds the run from scratch, which is exactly what destroyed the marks on
+ * imported documents.
  */
 export const inlineText = (value: string): InlineContent =>
   value === '' ? [] : [{ type: 'text', text: value }]
 
-export function emptyBlock(type: (typeof CREATABLE_BLOCKS)[number]): Block {
+/**
+ * Sets an optional text field, or removes it when the field is emptied.
+ *
+ * Spreading `{}` over the block — which is what the editor did — leaves the
+ * previous value in place, so a quote's attribution and a code block's
+ * language could be written and never taken back.
+ */
+export function setOptionalText<TBlock extends Block>(
+  block: TBlock,
+  key: 'attribution' | 'language',
+  value: string,
+): TBlock {
+  const next = { ...block } as Record<string, unknown>
+
+  if (value === '') delete next[key]
+  else next[key] = value
+
+  return next as TBlock
+}
+
+export function emptyBlock(type: CreatableBlockType): Block {
   const id = crypto.randomUUID()
 
   switch (type) {

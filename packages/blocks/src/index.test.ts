@@ -22,14 +22,22 @@ function text(value: string) {
  * extractor are both driven from this, which is what stops a block from being
  * added and silently rendering to nothing.
  */
+/*
+ * A distinct id per sample, because these are also used as one document and
+ * two blocks may not share an id — which the schema now refuses rather than
+ * leaving to convention. They were all the same constant, and the document
+ * test passed only because nothing checked.
+ */
+const ids = (n: number) => `0e5f2a6c-6a1e-4a1a-8f36-1f4a9d0f1c2${n}`
+
 const SAMPLES: Record<BlockType, Block> = {
-  paragraph: { id, type: 'paragraph', content: text('A paragraph.') },
-  heading: { id, type: 'heading', level: 2, content: text('A heading') },
-  quote: { id, type: 'quote', content: text('A quotation'), attribution: 'Someone' },
-  list: { id, type: 'list', ordered: false, items: [text('First'), text('Second')] },
-  code: { id, type: 'code', language: 'ts', code: 'const x = 1' },
-  image: { id, type: 'image', mediaId: id, caption: text('A caption') },
-  divider: { id, type: 'divider' },
+  paragraph: { id: ids(1), type: 'paragraph', content: text('A paragraph.') },
+  heading: { id: ids(2), type: 'heading', level: 2, content: text('A heading') },
+  quote: { id: ids(3), type: 'quote', content: text('A quotation'), attribution: 'Someone' },
+  list: { id: ids(4), type: 'list', ordered: false, items: [text('First'), text('Second')] },
+  code: { id: ids(5), type: 'code', language: 'ts', code: 'const x = 1' },
+  image: { id: ids(6), type: 'image', mediaId: id, caption: text('A caption') },
+  divider: { id: ids(7), type: 'divider' },
 }
 
 describe('isSafeHref', () => {
