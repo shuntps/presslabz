@@ -24,7 +24,8 @@ catalog:
   typescript: 7.0.2
   turbo: 2.10.10
   '@biomejs/biome': 2.5.8
-  vitest: 4.1.10
+  vitest: 4.1.11
+  '@vitest/coverage-v8': 4.1.11
   '@types/node': 26.2.0
 
   # API

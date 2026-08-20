@@ -26,6 +26,17 @@ export const E2E_DATABASE = 'presslabz_e2e'
 export const E2E_RATE_LIMIT_NAMESPACE = 'presslabz:rl:e2e:'
 
 /**
+ * A bucket of its own, for the same reason the database is its own.
+ *
+ * These tests upload real images through the real pipeline, and the run's
+ * database is dropped at the end — so every object they wrote into the shared
+ * development bucket became a file no row anywhere referenced. "Leaves the
+ * object store clean" is not something a suite can promise while writing into
+ * somebody else's bucket.
+ */
+export const E2E_BUCKET = 'presslabz-e2e-media'
+
+/**
  * Where the signed-in browser state is kept between the setup project and the
  * tests. Under the run's own directory, and ignored by git: it holds a session
  * cookie, which is a credential however throwaway the account is.

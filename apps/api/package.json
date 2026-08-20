@@ -12,7 +12,8 @@
     "seed:bulk": "node --env-file-if-exists=../../.env scripts/seed/bulk.ts",
     "typecheck": "tsc --noEmit",
     "check:native": "node --env-file-if-exists=../../.env scripts/native-load-check.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "catalog:",
@@ -40,6 +41,7 @@
     "@types/node": "catalog:",
     "sharp": "catalog:",
     "typescript": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "vitest": "catalog:"
   }
 }

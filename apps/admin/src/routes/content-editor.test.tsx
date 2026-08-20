@@ -169,24 +169,34 @@ describe('creating a document', () => {
     ])
   })
 
+  /*
+   * This test used to open a *new* document, save it — which sends a POST —
+   * and then loop over the PATCH requests, of which there were none. The loop
+   * body never ran and the test passed without touching the behaviour it
+   * names. It edits an existing document now, and asserts a patch was sent
+   * before asserting anything about its contents, so it can never go hollow
+   * again the way it did.
+   */
   it('does not send a locale it is forbidden to change', async () => {
     // The server refuses the key by name; sending it anyway would turn every
     // save after the first into a 400 the author cannot act on.
-    await openNewDocument()
+    serverSays({ documents: [fakeDocument({ id: 'doc-1', title: 'An existing document' })] })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('An existing document')
 
-    await userEvent.type(screen.getByPlaceholderText(/^title$/i), 'A document')
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ', edited')
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => {
-      expect(api.requests.some((request) => request.route.startsWith('POST /content/post'))).toBe(
-        true,
-      )
+      expect(api.requests.some((request) => request.route.startsWith('PATCH /content/'))).toBe(true)
     })
 
     const patches = api.requests.filter((request) => request.route.startsWith('PATCH /content/'))
-    for (const patch of patches) {
-      expect(patch.body).not.toHaveProperty('locale')
-    }
+    expect(patches).toHaveLength(1)
+    expect(patches[0]?.body).not.toHaveProperty('locale')
+    // And it did send the edit, so "no locale" is a statement about a real
+    // request rather than about an empty one.
+    expect(patches[0]?.body).toMatchObject({ title: 'An existing document, edited' })
   })
 
   it('asks for a date as soon as a schedule is chosen', async () => {

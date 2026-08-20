@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import type { Sql } from 'postgres'
 
 /**
  * Whether the integration environment is present, and a refusal to pretend it
@@ -57,9 +58,12 @@ export function hasIntegrationEnv(): boolean {
  * reliable against a connection this suite itself left open; what changes is
  * that it can only ever reach a database this call created.
  *
- * A run that dies before its teardown leaves one behind. They all share the
- * prefix below, so `drop database` on anything matching it is safe to do by
- * hand, and an empty scratch database costs nothing until then.
+ * A run that dies before its teardown leaves one behind — a killed process, a
+ * failing `afterAll`, a laptop closing. They are swept on the next call rather
+ * than left for somebody to notice: an hour is long enough that no live suite
+ * is touched and short enough that a developer's server does not accumulate
+ * them for a month. "Leaves the database clean" is a property of the suite,
+ * not of whoever remembers to look.
  */
 export const SCRATCH_PREFIX = 'presslabz_scratch_'
 
@@ -68,6 +72,39 @@ function scratchName(label: string): string {
   const unique = `${process.pid.toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
   const name = `${SCRATCH_PREFIX}${label}_${unique}`.toLowerCase().replace(/[^a-z0-9_]/g, '')
   return name.slice(0, 63)
+}
+
+/** How long a scratch database may sit before it is treated as abandoned. */
+export const SCRATCH_MAX_AGE_MS = 60 * 60 * 1000
+
+/**
+ * Drops scratch databases old enough that no run could still be using them.
+ *
+ * Best effort on purpose: this is housekeeping, and a failure here must not
+ * turn into a test failure about something else entirely. Postgres has no
+ * creation timestamp for a database, so the age comes from the directory the
+ * cluster wrote for it — which is what "when was this created" means here.
+ */
+async function sweepAbandonedScratchDatabases(admin: Sql): Promise<void> {
+  try {
+    const rows = await admin.unsafe<{ datname: string; age: number }[]>(
+      `select datname,
+              extract(epoch from (now() - (pg_stat_file('base/' || oid || '/PG_VERSION')).modification)) * 1000 as age
+         from pg_database
+        where datname like '${SCRATCH_PREFIX}%'`,
+    )
+
+    for (const row of rows) {
+      if (Number(row.age) < SCRATCH_MAX_AGE_MS) continue
+      // The name came from pg_database and matched the prefix; still checked,
+      // because an identifier cannot be parameterised.
+      if (!new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(row.datname)) continue
+      await admin.unsafe(`drop database if exists ${row.datname} with (force)`)
+    }
+  } catch {
+    // No permission to read the data directory, or a database that vanished
+    // between the query and the drop. Neither is this caller's problem.
+  }
 }
 
 export async function createScratchDatabase(label = 'db'): Promise<{
@@ -94,6 +131,7 @@ export async function createScratchDatabase(label = 'db'): Promise<{
 
   const admin = postgres(adminUrl.toString(), { max: 1 })
   try {
+    await sweepAbandonedScratchDatabases(admin)
     await admin.unsafe(`create database ${name}`)
   } finally {
     await admin.end({ timeout: 5 })

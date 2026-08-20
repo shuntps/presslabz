@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
-import { E2E_DATABASE_URL, E2E_RATE_LIMIT_NAMESPACE, SESSION_STATE } from './scripts/database.ts'
+import {
+  E2E_BUCKET,
+  E2E_DATABASE_URL,
+  E2E_RATE_LIMIT_NAMESPACE,
+  SESSION_STATE,
+} from './scripts/database.ts'
 
 /**
  * The two servers, against the database `scripts/prepare.ts` just rebuilt.
@@ -35,6 +40,10 @@ const serverEnv = {
   // Namespaced away from the development instance: Valkey is shared, and a
   // rate-limit counter or a cached page from a run is not this run's.
   RATE_LIMIT_NAMESPACE: E2E_RATE_LIMIT_NAMESPACE,
+  // Its own bucket: the run's database is dropped at the end, so anything it
+  // wrote into the shared one would be a file nothing references.
+  S3_BUCKET: E2E_BUCKET,
+  MEDIA_BASE_URL: `${process.env.S3_ENDPOINT ?? 'http://localhost:9000'}/${E2E_BUCKET}`,
   PAGE_CACHE_NAMESPACE: 'presslabz:page:e2e:',
 }
 

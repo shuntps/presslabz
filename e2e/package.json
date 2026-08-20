@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "catalog:",
     "@axe-core/playwright": "catalog:",
     "@playwright/test": "catalog:",
     "@presslabz/db": "workspace:*",

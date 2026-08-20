@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process'
+import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { Valkey } from 'iovalkey'
 import postgres from 'postgres'
 import {
   databaseUrl,
   E2E_ADMIN,
+  E2E_BUCKET,
   E2E_DATABASE,
   E2E_DATABASE_URL,
   E2E_RATE_LIMIT_NAMESPACE,
@@ -60,43 +62,6 @@ try {
   await maintenance.end({ timeout: 5 })
 }
 
-run(['--filter', '@presslabz/db', 'migrate'])
-
-run(['--filter', '@presslabz/api', 'seed'], {
-  SEED_ADMIN_EMAIL: E2E_ADMIN.email,
-  SEED_ADMIN_PASSWORD: E2E_ADMIN.password,
-  SEED_ADMIN_NAME: E2E_ADMIN.name,
-})
-
-// Hello world and Bonjour le monde: one piece of work in two languages, which
-// is what the navigation these tests exist for moves between.
-run(['--filter', '@presslabz/api', 'seed:demo'], { SEED_ADMIN_EMAIL: E2E_ADMIN.email })
-
-/*
- * Two images, through the real pipeline and into the real bucket, and
- * deliberately without alt text: an undescribed asset is what left the picker
- * with buttons a screen reader could not tell apart, so the accessibility scan
- * needs some. No posts — this seed's job here is the library.
- */
-run(['--filter', '@presslabz/api', 'seed:bulk'], {
-  SEED_ADMIN_EMAIL: E2E_ADMIN.email,
-  SEED_POSTS: '0',
-  SEED_IMAGES: '2',
-})
-
-/*
- * And then take the descriptions away. The seed writes alt text because a
- * fixture should be exemplary; the accessibility scan needs the ordinary case,
- * where nobody wrote any — which is what left the picker with a grid of
- * buttons a screen reader could not tell apart.
- */
-const scratch = postgres(E2E_DATABASE_URL, { max: 1 })
-try {
-  await scratch.unsafe(`update media set alt = '{}'::jsonb`)
-} finally {
-  await scratch.end({ timeout: 5 })
-}
-
 /*
  * The counters go with the database, because they are as much this run's state
  * as the rows are. Sign-in is limited to ten attempts in fifteen minutes —
@@ -128,4 +93,90 @@ try {
   if (removed > 0) console.warn(`Cleared ${removed} rate-limit keys from a previous run.`)
 } finally {
   valkey.disconnect()
+}
+
+/*
+ * The bucket, emptied rather than dropped: MinIO and S3 both refuse to delete
+ * one that still holds objects, and creating it is the API's own job at boot
+ * (`ensureBucket`). What matters is that nothing from a previous run is in it
+ * when this one starts, and that nothing this run writes ends up in the bucket
+ * somebody is developing against.
+ */
+const s3 = new S3Client({
+  endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
+  region: process.env.S3_REGION ?? 'us-east-1',
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID as string,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY as string,
+  },
+})
+
+try {
+  let removed = 0
+  let token: string | undefined
+
+  do {
+    const listed = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: E2E_BUCKET,
+        ...(token ? { ContinuationToken: token } : {}),
+      }),
+    )
+
+    const keys = (listed.Contents ?? []).map((object) => ({ Key: object.Key as string }))
+    if (keys.length > 0) {
+      await s3.send(new DeleteObjectsCommand({ Bucket: E2E_BUCKET, Delete: { Objects: keys } }))
+      removed += keys.length
+    }
+
+    token = listed.IsTruncated ? listed.NextContinuationToken : undefined
+  } while (token)
+
+  if (removed > 0) console.warn(`Emptied ${removed} objects from ${E2E_BUCKET}.`)
+} catch (error) {
+  // A bucket that does not exist yet is the ordinary first run; the API
+  // creates it when it starts.
+  if ((error as { name?: string }).name !== 'NoSuchBucket') throw error
+} finally {
+  s3.destroy()
+}
+
+run(['--filter', '@presslabz/db', 'migrate'])
+
+run(['--filter', '@presslabz/api', 'seed'], {
+  SEED_ADMIN_EMAIL: E2E_ADMIN.email,
+  SEED_ADMIN_PASSWORD: E2E_ADMIN.password,
+  SEED_ADMIN_NAME: E2E_ADMIN.name,
+})
+
+// Hello world and Bonjour le monde: one piece of work in two languages, which
+// is what the navigation these tests exist for moves between.
+run(['--filter', '@presslabz/api', 'seed:demo'], { SEED_ADMIN_EMAIL: E2E_ADMIN.email })
+
+/*
+ * Two images, through the real pipeline and into the real bucket, and
+ * deliberately without alt text: an undescribed asset is what left the picker
+ * with buttons a screen reader could not tell apart, so the accessibility scan
+ * needs some. No posts — this seed's job here is the library.
+ */
+run(['--filter', '@presslabz/api', 'seed:bulk'], {
+  SEED_ADMIN_EMAIL: E2E_ADMIN.email,
+  SEED_POSTS: '0',
+  SEED_IMAGES: '2',
+  S3_BUCKET: E2E_BUCKET,
+  MEDIA_BASE_URL: `${process.env.S3_ENDPOINT ?? 'http://localhost:9000'}/${E2E_BUCKET}`,
+})
+
+/*
+ * And then take the descriptions away. The seed writes alt text because a
+ * fixture should be exemplary; the accessibility scan needs the ordinary case,
+ * where nobody wrote any — which is what left the picker with a grid of
+ * buttons a screen reader could not tell apart.
+ */
+const scratch = postgres(E2E_DATABASE_URL, { max: 1 })
+try {
+  await scratch.unsafe(`update media set alt = '{}'::jsonb`)
+} finally {
+  await scratch.end({ timeout: 5 })
 }

@@ -537,6 +537,20 @@ Both quiet weights moved rather than one. Raising only the faint token would hav
 
 **axe runs against the real pages, and a keyboard walks the real path.** The browser suite scans the sign-in screen, the dashboard, a listing, the editor with a document open, and the picker holding assets nobody described, at WCAG 2.2 AA; then it composes a document and saves it without touching the pointer. The scan found a genuine fault nobody's eye would have: the block controls were 1.35rem, under the 24px floor for a pointer target. They are 1.5rem now — not the full tap target, because they sit beside a line of text and a finger-sized row of them would cover the writing, which is the trade the standard's own floor exists for.
 
+## What the tests are for
+
+**No test may pass without doing the thing it names.** The shape that breaks this is quiet: a loop over a filtered list, an `every` over an array that turned out to be empty, an assertion about requests that were never made. One test opened a *new* document, saved it — which sends a POST — and then looped over the PATCH requests, of which there were none; it had been green for its whole life without touching its subject. The rule that follows is mechanical: assert the collection is not empty *before* asserting anything about its contents, and when a test is about a request, assert the request was made.
+
+**Every security or data-loss fault gets a regression test, in the layer where it can fail.** A draft leaking through the translations endpoint is an API test; two editors overwriting each other is a repository test against a real transaction; a router keeping a component mounted between two documents is a browser test. Choosing the layer is choosing what the test can actually observe — a jsdom suite cannot see a router intercept its own navigation, and no unit test can see a page painted before its JavaScript runs.
+
+**Coverage is reported, never gated.** `pnpm test:coverage` exists to be read. There is no percentage to satisfy, because a floor is satisfied most cheaply by testing what is easy rather than what is risky, and this project has already been bitten by tests that ran without asserting anything — a number would have counted those as coverage.
+
+**The test task is not cached.** Half of these suites read a real Postgres, a real Valkey and a real MinIO, and none of that state is in any hash Turbo computes: a cache hit could report green about services that were absent, empty or broken. The suite is well under a minute, which is cheaper than a green that means nothing. Read the counts rather than the tick, too — a suite that quietly shrinks is worse than one that fails, and this repository has watched forty-five tests vanish from a passing build.
+
+**A suite leaves nothing behind.** Scratch databases are dropped by the suite that made them and swept on the next run when a process died before its teardown — an hour old is abandoned, which no live run can be. The browser suite writes to a bucket of its own, emptied before each run: its database is dropped at the end, so anything it had written into the shared development bucket would be a file no row anywhere references. Media suites delete the objects they uploaded *and* the orphan records that deletion creates.
+
+**Warnings are removed, not tolerated.** jsdom printed "Not implemented: Window's scrollTo()" on every navigation — thirty-nine times in one file. A warning that appears in every run is one nobody reads, and the ones nobody reads hide the ones that matter.
+
 ## Browser tests
 
 `pnpm e2e` covers the faults that need a browser to exist at all: a router that keeps a component mounted, a dialog the platform owns, a request that actually goes somewhere. Everything else stays in Vitest, which is faster and does not need three containers.
@@ -568,6 +582,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
 | `pnpm e2e` | Playwright, in a real browser, against its own database and its own pair of servers. Not part of `pnpm test`: it needs the service containers running |
+| `pnpm test:coverage` | The same suites with a coverage report. Read, never gated — see "What the tests are for" |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |

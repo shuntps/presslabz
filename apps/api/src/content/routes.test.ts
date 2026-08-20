@@ -493,10 +493,21 @@ describe.skipIf(!ready)('content routes', () => {
 
     it('shows one language at a time', async () => {
       await post('editor', draft('fr-one'))
+      await post('editor', { ...draft('en-one'), locale: 'en' })
+
       const french = await list('editor', 'fr')
       const english = await list('editor', 'en')
 
+      /*
+       * Both lists are asserted to hold something before anything is asserted
+       * about what they hold. `every` on an empty array is true, so an English
+       * listing that happened to be empty — which it was, since every fixture
+       * in this suite is French — would have passed this test while proving
+       * nothing.
+       */
       expect(french.groups.length).toBeGreaterThan(0)
+      expect(english.groups.length).toBeGreaterThan(0)
+      expect(french.groups.every((group) => group.primary.locale === 'fr')).toBe(true)
       expect(english.groups.every((group) => group.primary.locale === 'en')).toBe(true)
     })
 
