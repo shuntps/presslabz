@@ -12,8 +12,8 @@ import { contents } from './contents.ts'
 import { timestamps } from './shared.ts'
 
 /**
- * Two tables where WordPress uses three. Taxonomies are registered in code,
- * so there is nothing to store about them.
+ * Two tables where the classic content managers use three. Taxonomies are
+ * registered in code, so there is nothing to store about them.
  *
  * Terms are localized on the same model as contents: one row per translation,
  * linked by translationGroupId.

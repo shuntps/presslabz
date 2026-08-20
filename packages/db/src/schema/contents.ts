@@ -88,7 +88,7 @@ export const contents = pgTable(
     title: text().notNull(),
     excerpt: text(),
     blocks: jsonb().$type<Blocks>().notNull().default([]),
-    /** Replaces wp_postmeta. Queried through the GIN index below. */
+    /** Metadata on the row it describes, queried through the GIN index below. */
     meta: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid().references(() => users.id, { onDelete: 'set null' }),
     /*

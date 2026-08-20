@@ -799,8 +799,9 @@ button.quiet:hover:not(:disabled) {
 
 /*
  * A translation pair, drawn as one bracketed unit because it is one piece of
- * work. In a WordPress list table these are two unrelated posts a plugin
- * hopes it has associated; here the bracket is the model showing through.
+ * work. Where a translation is a separate post that a plugin hopes it has
+ * associated, these are two unrelated rows in a table; here the bracket is the
+ * model showing through.
  */
 .pair {
   position: relative;

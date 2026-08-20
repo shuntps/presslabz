@@ -1,8 +1,8 @@
 /**
  * Capabilities are what the system checks. Roles exist only as named bundles
  * of them, and no code outside this file should branch on a role — that is
- * the mistake that makes WordPress permissions so hard to reason about, where
- * `current_user_can()` accepts both and the two drift apart.
+ * the mistake that makes permissions hard to reason about elsewhere, where one
+ * function accepts a capability or a role name and the two drift apart.
  */
 export const CAPABILITIES = [
   'content:read',

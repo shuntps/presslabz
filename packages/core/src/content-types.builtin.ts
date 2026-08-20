@@ -14,8 +14,8 @@ import {
 
 /**
  * Shared metadata. Typed, so `meta.seo.description` is a field the editor can
- * render a control for and the renderer can read with confidence. In
- * WordPress this is a row in wp_postmeta whose shape nobody can state.
+ * render a control for and the renderer can read with confidence. Elsewhere it
+ * is a row in a key-value table whose shape nobody can state.
  */
 const seoSchema = z
   .object({

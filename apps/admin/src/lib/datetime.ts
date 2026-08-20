@@ -13,8 +13,9 @@
  * So: the field shows the instant in the reader's own zone, and what they type
  * means their own zone. That is what a `datetime-local` field means to
  * everyone who has ever used one, and it needs no configuration to be true.
- * The alternative — one editorial timezone for the whole installation, the way
- * WordPress does it — is a setting, a migration and a second conversion; it
+ * The alternative — one editorial timezone for the whole installation, which
+ * is what the classic content managers do — is a setting, a migration and a
+ * second conversion; it
  * would be worth it for a newsroom scheduling to the minute across countries,
  * and it is not what this is yet. The interface says which zone it is showing
  * so that the choice is visible rather than assumed.

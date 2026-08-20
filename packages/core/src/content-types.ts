@@ -7,9 +7,10 @@ import { slugSchema } from './slug.ts'
 /**
  * Content types are declared in code, not stored as rows.
  *
- * WordPress registers a post type at runtime and then has no idea what its
- * metadata looks like, which is why `get_post_meta()` returns unknown shapes
- * forever. Here one call fixes the metadata schema, the capabilities each
+ * Registering a content type at runtime leaves the system with no idea what
+ * its metadata looks like, which is why reading a metadata field elsewhere
+ * returns an unknown shape forever. Here one call fixes the metadata schema,
+ * the capabilities each
  * operation needs and the taxonomies that apply, and the validation, the
  * TypeScript types and the route behaviour all come out of that single
  * declaration. They cannot disagree because there is only one of them.
@@ -83,7 +84,7 @@ export interface ContentTypeOptions<TMeta extends z.ZodType = typeof metaDefault
   readonly hierarchical?: boolean
   /** Taxonomy names whose terms may be attached. Declared in code as well. */
   readonly taxonomies?: readonly string[]
-  /** Shape of `contents.meta`. Replaces wp_postmeta's unknowable key-value soup. */
+  /** Shape of `contents.meta`, in place of an unknowable key-value table. */
   readonly meta?: TMeta
   /** Overrides the defaults above, one operation at a time. */
   readonly access?: Partial<Record<ContentOperation, OperationAccess>>
@@ -333,8 +334,9 @@ export interface WriteIntent {
  * The middle case is the one that reads as an omission until it bites: a
  * contributor writes a draft, an editor publishes it, and the contributor —
  * who still holds `content:update:own` over the row — keeps rewriting a
- * published page. This is WordPress's `edit_published_posts`, expressed
- * through the capability that already exists rather than as a new one, because
+ * published page. This is the capability other systems name
+ * `edit_published_posts`, expressed through one that already exists rather
+ * than as a new one, because
  * the question it answers is the same question: may this actor decide what the
  * public sees.
  *

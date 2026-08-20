@@ -62,8 +62,9 @@ function Row({ row, primary }: { row: ContentSummary; primary: boolean }) {
 
 /**
  * A pair is drawn as one bracketed unit because it is one piece of work. The
- * bracket in the margin is the whole point: in a WordPress list table these
- * are two unrelated posts that a plugin hopes it has associated correctly.
+ * bracket in the margin is the whole point: without it — which is what a
+ * listing shows when translation is bolted on afterwards — these are two
+ * unrelated posts that something hopes it has associated correctly.
  */
 function Group({ group }: { group: TranslationGroupSummary }) {
   const siblings = Object.values(group.siblings)

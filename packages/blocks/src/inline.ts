@@ -3,11 +3,11 @@ import { z } from 'zod'
 /**
  * Inline content — the text inside a block, and the marks on it.
  *
- * WordPress stores a paragraph as a string of HTML, which is why formatting,
- * links and script all arrive through the same door. Here a run of text is a
- * node and its formatting is a list of marks, so there is no place for markup
- * to hide: anything that is not in the whitelist below cannot be represented
- * at all, let alone stored.
+ * Storing a paragraph as a string of HTML — which is how the classic content
+ * managers do it — is why formatting, links and script all arrive through the
+ * same door. Here a run of text is a node and its formatting is a list of
+ * marks, so there is no place for markup to hide: anything that is not in the
+ * whitelist below cannot be represented at all, let alone stored.
  */
 
 /**

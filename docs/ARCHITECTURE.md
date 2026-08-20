@@ -64,7 +64,7 @@ Monorepo via pnpm workspaces and Turborepo:
 
 ```
 apps/api           Fastify core
-apps/admin         React SPA (the wp-admin equivalent)
+apps/admin         React SPA (the editing interface)
 apps/web           Astro public rendering, loads themes
 packages/core      domain: content model, hook API, capabilities
 packages/modules   first-party features, built on the public hook API

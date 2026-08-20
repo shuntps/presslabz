@@ -582,8 +582,8 @@ function LeavingDialog({
 
 /**
  * The pair is the unit of work, so the editor says what the other languages
- * are doing and offers to start the one that is missing. In WordPress this is
- * a plugin's job and the association is a hope; here the group is a column.
+ * are doing and offers to start the one that is missing. Where translation is
+ * a plugin's job, that association is a hope; here the group is a column.
  */
 function TranslationPanel({
   type,

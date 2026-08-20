@@ -8,9 +8,9 @@ import { assertTag } from './tags.ts'
  * This is the fourth architecture principle in one file: a theme renders what
  * it likes, calls whatever data functions it needs, and its pages are
  * invalidated correctly without it having listed anything. A theme author who
- * forgets a tag is the failure mode this design exists to remove — in
- * WordPress that forgetting is the normal state, which is why cache plugins
- * there end up purging everything.
+ * forgets a tag is the failure mode this design exists to remove. Where
+ * caching is something you install afterwards, that forgetting is the normal
+ * state, which is why those plugins end up purging everything.
  */
 const collection = new AsyncLocalStorage<Set<string>>()
 
