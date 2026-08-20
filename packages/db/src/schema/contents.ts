@@ -116,13 +116,24 @@ export const contents = pgTable(
     publishedAt: timestamp({ withTimezone: true }),
     /**
      * Generated column, so it can never drift from the row it describes.
+     *
+     * Title, excerpt **and the document's own words**: it indexed the first
+     * two only, which is a search that cannot find a paragraph — the thing
+     * people actually search for. `presslabz_blocks_text` is an immutable SQL
+     * function that pulls every text, code and attribution out of the blocks,
+     * covering exactly what `blocksToPlainText` covers on the other side.
+     * Immutable because a generated column may call nothing else.
+     *
      * The 'simple' configuration does no stemming; per-locale configurations
-     * arrive with search in phase 2, since a generated column cannot call a
-     * non-immutable function to pick one per row.
+     * need a function that picks one per row, and picking depends on a column,
+     * which a generated expression may not do.
+     *
+     * Nothing queries this column yet. It exists so that the day something
+     * does, the index is already correct for every document ever written.
      */
     searchVector: tsvector().generatedAlwaysAs(
       (): SQL =>
-        sql`to_tsvector('simple', coalesce(${contents.title}, '') || ' ' || coalesce(${contents.excerpt}, ''))`,
+        sql`to_tsvector('simple', coalesce(${contents.title}, '') || ' ' || coalesce(${contents.excerpt}, '') || ' ' || presslabz_blocks_text(${contents.blocks}))`,
     ),
     ...timestamps,
   },

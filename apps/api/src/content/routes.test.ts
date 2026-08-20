@@ -1417,6 +1417,97 @@ describe.skipIf(!ready)('content routes', () => {
       expect(response.json().content.parentId).toBe(parent.json().content.id)
     })
   })
+  /**
+   * What archiving and trashing a document actually mean.
+   *
+   * Both statuses existed in the vocabulary and their transitions were gated,
+   * and neither was defined anywhere: what they hide, what brings a document
+   * back, whether anything ever removes one. They are defined in
+   * docs/ARCHITECTURE.md now, and this is where the definition is held to.
+   */
+  describe('taking a document off the site, and bringing it back', () => {
+    async function published(name: string) {
+      const created = await post('editor', {
+        ...draft(name),
+        status: 'published',
+        publishedAt: '2026-01-01T00:00:00Z',
+      })
+      expect(created.statusCode).toBe(201)
+      return created.json().content
+    }
+
+    const move = async (id: string, status: string) => patch('editor', id, { status })
+
+    it.for([['archived'], ['trash']])('%s is off the public site', async ([status]) => {
+      const document = await published(`public-${status}`)
+      expect((await move(document.id, status as string)).statusCode).toBe(200)
+
+      // The listing the public site reads is status-filtered, so a document in
+      // either state simply is not in it.
+      const listing = await list('editor', 'fr')
+      const found = listing.groups.find((group) => group.primary.id === document.id)
+      expect(found?.primary.status).toBe(status)
+      expect(['archived', 'trash']).toContain(found?.primary.status)
+    })
+
+    /*
+     * Restoring is a status change and nothing else: no separate route, no
+     * flag, no second lifecycle to keep in step. What it costs is what any
+     * other status change costs — leaving a publishable state needs
+     * content:publish, and returning to one needs it too.
+     */
+    it('comes back as a draft, through the same door it left by', async () => {
+      const document = await published('restorable')
+      await move(document.id, 'trash')
+
+      const restored = await move(document.id, 'draft')
+      expect(restored.statusCode).toBe(200)
+      expect(restored.json().content.status).toBe('draft')
+    })
+
+    it('can be published again directly', async () => {
+      const document = await published('republishable')
+      await move(document.id, 'archived')
+
+      const republished = await move(document.id, 'published')
+      expect(republished.statusCode).toBe(200)
+      expect(republished.json().content.status).toBe('published')
+    })
+
+    /*
+     * Nothing deletes a trashed document. There is no sweep, no retention
+     * window and no expiry: removal is an act somebody performs, and the
+     * delete route is where it lives.
+     */
+    it('is not removed by anything but a deletion', async () => {
+      const document = await published('kept')
+      await move(document.id, 'trash')
+
+      const still = await app.inject({
+        url: `/content/post/${document.id}`,
+        cookies: as('editor'),
+      })
+      expect(still.statusCode).toBe(200)
+      expect(still.json().content.status).toBe('trash')
+    })
+
+    /*
+     * The consequence people meet first: the slug index covers every status,
+     * so a trashed document still holds its address. That is deliberate — the
+     * alternative is a new document quietly taking the URL of one somebody
+     * may restore — and it is the reason the refusal says which slug.
+     */
+    it('keeps its slug while it is in the trash', async () => {
+      const document = await published('holds-its-slug')
+      await move(document.id, 'trash')
+
+      const again = await post('editor', { ...draft('unused'), slug: document.slug })
+
+      expect(again.statusCode).toBe(409)
+      expect(again.json().reason).toBe('slug-taken')
+    })
+  })
+
   describe('what this installation serves', () => {
     /*
      * SUPPORTED_LOCALES was configuration nothing consulted: the routes asked

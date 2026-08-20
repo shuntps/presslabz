@@ -95,7 +95,11 @@ The left column is the shape a classic content manager tends to have, and the re
 | revisions as ghost rows in the posts table | dedicated `content_revisions` table |
 | translation bolted on by a plugin | `locale` + `translation_group_id` in the core schema |
 
-Search uses a generated `tsvector` column with a GIN index, with the text-search configuration selected per locale — no external search service until there is a measured reason for one.
+**Search has an index and no query yet, and the index is the part that has to be right.** `contents.search_vector` is a generated `tsvector` with a GIN index over it, covering the title, the excerpt and the document's own words — every text, code and attribution in the block tree, through `presslabz_blocks_text`, an immutable SQL function that a generated column is allowed to call. It indexed title and excerpt alone until a test asked it to find a paragraph.
+
+That function is a second expression of `blocksToPlainText`, in another language, and two expressions of one rule drift: a test writes a document with one of every block type, extracts its words with the TypeScript side, and requires each one to be findable through the column.
+
+The configuration is `simple`, which does no stemming. Per-locale configurations need a function that picks one *per row*, and a generated expression may not depend on a column that way; that is the work a search route will start from. No external search service until there is a measured reason for one.
 
 ## Internationalization
 
@@ -183,6 +187,16 @@ Dark mode is one axis of the same idea, not a special case. A page adapts to the
 
 **Never take zoom away.** No `maximum-scale`, no `user-scalable=no`. Nothing may size text in `vw` alone.
 
+## Taxonomies and terms: reserved, and constrained anyway
+
+`terms`, `term_groups` and `content_terms` exist in the schema and nothing writes to them. There is no repository, no route and no interface; a content type lists its taxonomies as plain strings and `defineTaxonomy()` does not exist. **The feature is reserved, not operational**, and this paragraph is here so that nothing else has to imply otherwise.
+
+What the tables do carry is every invariant the feature will need, because the worst of the three states is a schema that is present and unconstrained: it accepts rows that a later version cannot make sense of, and the migration that repairs them is written against data nobody can reconstruct. Terms were in that state — `translation_group_id` defaulted to a fresh uuid pointing at no group, so two French translations of one term, or a group holding a category and a tag, were rows the database would have taken.
+
+A term now belongs to a group, a group holds one taxonomy, and a group holds at most one term per language — the same shape as a document's translation group, enforced the same way. A parent is a term of the same taxonomy in the same language. And filing a document under a term states the type, the language and the taxonomy on the row itself, with a composite foreign key to each side: because one `locale` column serves both, an English post under a French category is not something the table can hold.
+
+One rule is deliberately absent, and its absence is the honest half. Whether a content type *declares* a taxonomy lives in code — `defineContentType` lists them — and a database cannot consult that without a table that copies it, which is the key-value habit this project exists to avoid. The repository that eventually writes these rows will check it against the registry. The schema guarantees identity and language; the code will guarantee the declaration; nothing pretends the other way round.
+
 ## Media
 
 Every upload is decoded and re-encoded through `sharp`. That is the whole security model, and it is deliberately not a check on the filename or the declared content type — both are strings the client chose. What lands in the bucket is bytes sharp produced, under a key the server generated, with a content type the server set, so a polyglot file, an SVG carrying script and a payload hidden in EXIF all stop at the same place: either sharp refuses to decode it, or it emits an image and nothing else. **SVG is not accepted at all** — it is a document format with script in it, and no re-encoding leaves it both safe and an SVG.
@@ -232,6 +246,22 @@ The schemas say what a client needs and no more. Ids are opaque strings: they ar
 One table, `apps/admin/src/lib/errors.ts`, consulted by every screen. Before it, each screen said something different, or nothing: a network failure during sign-in was reported as "that email and password do not match" — an accusation about the person, for a fault that was never theirs, answerable only by retyping a password that was already right; a listing that failed said "something went wrong" whether the server had refused, was unreachable, or had answered something unreadable; a translations panel that failed to load rendered as an empty list, which is a claim that there are none.
 
 The distinctions are the ones somebody can act on: nothing answered, the answer was unreadable, refused and why (401, 403, 404, 409 with its reason, 429), or broken over there (5xx). "Try again" is offered only where trying again could work — an unreachable API, a timeout, a 5xx — because offering it for a 403 is offering to fail identically.
+
+## What a status means
+
+Five statuses, and only one of them is the public site: `published`. The other four are degrees of not-yet and no-longer, and they were a vocabulary before they were a definition — the transitions were gated by capabilities and nothing said what the states *were*.
+
+- **draft** — being written. Visible to whoever may read it in the admin, never to a reader.
+- **scheduled** — written, with a date. The scheduler publishes it when the date passes; until then it is exactly as invisible as a draft.
+- **published** — on the site.
+- **archived** — deliberately off the site and kept as a reference. Nothing about it is temporary.
+- **trash** — off the site and meant to go, but not gone.
+
+**Restoring is a status change and nothing else.** No separate route, no flag, no second lifecycle: a document leaves the trash the way it entered it, and what that costs is what any status change costs — leaving a publishable state needs `content:publish`, and returning to one needs it too. A restored document comes back as whatever status it is moved to, usually `draft`.
+
+**Nothing deletes a trashed document.** There is no sweep, no retention window, no expiry. Removal is an act somebody performs through the delete route, and a system that quietly destroys work after thirty days is a system that has decided on the author's behalf. The cost is that a trash left alone stays there; that is the intended cost.
+
+**A trashed document keeps its slug.** The unique index on `(type, locale, slug)` covers every status, so the address stays reserved and a new document cannot take it. That is deliberate: the alternative is a URL quietly changing hands while somebody still means to restore what held it. The refusal names the slug so an author can see what is holding it.
 
 ## Authentication and permissions
 
