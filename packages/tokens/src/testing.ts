@@ -19,6 +19,36 @@
  * rather than to one paragraph of prose each.
  */
 
+/**
+ * Comments can hold anything, including a brace or a selector, so they go
+ * before the scanner runs.
+ *
+ * Scanned rather than matched with `/\/\*[\s\S]*?\*\//g`. That expression
+ * backtracks polynomially on input made of many unterminated comment openings,
+ * and this function is exported — the fact that it is only ever handed this
+ * project's own stylesheets today is not a property anything enforces
+ * tomorrow. Two indexOf calls per comment are linear and need no argument.
+ */
+export function stripComments(css: string): string {
+  let result = ''
+  let index = 0
+
+  while (index < css.length) {
+    const start = css.indexOf('/*', index)
+    if (start === -1) return result + css.slice(index)
+
+    result += css.slice(index, start)
+
+    const end = css.indexOf('*/', start + 2)
+    // Unterminated: everything left is inside the comment.
+    if (end === -1) return result
+
+    index = end + 2
+  }
+
+  return result
+}
+
 interface Rule {
   readonly selector: string
   /** The media prelude this rule sits inside, or null at the top level. */
@@ -90,9 +120,7 @@ export interface SchemeProblem {
  * believes, which is how a check stops being read.
  */
 export function colourSchemeProblems(source: string): SchemeProblem[] {
-  // Comments can hold anything, including a brace or a selector.
-  const css = source.replace(/\/\*[\s\S]*?\*\//g, '')
-  const parsed = rules(css)
+  const parsed = rules(stripComments(source))
 
   const base = parsed.find((rule) => rule.media === null && rule.selector === ':root')
   const media = parsed.find((rule) => rule.media?.includes('prefers-color-scheme: dark'))

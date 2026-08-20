@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { colourSchemeProblems } from './testing.ts'
+import { colourSchemeProblems, stripComments } from './testing.ts'
 
 const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 
@@ -60,5 +60,34 @@ describe('the token stylesheet', () => {
       :root[data-theme="dark"] { --pl-color-bg: #000; }
     `
     expect(colourSchemeProblems(measure)).toEqual([])
+  })
+})
+
+describe('stripComments', () => {
+  it('removes a comment and keeps what surrounds it', () => {
+    expect(stripComments('a /* gone */ b')).toBe('a  b')
+    expect(stripComments('/* first */x/* second */y')).toBe('xy')
+  })
+
+  it('keeps a stylesheet with no comments intact', () => {
+    expect(stripComments(':root { --pl-color-bg: #fff; }')).toBe(':root { --pl-color-bg: #fff; }')
+  })
+
+  /*
+   * An unterminated comment swallows the rest of the file, which is what a
+   * browser does with it too — and, more to the point, is the input the
+   * previous regular expression backtracked on.
+   */
+  it('treats an unterminated comment as running to the end', () => {
+    expect(stripComments('a /* never closed')).toBe('a ')
+  })
+
+  it('stays linear on input built to make a regex backtrack', () => {
+    const hostile = `${'/*a'.repeat(20_000)}x`
+    const started = process.hrtime.bigint()
+    stripComments(hostile)
+    const millis = Number(process.hrtime.bigint() - started) / 1e6
+
+    expect(millis).toBeLessThan(250)
   })
 })

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BREAKPOINTS } from '@presslabz/tokens/breakpoints'
-import { colourSchemeProblems } from '@presslabz/tokens/testing'
+import { colourSchemeProblems, stripComments } from '@presslabz/tokens/testing'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -43,7 +43,8 @@ function styleSources(directory: string): { file: string; css: string }[] {
 }
 
 const sources = styleSources(ROOT)
-const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '')
+// Linear, and the same one the token package uses on its own stylesheet.
+const withoutComments = stripComments
 
 describe('the default theme stylesheets', () => {
   it('has styles to check at all', () => {

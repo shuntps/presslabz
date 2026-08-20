@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { BREAKPOINTS } from '@presslabz/tokens/breakpoints'
+import { stripComments } from '@presslabz/tokens/testing'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -20,7 +21,7 @@ const mediaPreludes = [...css.matchAll(/@media([^{]+)\{/g)].map((match) => match
 describe('admin stylesheet', () => {
   it('states no colour of its own', () => {
     // Anything but a token would keep its value when the theme changes.
-    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const withoutComments = stripComments(css)
     expect(withoutComments).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     expect(withoutComments).not.toMatch(/\b(?:rgba?|hsla?|oklch|color-mix)\(/)
   })
