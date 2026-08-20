@@ -11,9 +11,9 @@ import { apiFetch, UPLOAD_TIMEOUT_MS } from './api.ts'
  * The shapes come from `@presslabz/core`, where the API's own tests parse its
  * responses with them, rather than being declared a second time here.
  */
-export type { MediaPage, MediaSummary }
+export type { MediaSummary }
 
-export const MEDIA_QUERY_KEY = ['media'] as const
+const MEDIA_QUERY_KEY = ['media'] as const
 
 /** What React Query holds for an infinite query: the pages, and their cursors. */
 interface PagedLibrary {

@@ -26,7 +26,7 @@ import { archivePageUrl, archivePath, documentPath, homePath } from './routes.ts
  * rebuilt or even reread.
  */
 
-export function navFor(locale: Locale, registry: ContentTypeRegistry, path: string): NavLink[] {
+function navFor(locale: Locale, registry: ContentTypeRegistry, path: string): NavLink[] {
   const t = createTranslator(locale)
 
   return registry
@@ -71,7 +71,7 @@ export function siteContext(input: SiteContextInput): SiteContext {
   }
 }
 
-export async function entryOf(
+async function entryOf(
   row: ContentRow,
   type: AnyContentType,
   locale: Locale,

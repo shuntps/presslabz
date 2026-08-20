@@ -87,7 +87,12 @@ describe.skipIf(!ready)('authentication', () => {
    * itself is asserted below, deliberately, from one address.
    */
   let caller = 0
-  const login = (body: Record<string, unknown>, remoteAddress = `10.0.0.${(caller += 1)}`) =>
+  const nextCaller = () => {
+    caller += 1
+    return `10.0.0.${caller}`
+  }
+
+  const login = (body: Record<string, unknown>, remoteAddress = nextCaller()) =>
     app.inject({ method: 'POST', url: '/auth/login', payload: body, remoteAddress })
 
   /**

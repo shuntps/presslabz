@@ -15,7 +15,7 @@ import { apiFetch } from './api.ts'
  * session; and stale for an hour, because a deployment variable does not
  * change while somebody is writing.
  */
-export const CONFIG_QUERY_KEY = ['config'] as const
+const CONFIG_QUERY_KEY = ['config'] as const
 
 export function useInstallationConfig() {
   return useQuery({

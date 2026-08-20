@@ -13,7 +13,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@presslabz/blocks": "workspace:*",
     "@presslabz/i18n": "workspace:*",
     "@presslabz/theme-kit": "workspace:*",
     "@presslabz/tokens": "workspace:*"

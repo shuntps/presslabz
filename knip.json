@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "e2e": {
+      "entry": ["specs/*.setup.ts"]
+    },
+    "themes/default": {
+      "ignoreDependencies": ["@presslabz/tokens"]
+    }
+  }
+}

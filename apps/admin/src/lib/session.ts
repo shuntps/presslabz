@@ -14,7 +14,7 @@ export interface SessionUser {
   capabilities: Capability[]
 }
 
-export const SESSION_QUERY_KEY = ['session'] as const
+const SESSION_QUERY_KEY = ['session'] as const
 
 /**
  * A 401 is the expected answer for a signed-out visitor, not a failure, so it

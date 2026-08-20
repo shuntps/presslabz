@@ -23,7 +23,7 @@ import { deleteObjects } from './storage.ts'
  */
 
 /** How many objects one pass will try. Small: this is background work. */
-export const ORPHAN_BATCH = 50
+const ORPHAN_BATCH = 50
 
 export interface OrphanSweeper {
   stop: () => void
@@ -101,7 +101,7 @@ export async function sweepOrphans(
 }
 
 /** Ten minutes: nothing here is urgent, and a leak that waits is still fixed. */
-export const ORPHAN_SWEEP_INTERVAL_MS = 10 * 60 * 1000
+const ORPHAN_SWEEP_INTERVAL_MS = 10 * 60 * 1000
 
 export function startOrphanSweep({
   db,

@@ -47,7 +47,7 @@ const READ_LUA = `
   return {tonumber(current), ttl}
 `
 
-export interface RateLimitReading {
+interface RateLimitReading {
   current: number
   ttl: number
 }
@@ -183,7 +183,7 @@ type ScriptedClient = Valkey & {
  * Constructed through `createValkeyStore`, which is what supplies the
  * dependencies the plugin has no way to pass.
  */
-export class ValkeyRateLimitStore {
+class ValkeyRateLimitStore {
   private readonly prefix: string
   private readonly bound: ValkeyStoreDeps
 

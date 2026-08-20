@@ -1,4 +1,4 @@
-import { BLOCK_TYPES, type Block, type BlockType, type InlineContent } from '@presslabz/blocks'
+import { BLOCK_TYPES, type Block, type BlockType } from '@presslabz/blocks'
 import type { MessageKey } from '@presslabz/i18n'
 
 /**
@@ -52,16 +52,6 @@ export type CreatableBlockType = Exclude<BlockType, 'image'>
 export function imageBlock(mediaId: string): Block {
   return { id: crypto.randomUUID(), type: 'image', mediaId }
 }
-
-/**
- * Plain text as inline content, for a field that had none.
- *
- * Editing existing content goes through `replaceInlineText` instead: this one
- * rebuilds the run from scratch, which is exactly what destroyed the marks on
- * imported documents.
- */
-export const inlineText = (value: string): InlineContent =>
-  value === '' ? [] : [{ type: 'text', text: value }]
 
 /**
  * Sets an optional text field, or removes it when the field is emptied.

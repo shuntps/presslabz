@@ -19,7 +19,7 @@ import { env } from '../env.ts'
  * cannot decode as an image never becomes an object at all.
  */
 
-export const s3 = new S3Client({
+const s3 = new S3Client({
   endpoint: env.S3_ENDPOINT,
   region: env.S3_REGION,
   credentials: {

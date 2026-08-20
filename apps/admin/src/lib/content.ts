@@ -3,12 +3,10 @@ import {
   type ContentPage,
   type ContentStatus,
   type ContentSummary,
-  type ContentTypeSummary,
   contentDocumentSchema,
   contentPageSchema,
   contentTypesSchema,
   type TranslationGroupSummary,
-  type TranslationSet,
   translationSetSchema,
 } from '@presslabz/core'
 import type { Locale } from '@presslabz/i18n'
@@ -20,14 +18,7 @@ import { apiFetch } from './api.ts'
  * responses with them. They used to be declared here, which made them a second
  * expression of the contract — one edited on a different day than the other.
  */
-/** What a page of the listing carries, including the counts for its heading. */
-export type {
-  ContentPage,
-  ContentSummary,
-  ContentTypeSummary,
-  TranslationGroupSummary,
-  TranslationSet,
-}
+export type { ContentSummary, TranslationGroupSummary }
 
 export function useContentTypes() {
   return useQuery({

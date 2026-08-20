@@ -1,4 +1,4 @@
-import { LOCALES, type Locale } from '@presslabz/i18n'
+import type { Locale } from '@presslabz/i18n'
 import { z } from 'zod'
 import { env } from './env.ts'
 
@@ -25,13 +25,3 @@ const message = `This installation serves ${env.SUPPORTED_LOCALES.join(', ')}`
 
 /** For a route that takes a language: the configured list, never the catalogue. */
 export const servedLocale = z.string().refine(servesLocale, { message })
-
-/**
- * Every language PressLabz has a catalogue for. For preferences about the
- * interface, which is translated independently of what the site publishes.
- */
-export const interfaceLocale = z
-  .string()
-  .refine((value): value is Locale => (LOCALES as readonly string[]).includes(value), {
-    message: `Unknown language. Known: ${LOCALES.join(', ')}`,
-  })

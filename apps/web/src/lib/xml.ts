@@ -33,7 +33,7 @@ export function escapeXml(value: string): string {
   )
 }
 
-export interface SitemapAlternate {
+interface SitemapAlternate {
   readonly hreflang: string
   readonly href: string
 }

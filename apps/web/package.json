@@ -22,7 +22,6 @@
     "@presslabz/modules": "workspace:*",
     "@presslabz/theme-default": "workspace:*",
     "@presslabz/theme-kit": "workspace:*",
-    "@presslabz/tokens": "workspace:*",
     "astro": "catalog:",
     "iovalkey": "catalog:",
     "zod": "catalog:"

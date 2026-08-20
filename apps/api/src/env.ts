@@ -1,7 +1,5 @@
 import { envSchema } from './env.schema.ts'
 
-export { envSchema }
-
 const parsed = envSchema.safeParse(process.env)
 
 if (!parsed.success) {
@@ -12,4 +10,3 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data
-export type Env = typeof env

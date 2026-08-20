@@ -20,7 +20,7 @@ import sharp, { type Metadata } from 'sharp'
  */
 
 /** What a client may hand over. The stored formats are chosen below. */
-export const ACCEPTED_INPUT_TYPES = [
+const ACCEPTED_INPUT_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',

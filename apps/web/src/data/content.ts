@@ -37,7 +37,7 @@ import { pageCount } from '../lib/routes.ts'
  * functions everywhere.
  */
 
-export const PER_PAGE = 10
+const PER_PAGE = 10
 
 export interface Archive {
   readonly rows: readonly ContentRow[]

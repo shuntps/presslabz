@@ -18,7 +18,7 @@ import type { FastifyBaseLogger } from 'fastify'
  * worth asserting — that it runs at once, survives a failure, stops when told
  * and never overlaps itself — testable without a database.
  */
-export const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000
+const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 export interface SessionSweeper {
   stop: () => void

@@ -15,7 +15,7 @@ import type { ProbeResult } from './probe.ts'
  * is "every dependency answered". A degraded store therefore takes the whole
  * report down rather than being a footnote inside a 200.
  */
-export type ServiceStatus = 'up' | 'down' | 'degraded'
+type ServiceStatus = 'up' | 'down' | 'degraded'
 
 export interface HealthReport {
   status: 'ok' | 'degraded'

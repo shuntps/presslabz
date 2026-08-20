@@ -39,7 +39,6 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "sharp": "catalog:",
     "typescript": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "vitest": "catalog:"

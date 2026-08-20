@@ -2,6 +2,7 @@ import type { Block, Blocks } from '@presslabz/blocks'
 import { inlineToPlainText, replaceInlineText } from '@presslabz/blocks'
 import { useState } from 'react'
 import { BLOCK_LABELS, setOptionalText } from '../lib/blocks.ts'
+import { growWithContent } from '../lib/growing.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import { assetsOf, useMediaLibrary } from '../lib/media.ts'
 import { MediaPicker } from './media-picker.tsx'
@@ -255,11 +256,7 @@ function BlockBody({
   }
 }
 
-/**
- * A textarea that grows with its content, so a paragraph never gets its own
- * little scrollbar in the middle of the page. Sized on every render rather
- * than on input, because the value also changes when a block moves.
- */
+/** A field of the draft, named for a screen reader and sized to its text. */
 function Growing({
   value,
   onChange,
@@ -288,11 +285,7 @@ function Growing({
       aria-label={placeholder}
       onFocus={onFocus}
       onChange={(event) => onChange(event.target.value)}
-      ref={(node) => {
-        if (!node) return
-        node.style.height = 'auto'
-        node.style.height = `${node.scrollHeight}px`
-      }}
+      ref={growWithContent}
     />
   )
 }

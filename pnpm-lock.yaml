@@ -307,9 +307,6 @@ importers:
       '@presslabz/theme-kit':
         specifier: workspace:*
         version: link:../../packages/theme-kit
-      '@presslabz/tokens':
-        specifier: workspace:*
-        version: link:../../packages/tokens
       astro:
         specifier: 'catalog:'
         version: 7.2.4(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(tsx@4.23.12)(yaml@2.9.0)
@@ -341,9 +338,6 @@ importers:
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.62.1
-      '@presslabz/db':
-        specifier: workspace:*
-        version: link:../packages/db
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
@@ -521,9 +515,6 @@ importers:
 
   themes/default:
     dependencies:
-      '@presslabz/blocks':
-        specifier: workspace:*
-        version: link:../../packages/blocks
       '@presslabz/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n

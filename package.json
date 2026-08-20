@@ -16,6 +16,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "lint:unused": "pnpm dlx knip@6",
     "e2e": "pnpm --filter @presslabz/e2e e2e",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

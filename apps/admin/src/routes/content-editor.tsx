@@ -17,6 +17,7 @@ import {
 } from '../lib/content.ts'
 import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '../lib/datetime.ts'
 import { messageForError } from '../lib/errors.ts'
+import { growWithContent } from '../lib/growing.ts'
 import { useLocale } from '../lib/i18n.tsx'
 
 const STATUS_LABELS: Record<ContentStatus, MessageKey> = {
@@ -284,11 +285,7 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
             rows={1}
             placeholder={t('editor.titlePlaceholder')}
             onChange={(event) => setTitle(event.target.value)}
-            ref={(node) => {
-              if (!node) return
-              node.style.height = 'auto'
-              node.style.height = `${node.scrollHeight}px`
-            }}
+            ref={growWithContent}
           />
 
           <BlockEditor

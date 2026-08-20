@@ -42,6 +42,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** What this suite drives the clock in. Stated once, and passed every time. */
+const EVERY_MINUTE = 60_000
+
 describe('the scheduler', () => {
   /*
    * An instance starting after downtime owes whatever came due while it was
@@ -50,7 +53,12 @@ describe('the scheduler', () => {
    */
   it('looks once at startup rather than waiting for the first interval', async () => {
     const publishDue = vi.fn(async () => [])
-    const scheduler = startScheduler({ publishDue, announce: async () => {}, log })
+    const scheduler = startScheduler({
+      publishDue,
+      announce: async () => {},
+      log,
+      intervalMs: EVERY_MINUTE,
+    })
 
     await vi.advanceTimersByTimeAsync(0)
     expect(publishDue).toHaveBeenCalledTimes(1)
@@ -66,6 +74,7 @@ describe('the scheduler', () => {
         .mockResolvedValueOnce([row('first'), row('second')]),
       announce: async (published) => void announced.push(published.id),
       log,
+      intervalMs: EVERY_MINUTE,
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -75,7 +84,12 @@ describe('the scheduler', () => {
   })
 
   it('says nothing when nothing is due', async () => {
-    const scheduler = startScheduler({ publishDue: async () => [], announce: async () => {}, log })
+    const scheduler = startScheduler({
+      publishDue: async () => [],
+      announce: async () => {},
+      log,
+      intervalMs: EVERY_MINUTE,
+    })
 
     await vi.advanceTimersByTimeAsync(0)
 
@@ -97,6 +111,7 @@ describe('the scheduler', () => {
         announced.push(published.id)
       },
       log,
+      intervalMs: EVERY_MINUTE,
     })
 
     await vi.advanceTimersByTimeAsync(0)

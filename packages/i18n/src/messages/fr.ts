@@ -3,9 +3,6 @@ import type { Messages } from './en.ts'
 /** Typed as Messages, so an omitted key fails typecheck. */
 export const fr: Messages = {
   'common.save': 'Enregistrer',
-  'common.cancel': 'Annuler',
-  'common.delete': 'Supprimer',
-  'common.search': 'Rechercher',
   'common.loading': 'Chargement…',
 
   'theme.label': 'Thème',
@@ -46,7 +43,6 @@ export const fr: Messages = {
   'content.empty': 'Rien d’écrit pour l’instant. Le premier commence ici.',
   'content.gap': 'Écart',
   'content.gapCount': '{count} publiés ici n’ont pas encore de version dans l’autre langue.',
-  'content.untranslated': 'Pas de traduction',
 
   'content.new': 'Nouveau',
   'content.untitled': 'Sans titre',
@@ -62,15 +58,11 @@ export const fr: Messages = {
   'editor.status': 'État',
   'editor.language': 'Langue',
   'editor.group': 'Groupe de traduction',
-  'editor.schema': 'Schéma',
   'editor.excerpt': 'Extrait',
   'editor.publishAtUtc': '{instant} UTC',
   'editor.publishAt': 'Publier le',
   'editor.translations': 'Traductions',
   'editor.createTranslation': 'L’écrire en {language}',
-  'editor.openTranslation': 'Ouvrir la version {language}',
-  'editor.noTranslations': 'Ce document n’existe que dans une langue.',
-  'editor.newIn': 'Nouveau en {language}',
   'editor.save': 'Enregistrer',
   'editor.saving': 'Enregistrement…',
   'editor.saved': 'Enregistré',
@@ -96,7 +88,6 @@ export const fr: Messages = {
   'error.groupTypeMismatch': 'Ce groupe de traduction contient un autre type de document',
   'error.slugTaken': 'Cet identifiant est déjà utilisé dans cette langue',
   'error.translationExists': 'Ce groupe de traduction a déjà un document dans cette langue',
-  'error.cannotPublish': 'Vous n’avez pas la permission de publier',
   'error.mediaForbidden': 'Vous ne pouvez pas modifier la description de cette image',
 
   'media.library': 'Médias',
@@ -132,7 +123,6 @@ export const fr: Messages = {
   'web.archive.newer': 'Plus récent',
   'web.archive.page': 'Page {page} sur {pages}',
   'web.home.latest': 'Derniers articles',
-  'web.home.readMore': 'Lire',
 
   'error.staleVersion':
     'Quelqu’un a enregistré ce document pendant que vous l’éditiez. Rien n’a été écrasé — rechargez pour voir l’état actuel.',

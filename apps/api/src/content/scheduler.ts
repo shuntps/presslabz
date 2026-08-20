@@ -24,8 +24,6 @@ import type { FastifyBaseLogger } from 'fastify'
  * failure, never overlaps itself, and announces what it published — testable
  * without either.
  */
-export const SCHEDULER_INTERVAL_MS = 60_000
-
 export interface Scheduler {
   stop: () => void
 }
@@ -43,14 +41,19 @@ export interface SchedulerOptions {
    */
   readonly announce: (row: ContentRow) => Promise<void>
   readonly log: Pick<FastifyBaseLogger, 'info' | 'warn'>
-  readonly intervalMs?: number
+  /**
+   * How often to look. Required, because this module had a default of its own
+   * beside the one in the environment schema — the same number written twice,
+   * and only one of them configurable.
+   */
+  readonly intervalMs: number
 }
 
 export function startScheduler({
   publishDue,
   announce,
   log,
-  intervalMs = SCHEDULER_INTERVAL_MS,
+  intervalMs,
 }: SchedulerOptions): Scheduler {
   /*
    * One pass at a time. setInterval does not wait for an async callback, so a

@@ -5,9 +5,6 @@
  */
 export const en = {
   'common.save': 'Save',
-  'common.cancel': 'Cancel',
-  'common.delete': 'Delete',
-  'common.search': 'Search',
   'common.loading': 'Loading…',
 
   'theme.label': 'Theme',
@@ -48,7 +45,6 @@ export const en = {
   'content.empty': 'Nothing written yet. The first one starts here.',
   'content.gap': 'Gap',
   'content.gapCount': '{count} published here have no version in the other language yet.',
-  'content.untranslated': 'No translation',
 
   'content.new': 'New',
   'content.untitled': 'Untitled',
@@ -64,15 +60,11 @@ export const en = {
   'editor.status': 'State',
   'editor.language': 'Language',
   'editor.group': 'Translation group',
-  'editor.schema': 'Schema',
   'editor.excerpt': 'Excerpt',
   'editor.publishAtUtc': '{instant} UTC',
   'editor.publishAt': 'Publish at',
   'editor.translations': 'Translations',
   'editor.createTranslation': 'Write it in {language}',
-  'editor.openTranslation': 'Open the {language} version',
-  'editor.noTranslations': 'This document exists in one language.',
-  'editor.newIn': 'New in {language}',
   'editor.save': 'Save',
   'editor.saving': 'Saving…',
   'editor.saved': 'Saved',
@@ -98,7 +90,6 @@ export const en = {
   'error.groupTypeMismatch': 'That translation group holds a different kind of document',
   'error.slugTaken': 'That slug is already used in this language',
   'error.translationExists': 'That translation group already has a document in this language',
-  'error.cannotPublish': 'You do not have permission to publish',
   'error.mediaForbidden': 'You cannot change the description of that image',
 
   'media.library': 'Media',
@@ -134,7 +125,6 @@ export const en = {
   'web.archive.newer': 'Newer',
   'web.archive.page': 'Page {page} of {pages}',
   'web.home.latest': 'Latest',
-  'web.home.readMore': 'Read',
 
   'error.staleVersion':
     'Somebody else saved this document while you were editing it. Nothing was overwritten — reload to see what is there now.',

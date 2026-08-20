@@ -53,7 +53,7 @@ export const testUser = {
  * actor changes what the server says, not what the component computes. That is
  * the property being protected: the interface has no second copy of the rule.
  */
-export const FULL_DOCUMENT_PERMISSIONS: DocumentPermissions = {
+const FULL_DOCUMENT_PERMISSIONS: DocumentPermissions = {
   update: true,
   delete: true,
   statuses: [...CONTENT_STATUSES],
@@ -133,7 +133,7 @@ export interface FakeApiOptions {
   translationPermissions?: { create: boolean }
 }
 
-export interface RequestRecord {
+interface RequestRecord {
   route: string
   body: unknown
 }
