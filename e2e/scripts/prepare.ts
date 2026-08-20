@@ -73,6 +73,31 @@ run(['--filter', '@presslabz/api', 'seed'], {
 run(['--filter', '@presslabz/api', 'seed:demo'], { SEED_ADMIN_EMAIL: E2E_ADMIN.email })
 
 /*
+ * Two images, through the real pipeline and into the real bucket, and
+ * deliberately without alt text: an undescribed asset is what left the picker
+ * with buttons a screen reader could not tell apart, so the accessibility scan
+ * needs some. No posts — this seed's job here is the library.
+ */
+run(['--filter', '@presslabz/api', 'seed:bulk'], {
+  SEED_ADMIN_EMAIL: E2E_ADMIN.email,
+  SEED_POSTS: '0',
+  SEED_IMAGES: '2',
+})
+
+/*
+ * And then take the descriptions away. The seed writes alt text because a
+ * fixture should be exemplary; the accessibility scan needs the ordinary case,
+ * where nobody wrote any — which is what left the picker with a grid of
+ * buttons a screen reader could not tell apart.
+ */
+const scratch = postgres(E2E_DATABASE_URL, { max: 1 })
+try {
+  await scratch.unsafe(`update media set alt = '{}'::jsonb`)
+} finally {
+  await scratch.end({ timeout: 5 })
+}
+
+/*
  * The counters go with the database, because they are as much this run's state
  * as the rows are. Sign-in is limited to ten attempts in fifteen minutes —
  * a rule worth keeping, and one that answered 429 to the third run of the

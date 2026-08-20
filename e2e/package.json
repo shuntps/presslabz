@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@axe-core/playwright": "catalog:",
     "@playwright/test": "catalog:",
     "@presslabz/db": "workspace:*",
     "@types/node": "catalog:",

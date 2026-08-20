@@ -666,3 +666,37 @@ describe('the languages this installation writes in', () => {
     expect(screen.queryByRole('link', { name: /français/i })).toBeNull()
   })
 })
+
+describe('a document that did not exist a moment ago', () => {
+  /*
+   * The editor's own navigation, blocked by its own guard. `shouldBlockFn` is
+   * called at the moment a navigation starts, and React state is not updated
+   * by then — so clearing "unsaved" and navigating in the same tick, which is
+   * exactly what a successful save does, left the guard reading the old value.
+   * The save landed, the screen stayed on /content/post/new, and pressing save
+   * again answered 409 about a slug the author had just used.
+   *
+   * The move to the new document's address is asserted in the browser suite,
+   * where a router's own interception is observable; jsdom renders from the
+   * router's internal location and never shows the difference. What this
+   * asserts is the state the guard reads: after a save that landed, there is
+   * nothing left to warn about.
+   */
+  it('has nothing left unsaved once the server has it', async () => {
+    await openNewDocument()
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), 'Brand new')
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.route === 'POST /content/post')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/not saved yet/i)).toBeNull()
+    })
+    // And nothing is asking whether to leave: the work is on the server.
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})

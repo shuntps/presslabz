@@ -525,6 +525,18 @@ A module is a name and a function that registers handlers, returning one that re
 
 i18n and theming are load-bearing in phases 0 and 1 rather than polish at the end: both are far cheaper to build in than to retrofit, and both are cross-cutting enough that adding them late would touch nearly every file written before.
 
+## Accessibility
+
+**Contrast is measured, in a test that runs on every commit.** `--pl-color-text-faint` was 2.46:1 on the light subtle surface and 3.12:1 on the dark raised one, against the 4.5:1 minimum — and it was not decoration: it coloured the state column, the slugs, the counts and the column headings. Somebody who could not tell "Draft" from "Published" did not have a styling problem. Nothing about a hex value announces its contrast, and the ratio is a property of *pairs*, so an edit that looks harmless in one scheme can break three pairs in the other: `textContrastPairs()` in `packages/tokens/src/testing.ts` enumerates every text token against every surface token, in both schemes, and the test fails on anything under AA.
+
+Both quiet weights moved rather than one. Raising only the faint token would have left it within a hair of muted, collapsing three weights into two by accident; the three now sit at roughly 15:1, 7:1 and 4.5:1 — legible is the floor, distinguishable is the design, and a test asserts the order.
+
+**Every control has a name that does not depend on somebody having written one.** Alt text is written by people and often is not: an undescribed asset gave a picker button with no accessible name at all, and a grid of them gave a screen reader nothing to tell apart. The button is named by the description when there is one and by the fact that there is not — with the upload date, so two undescribed images are still two.
+
+**Placeholders are not labels.** A placeholder disappears at the first keystroke, which is exactly when a field stops being self-explanatory to somebody listening rather than looking. The galley's fields keep their look — a title looks like a title, and turning the editor into a form is the thing the design avoids — and carry a visually hidden label, or an `aria-label` with the same words the placeholder uses.
+
+**axe runs against the real pages, and a keyboard walks the real path.** The browser suite scans the sign-in screen, the dashboard, a listing, the editor with a document open, and the picker holding assets nobody described, at WCAG 2.2 AA; then it composes a document and saves it without touching the pointer. The scan found a genuine fault nobody's eye would have: the block controls were 1.35rem, under the 24px floor for a pointer target. They are 1.5rem now — not the full tap target, because they sit beside a line of text and a finger-sized row of them would cover the writing, which is the trade the standard's own floor exists for.
+
 ## Browser tests
 
 `pnpm e2e` covers the faults that need a browser to exist at all: a router that keeps a component mounted, a dialog the platform owns, a request that actually goes somewhere. Everything else stays in Vitest, which is faster and does not need three containers.

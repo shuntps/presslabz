@@ -54,6 +54,9 @@ export const en = {
   'content.untitled': 'Untitled',
 
   'editor.titlePlaceholder': 'Title',
+  'editor.titleLabel': 'Document title',
+  'media.untitled': 'Image with no description, uploaded {date}',
+  'media.choose': 'Choose {name}',
   'editor.blocks': 'Blocks',
   'editor.document': 'Document',
   'editor.block': 'Block',

@@ -246,17 +246,17 @@ export function fakeApi(options: FakeApiOptions = {}) {
         : json({}, 401)
     }
     if (method === 'POST' && url.pathname === '/content/post') {
+      /*
+       * Built from the same fixture every other document here is built from,
+       * so it carries every field the contract requires. It did not: `version`
+       * was missing, the response failed validation inside this fake, and the
+       * editor saw the create as a network failure — in every test that
+       * created a document, none of which looked at the answer.
+       */
       const created = {
+        ...fakeDocument(),
         id: `doc-${documents.length + 1}`,
-        type: 'post',
         translationGroupId: 'group-1',
-        excerpt: null,
-        meta: {},
-        authorId: testUser.id,
-        parentId: null,
-        publishedAt: null,
-        createdAt: '2026-08-16T09:00:00.000Z',
-        updatedAt: '2026-08-16T09:00:00.000Z',
         permissions: documentPermissions,
         ...(body as Record<string, unknown>),
       }

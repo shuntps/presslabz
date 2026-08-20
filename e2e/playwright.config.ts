@@ -40,8 +40,9 @@ const serverEnv = {
 
 export default defineConfig({
   testDir: './specs',
-  // A browser test that hangs is a build that hangs; these are seconds of work.
-  timeout: 60_000,
+  // A browser test that hangs is a build that hangs; these are seconds of
+  // work on a laptop, and a CI runner starts two servers from cold.
+  timeout: process.env.CI ? 120_000 : 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,

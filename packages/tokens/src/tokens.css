@@ -58,8 +58,8 @@
   --pl-color-border: #c7cad4;
   --pl-color-border-strong: #a6aab8;
   --pl-color-text: #14161d;
-  --pl-color-text-muted: #565b6b;
-  --pl-color-text-faint: #8a8fa0;
+  --pl-color-text-muted: #424757;
+  --pl-color-text-faint: #5f6475;
 
   /* Ink. Every filled control, so no control has to spend colour to matter. */
   --pl-color-accent: #14161d;
@@ -189,8 +189,8 @@
     --pl-color-border: #2e3341;
     --pl-color-border-strong: #454b5d;
     --pl-color-text: #e9ebf2;
-    --pl-color-text-muted: #979db0;
-    --pl-color-text-faint: #6b7185;
+    --pl-color-text-muted: #aab0c3;
+    --pl-color-text-faint: #868ca0;
 
     --pl-color-accent: #e9ebf2;
     --pl-color-accent-hover: #ffffff;
@@ -229,8 +229,8 @@
   --pl-color-border: #2e3341;
   --pl-color-border-strong: #454b5d;
   --pl-color-text: #e9ebf2;
-  --pl-color-text-muted: #979db0;
-  --pl-color-text-faint: #6b7185;
+  --pl-color-text-muted: #aab0c3;
+  --pl-color-text-faint: #868ca0;
 
   --pl-color-accent: #e9ebf2;
   --pl-color-accent-hover: #ffffff;

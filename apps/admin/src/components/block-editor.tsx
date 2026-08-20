@@ -176,6 +176,7 @@ function BlockBody({
             className="data blk-attribution"
             value={block.attribution ?? ''}
             placeholder={t('editor.attribution')}
+            aria-label={t('editor.attribution')}
             onFocus={onFocus}
             onChange={(event) =>
               onChange(setOptionalText(block, 'attribution', event.target.value))
@@ -205,6 +206,7 @@ function BlockBody({
               className="authored"
               value={inlineToPlainText(item)}
               placeholder={t('editor.itemPlaceholder')}
+              aria-label={t('editor.itemPlaceholder')}
               onFocus={onFocus}
               onChange={(value) => {
                 const items = [...block.items]
@@ -230,6 +232,7 @@ function BlockBody({
             className="data blk-lang"
             value={block.language ?? ''}
             placeholder={t('editor.language.hint')}
+            aria-label={t('editor.language.hint')}
             onFocus={onFocus}
             onChange={(event) => onChange(setOptionalText(block, 'language', event.target.value))}
           />
@@ -237,6 +240,7 @@ function BlockBody({
             className="data"
             value={block.code}
             placeholder={t('block.code')}
+            aria-label={t('block.code')}
             onFocus={onFocus}
             onChange={(value) => onChange({ ...block, code: value })}
           />
@@ -275,6 +279,13 @@ function Growing({
       value={value}
       rows={1}
       placeholder={placeholder}
+      /*
+       * The same words as the placeholder, and unlike the placeholder they
+       * stay. A field with text in it has no visible label and no accessible
+       * name at all once the placeholder is gone — "edit text" is what a
+       * screen reader is left announcing, for every block on the page.
+       */
+      aria-label={placeholder}
       onFocus={onFocus}
       onChange={(event) => onChange(event.target.value)}
       ref={(node) => {
@@ -324,6 +335,7 @@ function ImageBlockBody({
           className="authored blk-caption"
           value={inlineToPlainText(block.caption ?? [])}
           placeholder={t('editor.attribution')}
+          aria-label={t('editor.attribution')}
           onFocus={onFocus}
           onChange={(value) =>
             onChange({

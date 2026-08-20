@@ -2,7 +2,7 @@ import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
 import { LOCALE_LABELS, type Locale, type MessageKey } from '@presslabz/i18n'
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BlockEditor } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
 import { ApiError } from '../lib/api.ts'
@@ -125,7 +125,28 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
    * it back leaves the screen marked as changed, which over-asks rather than
    * under-warns.
    */
-  const [dirty, setDirty] = useState(false)
+  const [dirty, setDirtyState] = useState(false)
+
+  /**
+   * The same fact, in a place the guard can read *now*.
+   *
+   * `shouldBlockFn` is called by the router at the moment a navigation starts,
+   * and React state is not updated by then: clearing `dirty` and navigating in
+   * the same tick — which is exactly what a successful save does — left the
+   * guard looking at the old value and blocking the editor's own move to the
+   * new document's URL. The save had landed, the screen stayed on
+   * `/content/post/new`, and pressing save again answered 409 about a slug the
+   * author had just used.
+   *
+   * Found by the browser suite, which is the only place a router's own
+   * interception can be observed.
+   */
+  const dirtyRef = useRef(false)
+
+  const setDirty = useCallback((value: boolean) => {
+    dirtyRef.current = value
+    setDirtyState(value)
+  }, [])
 
   /**
    * What to run once a save asked for by the leaving dialog has landed. A ref
@@ -144,8 +165,8 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
    * being closed, and no library changes that.
    */
   const blocker = useBlocker({
-    shouldBlockFn: () => dirty,
-    enableBeforeUnload: () => dirty,
+    shouldBlockFn: () => dirtyRef.current,
+    enableBeforeUnload: () => dirtyRef.current,
     withResolver: true,
   })
 
@@ -247,7 +268,17 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
     <fieldset className="editor" disabled={!writable}>
       <div className="galley">
         <div className="measure">
+          {/*
+            A label the eye does not need and a screen reader does. The
+            placeholder disappears the moment somebody types, which is the
+            moment the field stops being self-explanatory to anybody listening
+            rather than looking.
+          */}
+          <label className="hidden-label" htmlFor="document-title">
+            {t('editor.titleLabel')}
+          </label>
           <textarea
+            id="document-title"
             className="authored galley-title growing"
             value={draft.title}
             rows={1}

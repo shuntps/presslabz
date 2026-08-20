@@ -1,3 +1,4 @@
+import { formatDate, type Locale, type MessageKey } from '@presslabz/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../lib/api.ts'
 import { messageForError } from '../lib/errors.ts'
@@ -109,7 +110,20 @@ export function MediaPicker({
       <div className="picker-grid">
         {assets.map((item) => (
           <figure key={item.id} className="picker-asset">
-            <button type="button" className="picker-item" onClick={() => onPick(item)}>
+            {/*
+              The button's name cannot be the image's alt text alone, because
+              alt text is written by people and is often not written at all:
+              an undescribed asset gave a button with no accessible name, and
+              a grid of them gave a screen reader nothing to tell apart. The
+              description when there is one, and when there is not, the fact
+              that there is not — with the date, so two of them are still two.
+            */}
+            <button
+              type="button"
+              className="picker-item"
+              aria-label={t('media.choose', { name: describe(item, locale, t) })}
+              onClick={() => onPick(item)}
+            >
               <img src={item.url} alt={item.alt[locale] ?? ''} loading="lazy" decoding="async" />
             </button>
             <AltField media={item} />
@@ -129,6 +143,26 @@ export function MediaPicker({
       )}
     </dialog>
   )
+}
+
+/**
+ * What to call an asset when the person who uploaded it did not say.
+ *
+ * The date is not decoration: without it every undescribed image in the
+ * library announces itself with the same words, which is the same problem as
+ * having no name at all, one step quieter.
+ */
+function describe(
+  media: MediaSummary,
+  locale: Locale,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string,
+): string {
+  const description = media.alt[locale]?.trim()
+  if (description) return description
+
+  return t('media.untitled', {
+    date: formatDate(new Date(media.createdAt), locale, { day: 'numeric', month: 'long' }),
+  })
 }
 
 /**

@@ -94,5 +94,25 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # The browser suite builds its own database and starts its own pair of
+      # servers, so it needs no fixture from the steps above — only Chromium,
+      # which is not in the runner image and is downloaded here rather than
+      # carried as a dependency of every developer's install.
+      - name: Install Chromium
+        run: pnpm --filter @presslabz/e2e exec playwright install --with-deps chromium
+
+      # Where an accessibility regression is caught: axe scans every screen,
+      # and a keyboard walks the path from an empty document to a saved one.
+      - name: Browser tests
+        run: pnpm e2e
+
+      - name: Keep the browser report of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+
       - name: Build
         run: pnpm build

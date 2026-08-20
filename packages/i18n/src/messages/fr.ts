@@ -52,6 +52,9 @@ export const fr: Messages = {
   'content.untitled': 'Sans titre',
 
   'editor.titlePlaceholder': 'Titre',
+  'editor.titleLabel': 'Titre du document',
+  'media.untitled': 'Image sans description, envoyée le {date}',
+  'media.choose': 'Choisir {name}',
   'editor.blocks': 'Blocs',
   'editor.document': 'Document',
   'editor.block': 'Bloc',

@@ -2,7 +2,9 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": ".",
-    "types": ["node"]
+    "types": ["node"],
+    // page.evaluate() callbacks are compiled here and run in the browser.
+    "lib": ["ES2024", "DOM"]
   },
   "include": ["specs/**/*.ts", "scripts/**/*.ts", "playwright.config.ts"]
 }

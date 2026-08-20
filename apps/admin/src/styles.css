@@ -275,8 +275,19 @@ label > span {
  * printed next to it, and in a bar that is apparatus those two labels were
  * most of its width. The text stays for anyone who is not looking at it.
  */
+/*
+ * Present for a screen reader, absent to the eye.
+ *
+ * Not `display: none` and not `visibility: hidden`, both of which remove the
+ * element from the accessibility tree along with the picture — which is the
+ * one thing this must not do. The galley's fields carry their meaning
+ * visually: a title looks like a title, a paragraph like a paragraph. Nothing
+ * about that reaches somebody who is listening to the page, so the name is
+ * given here rather than by turning the editor into a form.
+ */
 .switcher legend,
-.switcher > span {
+.switcher > span,
+.hidden-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1093,8 +1104,18 @@ button.quiet:hover:not(:disabled) {
   opacity: 1;
 }
 
+/*
+ * The block's own controls: quiet, and still large enough to hit.
+ *
+ * They were 1.35rem — under the 24px floor WCAG 2.2 sets for a pointer
+ * target, which an audit found and nobody's eye would have. Not the full tap
+ * target either: these appear on hover beside a line of text, and a
+ * finger-sized button there would be a row of them covering the writing.
+ * Twenty-four pixels is the standard's answer to exactly that trade.
+ */
 button.tiny {
-  min-height: 1.35rem;
+  min-height: 1.5rem;
+  min-width: 1.5rem;
   padding: 0 var(--pl-space-1);
   font-size: var(--pl-text-xs);
   font-weight: 400;
