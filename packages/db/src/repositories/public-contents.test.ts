@@ -9,6 +9,7 @@ import {
   countPublished,
   findPublishedBySlug,
   listPublished,
+  listPublishedPaths,
   listPublishedTranslations,
   resolveAncestry,
 } from './public-contents.ts'
@@ -201,6 +202,68 @@ describe.skipIf(!ready)('public content reads', () => {
         limit: Number.POSITIVE_INFINITY,
       })
       expect(rows.length).toBeLessThanOrEqual(SIZE)
+    })
+  })
+
+  describe('every published path', () => {
+    const TYPE = 'public-paths'
+
+    it('reports each document once, with the path it is reachable at', async () => {
+      const root = await open(TYPE, { slug: 'guide', status: 'published', publishedAt: PAST })
+      await open(TYPE, {
+        slug: 'chapter',
+        status: 'published',
+        publishedAt: PAST,
+        parentId: root.id,
+      })
+      await open(TYPE, { slug: 'hidden', status: 'draft' })
+
+      const rows = (await listPublishedPaths(db, { now: NOW })).filter((row) => row.type === TYPE)
+      const paths = rows.map((row) => row.path.join('/')).sort()
+
+      expect(paths).toEqual(['guide', 'guide/chapter'])
+
+      /*
+       * A raw query returns what the driver decoded, not what drizzle would
+       * have typed: without mapping, these arrive as strings and the first
+       * caller to call toISOString on one fails in production.
+       */
+      for (const row of rows) {
+        expect(row.updatedAt).toBeInstanceOf(Date)
+        expect(row.publishedAt === null || row.publishedAt instanceof Date).toBe(true)
+        expect(row.translationGroupId).toMatch(/^[0-9a-f-]{36}$/)
+      }
+    })
+
+    /*
+     * A row inside a cycle has no root ancestor, so the walk never reaches it.
+     * That is the right answer for a sitemap — a document with no resolvable
+     * path has no canonical URL — and it is what makes the query terminate on
+     * data the schema still allows.
+     */
+    it('omits a document whose path cannot be resolved', async () => {
+      const first = await open(TYPE, { slug: 'ring-a', status: 'published', publishedAt: PAST })
+      const second = await open(TYPE, {
+        slug: 'ring-b',
+        status: 'published',
+        publishedAt: PAST,
+        parentId: first.id,
+      })
+      await db.update(contents).set({ parentId: second.id }).where(eq(contents.id, first.id))
+
+      const rows = await listPublishedPaths(db, { now: NOW })
+      const slugs = rows.map((row) => row.slug)
+
+      expect(slugs).not.toContain('ring-a')
+      expect(slugs).not.toContain('ring-b')
+    })
+
+    it('withholds what is not public yet, whatever its depth', async () => {
+      const rows = await listPublishedPaths(db, { now: NOW })
+      const slugs = rows.map((row) => row.slug)
+
+      expect(slugs).not.toContain('still-a-draft')
+      expect(slugs).not.toContain('hidden')
     })
   })
 

@@ -2,7 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { resolve } from 'node:path'
 import type { Blocks } from '@presslabz/blocks'
+import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
 import { pageType, postType } from '@presslabz/core'
+import { signPreviewToken } from '@presslabz/core/preview'
 import {
   type ContentRow,
   type ContentState,
@@ -11,6 +13,7 @@ import {
   type Database,
 } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import { Valkey } from 'iovalkey'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 /*
@@ -75,6 +78,20 @@ describe.skipIf(!ready)('the public site', () => {
   let handle: ReturnType<typeof createDb>
   let child: ChildProcess
   let base: string
+  let valkey: Valkey
+  let cache: PageCache
+  let helloId: string
+
+  /*
+   * Its own namespace, for the reason the namespace exists: this suite shares
+   * one Valkey with the developer's own server and with any other run. Without
+   * it, a page cached from a different database is served here — which is how
+   * this suite first failed, showing the developer's content under the
+   * fixture's URL.
+   */
+  const namespace = `presslabz:test:${process.pid.toString(36)}${Math.random().toString(36).slice(2, 8)}:`
+  const previewSecret = 'p'.repeat(48)
+  let draftId: string
 
   beforeAll(async () => {
     scratch = await createScratchDatabase('web')
@@ -96,6 +113,9 @@ describe.skipIf(!ready)('the public site', () => {
     const port = await freePort()
     base = `http://127.0.0.1:${port}`
 
+    valkey = new Valkey(process.env.VALKEY_URL as string)
+    cache = createPageCache({ client: valkey, namespace })
+
     child = spawn('node', ['dist/server/entry.mjs'], {
       cwd: ROOT,
       env: {
@@ -104,6 +124,8 @@ describe.skipIf(!ready)('the public site', () => {
         SITE_URL: base,
         HOST: '127.0.0.1',
         PORT: String(port),
+        PAGE_CACHE_NAMESPACE: namespace,
+        PREVIEW_SECRET: previewSecret,
       },
       stdio: 'ignore',
     })
@@ -113,6 +135,8 @@ describe.skipIf(!ready)('the public site', () => {
 
   afterAll(async () => {
     child?.kill('SIGTERM')
+    await cache?.clear()
+    await valkey?.quit()
     await handle?.close()
     await scratch?.drop()
   })
@@ -124,6 +148,7 @@ describe.skipIf(!ready)('the public site', () => {
       authorId: null,
       state: state({ slug: 'hello-world', title: 'Hello world' }),
     })
+    helloId = english.id
 
     await createContent(db, {
       type: postType.name,
@@ -134,12 +159,13 @@ describe.skipIf(!ready)('the public site', () => {
       state: state({ slug: 'bonjour-le-monde', title: 'Bonjour le monde' }),
     })
 
-    await createContent(db, {
+    const draft = await createContent(db, {
       type: postType.name,
       locale: 'en',
       authorId: null,
       state: state({ slug: 'a-draft', title: 'A draft', status: 'draft', publishedAt: undefined }),
     })
+    draftId = draft.id
 
     await createContent(db, {
       type: postType.name,
@@ -165,6 +191,17 @@ describe.skipIf(!ready)('the public site', () => {
       locale: 'en',
       authorId: null,
       state: state({ slug: 'team', title: 'The team', parentId: about.id }),
+    })
+
+    await createContent(db, {
+      type: postType.name,
+      locale: 'en',
+      authorId: null,
+      state: state({
+        slug: 'quiet',
+        title: 'Kept out of results',
+        meta: { seo: { noindex: true } },
+      }),
     })
   }
 
@@ -288,6 +325,233 @@ describe.skipIf(!ready)('the public site', () => {
     it('refuses a page number that is not one', async () => {
       expect((await get('/en/blog?page=0')).status).toBe(404)
       expect((await get('/en/blog?page=abc')).status).toBe(404)
+    })
+  })
+
+  describe('what a document tells a machine', () => {
+    it('names every language of a translated document, each way round', async () => {
+      const english = await (await get('/en/blog/hello-world')).text()
+      const french = await (await get('/fr/blog/bonjour-le-monde')).text()
+
+      for (const html of [english, french]) {
+        expect(html).toMatch(
+          /<link rel="alternate" hreflang="en" href="[^"]*\/en\/blog\/hello-world"/,
+        )
+        expect(html).toMatch(
+          /<link rel="alternate" hreflang="fr" href="[^"]*\/fr\/blog\/bonjour-le-monde"/,
+        )
+        expect(html).toContain('hreflang="x-default"')
+      }
+    })
+
+    /*
+     * One alternate pointing at the page itself tells a crawler nothing it did
+     * not already have, and invites the mistake of treating a single-language
+     * site as a translation set.
+     */
+    it('announces no alternates for a document that exists in one language', async () => {
+      const html = await (await get('/en/about')).text()
+
+      expect(html).not.toContain('hreflang=')
+      expect(html).toMatch(/<link rel="canonical" href="[^"]*\/en\/about"/)
+    })
+
+    it('offers the reader the translations that exist, and only those', async () => {
+      const translated = await (await get('/en/blog/hello-world')).text()
+      const alone = await (await get('/en/about')).text()
+
+      expect(translated).toContain('/fr/blog/bonjour-le-monde')
+      expect(alone).not.toContain('/fr/')
+    })
+
+    it('honours noindex without unpublishing the document', async () => {
+      const response = await get('/en/blog/quiet')
+
+      expect(response.status).toBe(200)
+      expect(await response.text()).toContain('<meta name="robots" content="noindex">')
+    })
+
+    it('says nothing canonical about a page that does not exist', async () => {
+      const html = await (await get('/en/nothing')).text()
+
+      expect(html).not.toContain('rel="canonical"')
+      expect(html).toContain('content="noindex"')
+    })
+
+    it('advertises the feed of the section it belongs to', async () => {
+      const html = await (await get('/en/blog/hello-world')).text()
+
+      expect(html).toMatch(
+        /<link rel="alternate" type="application\/atom\+xml"[^>]*href="[^"]*\/en\/blog\/feed.xml"/,
+      )
+    })
+  })
+
+  describe('the sitemap', () => {
+    it('lists the home page, the archives and every published document', async () => {
+      const xml = await (await get('/sitemap.xml')).text()
+
+      expect(xml).toContain('/en/blog/hello-world')
+      expect(xml).toContain('/fr/blog/bonjour-le-monde')
+      expect(xml).toContain('/en/about/team')
+      expect(xml).toMatch(/<loc>[^<]*\/en<\/loc>/)
+      expect(xml).toMatch(/<loc>[^<]*\/en\/blog<\/loc>/)
+    })
+
+    it('withholds what the public cannot read', async () => {
+      const xml = await (await get('/sitemap.xml')).text()
+
+      expect(xml).not.toContain('a-draft')
+      expect(xml).not.toContain('tomorrow')
+    })
+
+    /*
+     * noindex means "not in results". A sitemap entry is a request to be in
+     * results, so listing one would be the site contradicting itself.
+     */
+    it('leaves out a document marked noindex', async () => {
+      const xml = await (await get('/sitemap.xml')).text()
+      expect(xml).not.toContain('/en/blog/quiet')
+    })
+
+    it('carries the alternates of a translated document', async () => {
+      const xml = await (await get('/sitemap.xml')).text()
+      expect(xml).toContain('hreflang="fr"')
+    })
+  })
+
+  describe('robots.txt', () => {
+    it('points crawlers at the sitemap on this installation address', async () => {
+      const response = await get('/robots.txt')
+      const body = await response.text()
+
+      expect(response.headers.get('content-type')).toContain('text/plain')
+      expect(body).toContain('User-agent: *')
+      expect(body).toMatch(/Sitemap: http:\/\/127\.0\.0\.1:\d+\/sitemap\.xml/)
+    })
+  })
+
+  describe('feeds', () => {
+    it('serves one Atom feed per section and language', async () => {
+      const response = await get('/en/blog/feed.xml')
+      const xml = await response.text()
+
+      expect(response.headers.get('content-type')).toContain('application/atom+xml')
+      expect(xml).toContain('xml:lang="en"')
+      expect(xml).toContain('<title>Hello world</title>')
+      expect(xml).toContain('&lt;p&gt;Fixture body&lt;/p&gt;')
+    })
+
+    it('keeps unpublished documents out of it', async () => {
+      const xml = await (await get('/en/blog/feed.xml')).text()
+
+      expect(xml).not.toContain('A draft')
+      expect(xml).not.toContain('Tomorrow')
+    })
+
+    it('has no feed where there is no archive', async () => {
+      // Pages sit at the locale root; a page is not something to subscribe to.
+      expect((await get('/en/feed.xml')).status).toBe(404)
+      expect((await get('/xx/blog/feed.xml')).status).toBe(404)
+    })
+  })
+
+  describe('preview', () => {
+    const linkFor = (id: string, ttlMs = 600_000) =>
+      signPreviewToken({ contentId: id, expiresAt: Date.now() + ttlMs }, previewSecret)
+
+    it('opens a draft for whoever holds a live token', async () => {
+      const response = await get(`/en/preview/${linkFor(draftId)}`)
+      const html = await response.text()
+
+      expect(response.status).toBe(200)
+      expect(html).toContain('A draft')
+    })
+
+    /*
+     * The token travels in a URL, so everything about this response says it is
+     * not part of the site: never stored, never indexed, and no referrer that
+     * would hand the token to whatever the reader clicks next.
+     */
+    it('keeps the preview out of every cache and index', async () => {
+      const response = await get(`/en/preview/${linkFor(draftId)}`)
+
+      expect(response.headers.get('cache-control')).toContain('no-store')
+      expect(response.headers.get('x-robots-tag')).toContain('noindex')
+      expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+      expect(response.headers.get('x-cache')).not.toBe('HIT')
+    })
+
+    it('refuses a token that expired, was forged, or names nothing', async () => {
+      const expired = signPreviewToken(
+        { contentId: draftId, expiresAt: Date.now() - 1000 },
+        previewSecret,
+      )
+      const forged = signPreviewToken(
+        { contentId: draftId, expiresAt: Date.now() + 600_000 },
+        'w'.repeat(48),
+      )
+
+      expect((await get(`/en/preview/${expired}`)).status).toBe(404)
+      expect((await get(`/en/preview/${forged}`)).status).toBe(404)
+      expect((await get('/en/preview/not-a-token')).status).toBe(404)
+    })
+
+    it('sends a preview opened in the wrong language to the document own one', async () => {
+      const response = await get(`/fr/preview/${linkFor(draftId)}`)
+
+      expect(response.status).toBe(302)
+      expect(response.headers.get('location')).toContain('/en/preview/')
+    })
+
+    it('still refuses the draft at its public address', async () => {
+      expect((await get('/en/blog/a-draft')).status).toBe(404)
+    })
+  })
+
+  describe('the page cache', () => {
+    it('renders once and serves the copy afterwards', async () => {
+      const path = '/en/blog/hello-world'
+      await cache.purgeTags([contentTag(helloId)])
+
+      const first = await get(path)
+      const second = await get(path)
+
+      expect(first.headers.get('x-cache')).toBe('MISS')
+      expect(second.headers.get('x-cache')).toBe('HIT')
+      expect(await second.text()).toContain('Hello world')
+    })
+
+    /*
+     * The whole point of the design: the process that knows a document changed
+     * is not the process that rendered it. This purge is the operation the API
+     * performs on publish, run from outside the site entirely.
+     */
+    it('drops the copy when something purges the document from another process', async () => {
+      const path = '/en/blog/hello-world'
+      await get(path)
+      expect((await get(path)).headers.get('x-cache')).toBe('HIT')
+
+      await cache.purgeTags([contentTag(helloId)])
+
+      expect((await get(path)).headers.get('x-cache')).toBe('MISS')
+    })
+
+    it('never keeps a page nothing could purge', async () => {
+      // A 404 carries no content tag, so its ttl would be its only exit.
+      const missing = await get('/en/nothing-at-all')
+      const again = await get('/en/nothing-at-all')
+
+      expect(missing.status).toBe(404)
+      expect(again.headers.get('x-cache')).toBe('MISS')
+    })
+
+    it('does not cache the language negotiation, which answers per reader', async () => {
+      const english = await get('/', { 'accept-language': 'en' })
+      const french = await get('/', { 'accept-language': 'fr' })
+
+      expect(english.headers.get('location')).toBe('/en')
+      expect(french.headers.get('location')).toBe('/fr')
     })
   })
 

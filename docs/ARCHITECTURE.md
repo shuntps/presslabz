@@ -4,9 +4,9 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phases 0 to 2 landed, and phase 3 is under way.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, at a prefixed locale URL, rendered from its blocks. All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site, which is tested by starting what production starts and asking it questions over a socket.
+**Phases 0 to 3 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. An unpublished document opens through a signed, short-lived link.
 
-What phase 3 still owes: the theme contract and the default theme, so the site's appearance stops being the plain built-in layout; the page cache actually wired to responses and purged by the API when content changes; `hreflang`, the language switcher and the canonical metadata; the sitemap, `robots.txt` and the feeds; and preview of unpublished documents.
+All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site: the suite starts what production starts and asks it questions over a socket.
 
 Everything below is settled, not proposed.
 
@@ -288,6 +288,18 @@ Consequence worth stating: the locale list is fixed when the site is built, beca
 
 **A document has one URL.** `trailingSlash` is `never`, and a nested page reached by any other path — its bare slug, or a wrong ancestor — is answered with a 301 to its canonical path rather than rendered there. The slug identifies the document and the path presents it; serving both would mean two things to index, two cache entries, and two purges to get right. A page number past the end of an archive, or one that is not a positive integer, is a 404 for the same reason: an archive that answers 200 for every number has an unbounded set of URLs that all say nothing.
 
+### Discovery
+
+`hreflang` is reciprocal or it is ignored, so every language of a document names all of them, itself included, plus `x-default`. Only translations that are actually published appear: announcing one that answers 404 is worse than announcing none, because a search engine follows it and a reader who switches language lands on nothing. A document that exists in one language announces no alternates at all — one alternate pointing at the page itself tells a crawler nothing.
+
+The same rule decides the language switcher, and for the same reason it is the site that fills it rather than the theme: which siblings a reader may be told about is an authorization question.
+
+`sitemap.xml` is one query, not one per page: a recursive walk that returns every publicly visible document with the path it is reachable at. Three things are left out of it — a document marked `noindex`, because that flag exists to keep a page out of results and a sitemap entry is the opposite; a document whose type is no longer registered, because there is no URL to name; and a page whose path cannot be resolved, since the walk starts at the roots and a row inside a `parentId` cycle is never reached.
+
+Feeds are Atom rather than RSS 2.0: it states its own language, requires a stable id per entry, and has one date format — three things a multilingual CMS needs and RSS leaves to convention. Content is escaped into the document rather than wrapped in CDATA, because a CDATA section ends at the first `]]>` and a code block can contain one.
+
+`robots.txt` is generated rather than served from a file, because the line that matters names this installation's own sitemap. Nothing is disallowed: there is no admin under this origin, and a robots file is a request to well-behaved crawlers rather than an access control — listing a path there is how people advertise the paths they meant to keep quiet.
+
 ### The theme contract
 
 A theme is a workspace package under `themes/`, exporting `.astro` components. There is no build step: Astro publishes and consumes those files as they are, and each component's CSS is scoped automatically, so two themes cannot collide and a theme cannot leak a rule into the admin.
@@ -312,7 +324,21 @@ Everything that touches more than one key is one Lua script, for the same reason
 
 The ttl is a backstop for a purge that never arrived, not the invalidation. Caching is single-instance Valkey by design: purging fans out to keys the caller cannot name in advance, and a tag set has to live with its members.
 
-Astro 7 ships route caching of its own — `Astro.cache.set({ tags })`, `routeRules`, and a Cache Provider API — and `packages/cache` is what will back it rather than compete with it. The deciding fact is that `cache.invalidate()` runs inside the Astro process, and the process that knows a document was published is the API. The default in-memory provider dies with the process and is shared with nobody, so a store both processes can reach is required whatever the framework offers; using the provider seam means the framework keeps handling `Vary`, `swr` and revalidation.
+Astro's own route caching is what the site uses; `packages/cache` backs it through the Cache Provider API rather than competing with it, so `Vary`, `swr` and the route rules stay the framework's. The deciding fact is that `cache.invalidate()` runs inside the Astro process, and the process that knows a document was published is the API. The default in-memory provider dies with its process and is shared with nobody.
+
+The provider follows Astro's own protocol — read `CDN-Cache-Control` for the lifetime and `Cache-Tag` for the tags, both of which the framework strips before the response leaves — and adds the half a route rule cannot express: the render runs inside a tag collection, so every document, listing and asset the page actually read is recorded without a theme or a route listing anything.
+
+Four responses are never kept, each for a reason somebody else's cache has learned the hard way: one the route did not ask to cache; one that is not a document — a redirect or a 404 carries no content tag, so nothing would ever purge it; one carrying a cookie, which would be served to the next reader; and one that varies, which this store does not key on.
+
+**The namespace is read at runtime by both processes.** Astro serialises a provider's configuration into the build, which for a namespace is a trap: the API purges under the namespace it reads from the environment, and a site built elsewhere would hold its entries somewhere else — a cache nothing can purge. The baked value is a default; the environment overrides it. That is not theoretical either: the site's own test suite once served a page cached from a different database, which is exactly what a shared namespace does.
+
+### Preview
+
+An unpublished document opens through a **signed token in the URL**, not through the session cookie. The cookie is host-only and `SameSite=Lax`, so a public site on another host cannot read it, and the fix people reach for — widening it to `Domain=.example.com` — hands the session to every subdomain that exists now or later. A token names one document, expires in minutes, and works whether the two apps share a host or not.
+
+It is a bearer token in a URL, which is the honest cost: URLs reach logs, referrers and screenshots. So the lifetime is short, it names a document rather than an actor, and the page it opens sends `no-store`, `noindex` and `no-referrer` — that last one because a link clicked from a preview would otherwise hand the token to wherever it points.
+
+Issuing a link is authorized by the same function that authorizes reading the document, and must never become a permission of its own: anything looser would let somebody hand out a link to a document they cannot open themselves. An installation with no `PREVIEW_SECRET` has no previews, answers plainly, and is a coherent installation rather than a broken one.
 
 ### Tooling the public site cannot use yet
 

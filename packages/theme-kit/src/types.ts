@@ -12,6 +12,24 @@ import type { AstroComponentFactory } from 'astro/runtime/server/index.js'
  * authority can be bounded, and one that could open a connection is not.
  */
 
+/**
+ * What the document says about itself to a machine.
+ *
+ * Built by the site and rendered by ThemeHead, so a theme cannot omit it and
+ * cannot get it wrong. Which siblings may be advertised is an authorization
+ * question, and a canonical URL is a claim only the routing can make.
+ */
+export interface PageHead {
+  /** Absolute, or null on a page that must not name a canonical URL. */
+  readonly canonical: string | null
+  /** Absolute alternates, one per language the document exists in. */
+  readonly alternates: readonly { readonly locale: Locale; readonly href: string }[]
+  /** The default locale's alternate, for readers no language matched. */
+  readonly defaultHref: string | null
+  /** From meta.seo.noindex: keeps a page out of results without unpublishing. */
+  readonly noindex: boolean
+}
+
 export interface TranslationLink {
   readonly locale: Locale
   readonly href: string
@@ -50,6 +68,13 @@ export interface SiteContext {
    * may be told about is an authorization question.
    */
   readonly translations: readonly TranslationLink[]
+  readonly head: PageHead
+  /**
+   * The feed this page belongs to, or null where there is none. Advertised by
+   * ThemeHead so a reader's browser or reader application finds it without the
+   * theme having to know the URL.
+   */
+  readonly feedHref: string | null
 }
 
 export interface DocumentView {

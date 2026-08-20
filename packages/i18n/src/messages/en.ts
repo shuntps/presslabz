@@ -116,6 +116,7 @@ export const en = {
   'web.notFound.title': 'Page not found',
   'web.notFound.body': 'That page does not exist, or is not published yet.',
   'web.notFound.home': 'Go to the home page',
+  'web.nav.languages': 'Languages',
   'web.nav.label': 'Sections',
   'web.archive.title': 'Writing',
   'web.archive.empty': 'Nothing published yet.',

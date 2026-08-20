@@ -225,3 +225,110 @@ export async function resolveAncestry(
     complete: topmost.parent_id === null,
   }
 }
+
+interface RawPathRow extends Record<string, unknown> {
+  id: string
+  type: string
+  locale: string
+  translation_group_id: string
+  slug: string
+  title: string
+  excerpt: string | null
+  meta: Record<string, unknown>
+  updated_at: string
+  published_at: string | null
+  path: string[]
+}
+
+export interface PublishedPathRow {
+  readonly id: string
+  readonly type: string
+  readonly locale: string
+  readonly translationGroupId: string
+  readonly slug: string
+  readonly title: string
+  readonly excerpt: string | null
+  readonly meta: Record<string, unknown>
+  readonly updatedAt: Date
+  readonly publishedAt: Date | null
+  /** Root first, the document's own slug last. */
+  readonly path: string[]
+}
+
+/**
+ * Every publicly visible document, with the path it is reachable at.
+ *
+ * One query, because the alternative is a sitemap that costs a round trip per
+ * page to discover its own ancestors — and a sitemap is the one page that has
+ * every document on it.
+ *
+ * The walk starts at the roots and descends, which has a property worth
+ * stating: a row inside a `parentId` cycle has no root ancestor, so it never
+ * appears. That is the correct answer for a sitemap — a document whose path
+ * cannot be resolved has no canonical URL to publish — and it is also what
+ * makes the recursion terminate on data the schema still allows.
+ */
+export async function listPublishedPaths(
+  db: Database,
+  query: { readonly now?: Date; readonly limit?: number } = {},
+): Promise<PublishedPathRow[]> {
+  const visible = publiclyVisible(query.now ?? new Date())
+  const limit = Math.min(50_000, Math.max(1, Math.trunc(query.limit ?? 50_000)))
+
+  /*
+   * Unaliased on purpose. The visibility predicate is the one built above,
+   * embedded as it is rather than restated in this string — with an alias it
+   * would not match, and a fourth spelling of "what the public may read" is
+   * exactly what the test crossing statuses with dates exists to prevent.
+   */
+  const result = await db.execute<RawPathRow>(sql`
+    with recursive tree as (
+      select ${contents.id} as id, ${contents.type} as type, ${contents.locale} as locale,
+             ${contents.translationGroupId} as translation_group_id,
+             ${contents.slug} as slug, ${contents.title} as title,
+             ${contents.excerpt} as excerpt, ${contents.meta} as meta,
+             ${contents.updatedAt} as updated_at, ${contents.publishedAt} as published_at,
+             array[${contents.slug}]::text[] as path, 1 as depth
+      from ${contents}
+      where ${contents.parentId} is null and ${visible}
+      union all
+      select ${contents.id}, ${contents.type}, ${contents.locale},
+             ${contents.translationGroupId},
+             ${contents.slug}, ${contents.title},
+             ${contents.excerpt}, ${contents.meta},
+             ${contents.updatedAt}, ${contents.publishedAt},
+             parent.path || ${contents.slug}, parent.depth + 1
+      from ${contents}
+      join tree parent
+        on ${contents.parentId} = parent.id
+       and ${contents.type} = parent.type
+       and ${contents.locale} = parent.locale
+      where parent.depth < ${MAX_ANCESTRY_DEPTH} and ${visible}
+    )
+    select id, type, locale, translation_group_id, slug, title, excerpt, meta,
+           updated_at, published_at, path
+    from tree
+    order by updated_at desc
+    limit ${limit}
+  `)
+
+  /*
+   * Mapped, because a raw query is raw: `db.execute` returns what the driver
+   * decoded and none of drizzle's column typing, so a timestamp arrives as a
+   * string and the first caller to treat it as a Date fails at runtime. That
+   * is not hypothetical — it is how this function shipped the first time.
+   */
+  return [...result].map((row) => ({
+    id: row.id,
+    type: row.type,
+    locale: row.locale,
+    translationGroupId: row.translation_group_id,
+    slug: row.slug,
+    title: row.title,
+    excerpt: row.excerpt,
+    meta: row.meta,
+    updatedAt: new Date(row.updated_at),
+    publishedAt: row.published_at === null ? null : new Date(row.published_at),
+    path: row.path,
+  }))
+}

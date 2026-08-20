@@ -1,5 +1,5 @@
 ---
-import { LOCALE_TAGS } from '@presslabz/i18n'
+import { LOCALE_LABELS, LOCALE_TAGS } from '@presslabz/i18n'
 import type { SiteContext } from '@presslabz/theme-kit'
 import ThemeHead from '@presslabz/theme-kit/ThemeHead.astro'
 import '../tokens.css'
@@ -15,22 +15,40 @@ const { site, title, description } = Astro.props
 
 <html lang={LOCALE_TAGS[site.locale]}>
   <head>
-    <ThemeHead title={title} description={description} />
+    <ThemeHead site={site} title={title} description={description} />
   </head>
   <body>
     <header>
       <a class="wordmark" href={site.homeHref}>{site.siteName}</a>
-      {
-        site.nav.length > 0 ? (
-          <nav aria-label={site.t('web.nav.label')}>
-            {site.nav.map((link) => (
-              <a href={link.href} aria-current={link.current ? 'page' : undefined}>
-                {link.label}
-              </a>
-            ))}
-          </nav>
-        ) : null
-      }
+      <div class="rails">
+        {
+          site.nav.length > 0 ? (
+            <nav aria-label={site.t('web.nav.label')}>
+              {site.nav.map((link) => (
+                <a href={link.href} aria-current={link.current ? 'page' : undefined}>
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+          ) : null
+        }
+        {
+          /*
+           * Only translations that exist. A switcher that lists every language
+           * the site runs and sends the reader to a home page when the article
+           * has no translation looks helpful and loses their place.
+           */
+          site.translations.length > 0 ? (
+            <nav aria-label={site.t('web.nav.languages')} class="languages">
+              {site.translations.map((translation) => (
+                <a href={translation.href} lang={translation.locale} hreflang={translation.locale}>
+                  {LOCALE_LABELS[translation.locale]}
+                </a>
+              ))}
+            </nav>
+          ) : null
+        }
+      </div>
     </header>
 
     <main>
@@ -82,10 +100,22 @@ const { site, title, description } = Astro.props
     text-decoration: none;
   }
 
+  .rails {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--pl-space-4) var(--pl-space-6);
+  }
+
   nav {
     display: flex;
     gap: var(--pl-space-4);
     font-size: var(--pl-text-sm);
+  }
+
+  .languages a {
+    font-family: var(--pl-font-data);
+    font-size: var(--pl-text-xs);
   }
 
   nav a[aria-current='page'] {

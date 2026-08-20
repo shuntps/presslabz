@@ -8,9 +8,14 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
       "env": [
-        "SITE_URL",
-        "SITE_NAME",
         "DEFAULT_LOCALE",
+        "PAGE_CACHE_ENABLED",
+        "PAGE_CACHE_NAMESPACE",
+        "PAGE_CACHE_TTL_SECONDS",
+        "PREVIEW_SECRET",
+        "PREVIEW_TTL_SECONDS",
+        "SITE_NAME",
+        "SITE_URL",
         "SUPPORTED_LOCALES",
         "WEB_HOST",
         "WEB_PORT"
@@ -53,7 +58,12 @@
         "HTTP_HEADERS_TIMEOUT_MS",
         "HTTP_REQUEST_TIMEOUT_MS",
         "HTTP_HANDLER_TIMEOUT_MS",
-        "HEALTH_CHECK_TIMEOUT_MS"
+        "HEALTH_CHECK_TIMEOUT_MS",
+        "PAGE_CACHE_NAMESPACE",
+        "PAGE_CACHE_TTL_SECONDS",
+        "PAGE_CACHE_ENABLED",
+        "PREVIEW_SECRET",
+        "PREVIEW_TTL_SECONDS"
       ]
     }
   }

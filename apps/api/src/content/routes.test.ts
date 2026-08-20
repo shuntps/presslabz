@@ -1,6 +1,9 @@
+import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
+import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
+import { Valkey } from 'iovalkey'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
 import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
@@ -31,6 +34,9 @@ const uniqueSlug = (name: string) => `rt-${name}-${Math.floor(Math.random() * 1e
 describe.skipIf(!ready)('content routes', () => {
   let scratch: Awaited<ReturnType<typeof createScratchDatabase>>
   let namespace: string
+  let cacheNamespace: string
+  let cacheClient: Valkey
+  let pageCache: PageCache
   let app: FastifyInstance
   let handle: ReturnType<typeof createDb>
   let db: Database
@@ -55,6 +61,15 @@ describe.skipIf(!ready)('content routes', () => {
     scratch = await createScratchDatabase('content-routes')
     namespace = testRateLimitNamespace('content-routes')
 
+    /*
+     * Set before app.ts is imported, because env.ts parses process.env once at
+     * import: an installation with no preview secret answers 503 to every
+     * preview request, which would make the authorization tests below assert
+     * nothing.
+     */
+    process.env.PREVIEW_SECRET = 'x'.repeat(48)
+    process.env.SITE_URL = 'http://127.0.0.1:4321'
+
     // env.ts throws at import time when the environment is incomplete, so the
     // app is imported only once the suite knows it can run.
     const [{ buildApp }, { SESSION_COOKIE }] = await Promise.all([
@@ -63,7 +78,16 @@ describe.skipIf(!ready)('content routes', () => {
     ])
     cookieName = SESSION_COOKIE
 
-    app = await buildApp({ databaseUrl: scratch.url, rateLimitNamespace: namespace })
+    cacheNamespace = `presslabz:test:api:${namespace}`
+    cacheClient = new Valkey(process.env.VALKEY_URL as string)
+    cacheClient.on('error', () => {})
+    pageCache = createPageCache({ client: cacheClient, namespace: cacheNamespace })
+
+    app = await buildApp({
+      databaseUrl: scratch.url,
+      rateLimitNamespace: namespace,
+      pageCacheNamespace: cacheNamespace,
+    })
     await app.ready()
 
     handle = createDb(scratch.url, { maxConnections: 5 })
@@ -85,6 +109,8 @@ describe.skipIf(!ready)('content routes', () => {
     await scratch.drop()
     // The scratch database goes with a DROP; Valkey keys do not.
     await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
+    await pageCache.clear()
+    await cacheClient.quit()
   })
 
   async function post(role: string, body: Record<string, unknown>) {
@@ -623,6 +649,126 @@ describe.skipIf(!ready)('content routes', () => {
     it('lists the declared types so the admin builds navigation from truth', async () => {
       const response = await app.inject({ url: '/content-types', cookies: as('editor') })
       expect(response.json().types.map((t: { name: string }) => t.name)).toEqual(['post', 'page'])
+    })
+  })
+
+  describe('publishing empties the page cache', () => {
+    /**
+     * The site collects tags while it renders and this process purges them.
+     * The two halves never meet: `cache.invalidate()` runs inside the Astro
+     * server, which is not this process and never hears about a write. What is
+     * asserted here is the seam — that a write reaches the same Valkey entries
+     * the site stored.
+     */
+    async function cacheAPage(key: string, tags: readonly string[]): Promise<void> {
+      const lookup = await pageCache.lookup(key)
+      const stored = await pageCache.store(
+        key,
+        { body: '<p>cached</p>', status: 200, headers: {} },
+        { tags: [...tags], renderedFrom: lookup.at },
+      )
+      expect(stored).toBe(true)
+    }
+
+    it('drops the document page when the document is edited', async () => {
+      const created = await post('editor', {
+        locale: 'en',
+        slug: 'cached-doc',
+        title: 'Cached document',
+        status: 'draft',
+      })
+      const id = created.json().content.id as string
+
+      await cacheAPage('/en/blog/cached-doc', [contentTag(id)])
+
+      const patched = await patch('editor', id, { title: 'Renamed' })
+
+      expect(patched.statusCode).toBe(200)
+      expect((await pageCache.lookup('/en/blog/cached-doc')).hit).toBe(false)
+    })
+
+    it('drops it when the document is deleted', async () => {
+      const created = await post('editor', {
+        locale: 'en',
+        slug: 'cached-gone',
+        title: 'Cached and gone',
+        status: 'draft',
+      })
+      const id = created.json().content.id as string
+
+      await cacheAPage('/en/blog/cached-gone', [contentTag(id)])
+
+      const deleted = await remove('editor', id)
+
+      expect(deleted.statusCode).toBe(204)
+      expect((await pageCache.lookup('/en/blog/cached-gone')).hit).toBe(false)
+    })
+  })
+
+  describe('preview links', () => {
+    /*
+     * A preview link is a read, delegated to another process for a few
+     * minutes. It is authorized by the same function that authorizes reading
+     * the document, and it must never become a permission of its own.
+     */
+    it('is refused to somebody who may not read the document', async () => {
+      const created = await post('contributor', draft('secret-draft'))
+      const id = created.json().content.id as string
+
+      const asOther = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('subscriber'),
+      })
+
+      expect(asOther.statusCode).toBe(403)
+    })
+
+    it('answers 404 for a document that is not of this type', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/content/post/00000000-0000-4000-8000-000000000000/preview',
+        cookies: as('editor'),
+      })
+
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('hands an editor a link that names the document and expires', async () => {
+      const created = await post('editor', draft('previewable'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('editor'),
+      })
+
+      expect(response.statusCode).toBe(200)
+
+      const { url, expiresAt } = response.json().preview
+      const locale = created.json().content.locale as string
+
+      // The link opens the document in its own language, whatever the actor's.
+      expect(url).toContain(`/${locale}/preview/`)
+      expect(url.startsWith('http://127.0.0.1:4321/')).toBe(true)
+      expect(verifyPreviewToken(url.split('/preview/')[1] as string, 'x'.repeat(48))).toEqual({
+        contentId: id,
+        expiresAt: Date.parse(expiresAt),
+      })
+    })
+
+    it('lets the author of a draft preview their own work', async () => {
+      const created = await post('contributor', draft('mine-to-preview'))
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/preview`,
+        cookies: as('contributor'),
+      })
+
+      expect(response.statusCode).toBe(200)
     })
   })
 })

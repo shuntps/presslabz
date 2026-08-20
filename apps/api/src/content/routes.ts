@@ -12,6 +12,7 @@ import {
   permissionsForCreation,
   permissionsForDocument,
 } from '@presslabz/core'
+import { previewPath, signPreviewToken } from '@presslabz/core/preview'
 import {
   ContentConflictError,
   ContentForbiddenError,
@@ -29,6 +30,8 @@ import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
+import type { Purger } from '../cache/purge.ts'
+import { env } from '../env.ts'
 
 /**
  * One set of handlers for every content type. The type is a path segment
@@ -40,6 +43,7 @@ import type { AuthenticatedUser } from '../auth/plugin.ts'
 interface ContentRoutesOptions {
   db: Database
   registry: ContentTypeRegistry
+  purger: Purger
 }
 
 /**
@@ -167,7 +171,7 @@ function actorOf(user: AuthenticatedUser) {
 
 export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
   app,
-  { db, registry },
+  { db, registry, purger },
 ) => {
   /** What content types exist, so the admin builds its navigation from truth. */
   app.get('/content-types', { onRequest: [app.requireAuth] }, async (request, reply) => {
@@ -294,6 +298,55 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
     },
   )
 
+  /**
+   * A link that opens an unpublished document on the public site.
+   *
+   * Authorized exactly as reading it is — the same function, the same answer —
+   * because a preview link *is* a read, delegated to another process for a few
+   * minutes. It is not a new permission and must never become one: anything
+   * looser would mean a contributor could hand out a link to a document they
+   * are not allowed to open themselves.
+   *
+   * The token names the document, not the actor. Whoever holds the link sees
+   * that one document until it expires, which is the trade being made in
+   * exchange for a link that can be sent to somebody who has no account at
+   * all — the reason previews exist.
+   */
+  app.post(
+    '/content/:type/:id/preview',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = idParams.safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      if (!env.PREVIEW_SECRET || !env.SITE_URL) {
+        return reply
+          .code(503)
+          .send({ error: 'preview_unavailable', reason: 'no-preview-configuration' })
+      }
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const actor = actorOf(request.user)
+      if (!canReadDocument(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
+      const expiresAt = Date.now() + env.PREVIEW_TTL_SECONDS * 1000
+      const token = signPreviewToken({ contentId: row.id, expiresAt }, env.PREVIEW_SECRET)
+
+      return reply.send({
+        preview: {
+          url: new URL(previewPath(row.locale, token), env.SITE_URL).toString(),
+          expiresAt: new Date(expiresAt).toISOString(),
+        },
+      })
+    },
+  )
+
   app.post('/content/:type', { onRequest: [app.requireAuth] }, async (request, reply) => {
     if (!request.user) return
     const type = resolveType(registry, request, reply)
@@ -353,6 +406,7 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
             },
       )
 
+      await purger.content(row)
       return reply.code(201).send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -399,6 +453,14 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       )
 
       if (!row) return reply.code(404).send({ error: 'not_found' })
+
+      /*
+       * After the write, and whatever the write was. An edit to a draft purges
+       * nothing that was cached — a draft has no public page — and asking
+       * whether it might have is a second implementation of "what is public"
+       * living in the route that can least afford one.
+       */
+      await purger.content(row)
       return reply.send({ content: serializeContent(type, actor, row) })
     } catch (error) {
       return replyForWriteError(error, reply)
@@ -429,6 +491,11 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       })
 
       if (!deleted) return reply.code(404).send({ error: 'not_found' })
+
+      // The row that was deleted, which is the only version that can say what
+      // to purge: the document is gone, and reading it before the lock would
+      // have described a version this transaction may have replaced.
+      await purger.content(deleted)
       return reply.code(204).send()
     } catch (error) {
       return replyForWriteError(error, reply)

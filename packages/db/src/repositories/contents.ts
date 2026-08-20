@@ -497,11 +497,20 @@ export interface DeleteContentOptions {
  * can ever attach to a group with no members — there is nothing to hold update
  * permission over — so an empty one is a row that no path can use again.
  */
+/**
+ * Returns the row that was deleted, or null when there was none.
+ *
+ * The row rather than a boolean, because every caller has something to do with
+ * it that only the deleted version can answer: which cache tags to purge,
+ * which document a hook is being told about. Re-reading it afterwards is not
+ * an option — it is gone — and reading it before means acting on a version the
+ * lock below may have replaced.
+ */
 export async function deleteContent(
   db: Database,
   id: string,
   options: DeleteContentOptions = {},
-): Promise<boolean> {
+): Promise<ContentRow | null> {
   return db.transaction(async (tx) => {
     // Read once, unlocked, only to learn which group to lock.
     const found = await tx
@@ -511,7 +520,7 @@ export async function deleteContent(
       .limit(1)
 
     const groupId = found[0]?.translationGroupId
-    if (groupId === undefined) return false
+    if (groupId === undefined) return null
 
     await tx
       .select({ id: translationGroups.id })
@@ -537,7 +546,7 @@ export async function deleteContent(
       .for('update')
 
     const current = locked[0]
-    if (!current) return false
+    if (!current) return null
 
     if (options.authorize && !options.authorize(current)) {
       throw new ContentForbiddenError()
@@ -555,6 +564,6 @@ export async function deleteContent(
       await tx.delete(translationGroups).where(eq(translationGroups.id, groupId))
     }
 
-    return true
+    return current
   })
 }

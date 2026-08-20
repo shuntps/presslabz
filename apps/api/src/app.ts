@@ -11,6 +11,7 @@ import { Valkey } from 'iovalkey'
 import { startSessionSweep } from './auth/cleanup.ts'
 import authPlugin from './auth/plugin.ts'
 import { authRoutes } from './auth/routes.ts'
+import { createApiPageCache, createPurger } from './cache/purge.ts'
 import { contentRoutes } from './content/routes.ts'
 import { env } from './env.ts'
 import { createProbe } from './health/probe.ts'
@@ -62,6 +63,15 @@ export interface BuildAppOptions {
    * prove nothing about the difference.
    */
   readonly rateLimitValkeyUrl?: string
+  /**
+   * Overrides the page cache's key prefix.
+   *
+   * Same reasoning as the rate limiter's: a suite that purged under the
+   * configured namespace would empty the cache of whatever else is running
+   * against this Valkey — a developer's own site, another run. It is also what
+   * lets a test observe a purge without inventing one.
+   */
+  readonly pageCacheNamespace?: string
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -221,9 +231,28 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(userRoutes, { db })
   // Declared in code, so the registry is built once at boot and passed in
   // rather than reached for from a module.
-  await app.register(contentRoutes, { db, registry: createBuiltinRegistry() })
+  /*
+   * The purge shares the health client. It runs after a write has already
+   * landed, so it is allowed to be slow and is not allowed to fail the
+   * request; a dedicated connection would buy nothing and cost one more thing
+   * to keep alive.
+   */
+  const pageCacheNamespace = options.pageCacheNamespace ?? env.PAGE_CACHE_NAMESPACE
+
+  const purger = createPurger({
+    cache: createApiPageCache({
+      client: valkey,
+      ...(pageCacheNamespace === undefined ? {} : { namespace: pageCacheNamespace }),
+      ...(env.PAGE_CACHE_TTL_SECONDS === undefined
+        ? {}
+        : { ttlSeconds: env.PAGE_CACHE_TTL_SECONDS }),
+    }),
+    logger: app.log,
+  })
+
+  await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), purger })
   await app.register(multipart)
-  await app.register(mediaRoutes, { db })
+  await app.register(mediaRoutes, { db, purger })
 
   /*
    * A fresh clone plus `pnpm services:up` should leave a working installation.

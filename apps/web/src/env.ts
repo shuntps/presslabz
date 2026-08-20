@@ -37,6 +37,22 @@ const schema = z.object({
   S3_ENDPOINT: z.url(),
   S3_BUCKET: z.string().min(1),
   MEDIA_BASE_URL: z.url().optional(),
+  /*
+   * The page cache. Astro disables caching in dev on its own, so this is about
+   * built servers: unset VALKEY_URL and the site renders every request, which
+   * is the right default for an installation that has not been told where its
+   * cache lives.
+   */
+  VALKEY_URL: z.url().optional(),
+  PAGE_CACHE_ENABLED: z.enum(['true', 'false']).optional(),
+  /*
+   * The same secret the API signs preview links with. Without it this site has
+   * no preview at all, which is a coherent installation rather than a broken
+   * one: every preview link answers 404.
+   */
+  PREVIEW_SECRET: z.string().min(32).max(512).optional(),
+  PAGE_CACHE_NAMESPACE: z.string().min(1).max(120).optional(),
+  PAGE_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(86_400).optional(),
   DEFAULT_LOCALE: z.string().optional(),
   SUPPORTED_LOCALES: z.string().optional(),
 })

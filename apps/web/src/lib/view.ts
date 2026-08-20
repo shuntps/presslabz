@@ -7,7 +7,9 @@ import type {
   ArchiveView,
   DocumentView,
   NavLink,
+  PageHead,
   SiteContext,
+  TranslationLink,
 } from '@presslabz/theme-kit'
 import { env, localeConfig } from '../env.ts'
 import { archivePageUrl, archivePath, documentPath, homePath } from './routes.ts'
@@ -42,6 +44,9 @@ export interface SiteContextInput {
   readonly locale: Locale
   readonly path: string
   readonly registry: ContentTypeRegistry
+  readonly head: PageHead
+  readonly translations?: readonly TranslationLink[]
+  readonly feedHref?: string | null
 }
 
 export function siteContext(input: SiteContextInput): SiteContext {
@@ -54,12 +59,13 @@ export function siteContext(input: SiteContextInput): SiteContext {
     nav: navFor(input.locale, input.registry, input.path),
     t: createTranslator(input.locale),
     /*
-     * Empty until the language switcher lands. It is declared now because
-     * which siblings a reader may be told about is an authorization question
-     * the site answers, and a theme that had to ask for them later would be a
-     * theme with a data need nobody had written down.
+     * Which siblings a reader may be told about is an authorization question,
+     * answered by the site: only what is published, and only what has a path
+     * that resolves.
      */
-    translations: [],
+    translations: input.translations ?? [],
+    head: input.head,
+    feedHref: input.feedHref ?? null,
   }
 }
 

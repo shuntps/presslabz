@@ -599,7 +599,7 @@ describe.skipIf(!ready)('contents repository', () => {
         release.open()
       }
       await holder
-      expect(await deletion).toBe(true)
+      expect((await deletion)?.id).toBe(first.id)
     })
   })
 
