@@ -618,6 +618,10 @@ The baseline is deprecation-free by intention, which only means anything if some
 
 Pinning by SHA and automated updates are not alternatives: the pin is what makes an update *visible*, and Dependabot is what stops a pin from quietly becoming ancient. Without the first, a moved tag changes what runs with no record; without the second, nothing in the repository can tell you a pin is two years old.
 
+**A manifest can also disagree with itself, and nothing else in the repository could see it.** A workspace's own suite reads one manifest, Biome reads them as syntax rather than as meaning, and knip follows imports rather than declarations — so `@presslabz/tokens` was declared twice in the default theme, as a dependency and again as a development one, and what noticed was an audit rather than a check. `scripts/manifests.test.mjs` reads every `package.json` pnpm resolved and refuses a package declared in two fields that contradict each other. `peerDependencies` beside `devDependencies` is not one of them: that is how a package develops against something its host supplies, the default theme does exactly that with astro, and a check that flagged it would be a check people learn to ignore.
+
+It is plain ESM run by `node --test`: no dependency, no workspace of its own, no Turbo task. It is not part of `pnpm test` — those counts are the product's — and it runs as its own CI step, before anything is started, so it fails in seconds. Two of its three tests are about the rule rather than the repository: they assert that the duplicate which shipped is caught and that the legitimate pair is not, because a guard nobody has watched fail is a guard nobody can trust.
+
 ## Nothing unused stays
 
 **An export nothing imports is not an API, it is a claim.** `pnpm lint:unused` reports files, exports and dependencies that nothing reaches — it needs no installation, and it is the check that found two functions nobody called, seventeen exports narrowed back to their own module, four dependencies declared and never imported, and ten message keys in two languages that no screen renders. A constant that names a policy stays where it is; what goes is the `export` in front of it, because the surface should say what is actually used and can widen again the day something needs it.
@@ -675,6 +679,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm e2e` | Playwright, in a real browser, against its own database and its own pair of servers. Not part of `pnpm test`: it needs the service containers running |
 | `pnpm test:coverage` | The same suites with a coverage report. Read, never gated — see "What the tests are for" |
 | `pnpm lint:unused` | Files, exports and dependencies nothing imports. Run it before adding anything; it is how the last sweep found ten dead translations and two functions nobody called |
+| `pnpm lint:manifests` | The invariants a `package.json` has to keep, across every workspace at once. Runs in CI, needs nothing started |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `pnpm seed` | Create the first administrator; refuses once any user exists |
 | `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |

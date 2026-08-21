@@ -95,6 +95,13 @@ jobs:
       - name: Lint and format
         run: pnpm lint
 
+      # Needs nothing started, so it fails in seconds when it fails. It reads
+      # every package.json in the workspace and is the only check that can:
+      # a workspace's own suite sees one manifest, biome reads them as syntax,
+      # and knip follows imports rather than declarations.
+      - name: Manifests
+        run: pnpm lint:manifests
+
       - name: Typecheck
         run: pnpm typecheck
 
