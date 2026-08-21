@@ -24,7 +24,6 @@
     "@fastify/proxy-addr": "catalog:",
     "@fastify/rate-limit": "catalog:",
     "@node-rs/argon2": "catalog:",
-    "@presslabz/blocks": "workspace:*",
     "@presslabz/cache": "workspace:*",
     "@presslabz/core": "workspace:*",
     "@presslabz/db": "workspace:*",
@@ -41,6 +40,7 @@
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "@vitest/coverage-v8": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@presslabz/blocks": "workspace:*"
   }
 }

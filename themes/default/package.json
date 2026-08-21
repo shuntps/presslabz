@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "@presslabz/i18n": "workspace:*",
-    "@presslabz/theme-kit": "workspace:*",
-    "@presslabz/tokens": "workspace:*"
+    "@presslabz/theme-kit": "workspace:*"
   },
   "peerDependencies": {
     "astro": "catalog:"

@@ -3,9 +3,6 @@
   "workspaces": {
     "e2e": {
       "entry": ["specs/*.setup.ts"]
-    },
-    "themes/default": {
-      "ignoreDependencies": ["@presslabz/tokens"]
     }
   }
 }
