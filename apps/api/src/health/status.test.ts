@@ -18,7 +18,13 @@ const timedOut: ProbeResult = { status: 'down', timedOut: true }
 describe('the overall verdict', () => {
   it('is ok and 200 only when every dependency answered', () => {
     expect(
-      summarizeHealth({ database: up, cache: up, storage: up, rateLimitDegraded: false }),
+      summarizeHealth({
+        database: up,
+        cache: up,
+        storage: up,
+        mediaDelivery: up,
+        rateLimitDegraded: false,
+      }),
     ).toEqual({
       statusCode: 200,
       body: {
@@ -30,7 +36,13 @@ describe('the overall verdict', () => {
 
   it('follows the rate limit store, which is what used to be ignored', () => {
     expect(
-      summarizeHealth({ database: up, cache: up, storage: up, rateLimitDegraded: true }),
+      summarizeHealth({
+        database: up,
+        cache: up,
+        storage: up,
+        mediaDelivery: up,
+        rateLimitDegraded: true,
+      }),
     ).toEqual({
       statusCode: 503,
       body: {
@@ -42,7 +54,13 @@ describe('the overall verdict', () => {
 
   it('follows the database', () => {
     expect(
-      summarizeHealth({ database: down, cache: up, storage: up, rateLimitDegraded: false }),
+      summarizeHealth({
+        database: down,
+        cache: up,
+        storage: up,
+        mediaDelivery: up,
+        rateLimitDegraded: false,
+      }),
     ).toEqual({
       statusCode: 503,
       body: {
@@ -54,7 +72,13 @@ describe('the overall verdict', () => {
 
   it('follows the cache', () => {
     expect(
-      summarizeHealth({ database: up, cache: timedOut, storage: up, rateLimitDegraded: false }),
+      summarizeHealth({
+        database: up,
+        cache: timedOut,
+        storage: up,
+        mediaDelivery: up,
+        rateLimitDegraded: false,
+      }),
     ).toEqual({
       statusCode: 503,
       body: {
@@ -66,7 +90,13 @@ describe('the overall verdict', () => {
 
   it('reports every dependency at once rather than the first that failed', () => {
     expect(
-      summarizeHealth({ database: down, cache: down, storage: up, rateLimitDegraded: true }),
+      summarizeHealth({
+        database: down,
+        cache: down,
+        storage: up,
+        mediaDelivery: up,
+        rateLimitDegraded: true,
+      }),
     ).toEqual({
       statusCode: 503,
       body: {
@@ -91,6 +121,7 @@ describe('the overall verdict', () => {
               database: databaseDown ? down : up,
               cache: cacheDown ? down : up,
               storage: storageDown ? down : up,
+              mediaDelivery: up,
               rateLimitDegraded,
             }),
           ),
@@ -116,7 +147,13 @@ describe('the overall verdict', () => {
    */
   it('follows media storage', () => {
     expect(
-      summarizeHealth({ database: up, cache: up, storage: down, rateLimitDegraded: false }),
+      summarizeHealth({
+        database: up,
+        cache: up,
+        storage: down,
+        mediaDelivery: up,
+        rateLimitDegraded: false,
+      }),
     ).toEqual({
       statusCode: 503,
       body: {
@@ -124,5 +161,63 @@ describe('the overall verdict', () => {
         services: { database: 'up', cache: 'up', rateLimit: 'up', storage: 'down' },
       },
     })
+  })
+})
+
+/*
+ * The store answering is one question; a reader being able to fetch an object
+ * is another, and they are different permissions on any store worth the name.
+ * "Storage is up" used to mean only the first, which is how a site could serve
+ * nothing but broken images under a green health check. Neither question is
+ * about whether an upload would succeed — `/health` writes nothing and claims
+ * nothing about writing.
+ */
+describe('media storage, which is two questions', () => {
+  const status = (input: Parameters<typeof summarizeHealth>[0]) =>
+    summarizeHealth(input).body.services.storage
+
+  const base = { database: up, cache: up, rateLimitDegraded: false } as const
+
+  it('is down when the bucket itself will not answer, whatever readers can do', () => {
+    expect(status({ ...base, storage: down, mediaDelivery: up })).toBe('down')
+    expect(status({ ...base, storage: down, mediaDelivery: down })).toBe('down')
+  })
+
+  it('is degraded when the bucket answers and readers get nothing', () => {
+    expect(status({ ...base, storage: up, mediaDelivery: down })).toBe('degraded')
+  })
+
+  it('is up when both hold', () => {
+    expect(status({ ...base, storage: up, mediaDelivery: up })).toBe('up')
+  })
+
+  /*
+   * The delivery probe runs in both modes, so there is no combination in which
+   * this report is asked to guess. It was optional once — skipped whenever
+   * MEDIA_BASE_URL was set — and that is precisely how an external base
+   * answering 403 produced a 200.
+   */
+  it('demands an answer about readers in every mode', () => {
+    // @ts-expect-error the delivery probe is not optional; omitting it must not compile
+    expect(() => status({ ...base, storage: up })).toBeDefined()
+  })
+
+  it('is 503 for anything short of up, as every other dependency is', () => {
+    expect(summarizeHealth({ ...base, storage: up, mediaDelivery: down }).statusCode).toBe(503)
+    expect(summarizeHealth({ ...base, storage: down, mediaDelivery: down }).statusCode).toBe(503)
+    expect(summarizeHealth({ ...base, storage: up, mediaDelivery: up }).statusCode).toBe(200)
+  })
+
+  /*
+   * /health is unauthenticated. Which of the four it was — a policy, a
+   * credential, an outage, a bucket that is not there — describes an
+   * operator's infrastructure to anybody who asks, so it goes to the log and
+   * not into this body.
+   */
+  it('says nothing about why', () => {
+    const { body } = summarizeHealth({ ...base, storage: down, mediaDelivery: down })
+
+    expect(Object.keys(body).sort()).toEqual(['services', 'status'])
+    expect(JSON.stringify(body)).not.toMatch(/denied|policy|credential|endpoint|reason/i)
   })
 })

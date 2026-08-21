@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch src/index.ts",
     "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "storage:init": "node --env-file-if-exists=../../.env scripts/storage-init.ts",
     "seed": "node --env-file-if-exists=../../.env scripts/seed/administrator.ts",
     "seed:demo": "node --env-file-if-exists=../../.env scripts/seed/demo.ts",
     "seed:bulk": "node --env-file-if-exists=../../.env scripts/seed/bulk.ts",
