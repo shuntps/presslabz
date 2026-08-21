@@ -59,7 +59,7 @@ export function canEditMedia(actor: Actor, resource: MediaResource): boolean {
  * appears in production.
  *
  * `mediaBaseUrl` is the CDN in front of the bucket; without it the endpoint the
- * API writes to is also the one readers use, which is what MinIO serves
+ * API writes to is also the one readers use, which is what a local store serves
  * locally.
  */
 export function resolveMediaBase(config: {

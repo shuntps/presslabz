@@ -1,0 +1,13 @@
+{
+  "identities": [
+    {
+      "name": "presslabz",
+      "credentials": [{ "accessKey": "presslabz", "secretKey": "presslabz-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "anonymous",
+      "actions": ["Read"]
+    }
+  ]
+}

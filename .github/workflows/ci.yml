@@ -68,22 +68,28 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Not a service container: the MinIO image needs `server /data` as its
-      # command, and a service block cannot supply one. Same image tag as
-      # docker-compose, so there is one version to keep current.
+      # Not a service container: the image needs a command, and a service
+      # block cannot supply one. Same image and identities as
+      # docker-compose.yml, so development and CI meet the same store.
+      #
+      # SeaweedFS rather than MinIO: MinIO's repository is archived and two
+      # unauthenticated-object-write advisories against it have no patched
+      # release. See infra/storage/README.md.
       - name: Start object storage
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=$S3_ACCESS_KEY_ID \
-            -e MINIO_ROOT_PASSWORD=$S3_SECRET_ACCESS_KEY \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
-          for _ in $(seq 1 40); do
-            curl -sf http://localhost:9000/minio/health/live && exit 0
+          docker run -d --name storage -p 9000:8333 \
+            -v "$PWD/infra/storage/s3-identities.json:/etc/seaweedfs/s3-identities.json:ro" \
+            chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da \
+            server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3-identities.json
+          # 403 is a running S3 endpoint refusing an unsigned request, which is
+          # what "ready" looks like for a store that checks signatures.
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9000/ || true)
+            case "$code" in 403|200) exit 0 ;; esac
             sleep 1
           done
-          echo "MinIO did not become ready" >&2
-          docker logs minio >&2
+          echo "The object store did not become ready" >&2
+          docker logs storage >&2
           exit 1
 
       - name: Lint and format

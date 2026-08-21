@@ -17,60 +17,88 @@ const timedOut: ProbeResult = { status: 'down', timedOut: true }
 
 describe('the overall verdict', () => {
   it('is ok and 200 only when every dependency answered', () => {
-    expect(summarizeHealth({ database: up, cache: up, rateLimitDegraded: false })).toEqual({
+    expect(
+      summarizeHealth({ database: up, cache: up, storage: up, rateLimitDegraded: false }),
+    ).toEqual({
       statusCode: 200,
-      body: { status: 'ok', services: { database: 'up', cache: 'up', rateLimit: 'up' } },
+      body: {
+        status: 'ok',
+        services: { database: 'up', cache: 'up', rateLimit: 'up', storage: 'up' },
+      },
     })
   })
 
   it('follows the rate limit store, which is what used to be ignored', () => {
-    expect(summarizeHealth({ database: up, cache: up, rateLimitDegraded: true })).toEqual({
+    expect(
+      summarizeHealth({ database: up, cache: up, storage: up, rateLimitDegraded: true }),
+    ).toEqual({
       statusCode: 503,
       body: {
         status: 'degraded',
-        services: { database: 'up', cache: 'up', rateLimit: 'degraded' },
+        services: { database: 'up', cache: 'up', rateLimit: 'degraded', storage: 'up' },
       },
     })
   })
 
   it('follows the database', () => {
-    expect(summarizeHealth({ database: down, cache: up, rateLimitDegraded: false })).toEqual({
-      statusCode: 503,
-      body: { status: 'degraded', services: { database: 'down', cache: 'up', rateLimit: 'up' } },
-    })
-  })
-
-  it('follows the cache', () => {
-    expect(summarizeHealth({ database: up, cache: timedOut, rateLimitDegraded: false })).toEqual({
-      statusCode: 503,
-      body: { status: 'degraded', services: { database: 'up', cache: 'down', rateLimit: 'up' } },
-    })
-  })
-
-  it('reports every dependency at once rather than the first that failed', () => {
-    expect(summarizeHealth({ database: down, cache: down, rateLimitDegraded: true })).toEqual({
+    expect(
+      summarizeHealth({ database: down, cache: up, storage: up, rateLimitDegraded: false }),
+    ).toEqual({
       statusCode: 503,
       body: {
         status: 'degraded',
-        services: { database: 'down', cache: 'down', rateLimit: 'degraded' },
+        services: { database: 'down', cache: 'up', rateLimit: 'up', storage: 'up' },
       },
     })
   })
 
-  it('answers 200 for exactly one of the eight combinations', () => {
-    // The exhaustive form, so a fourth dependency added later cannot be left
-    // out of the verdict the way the third was.
+  it('follows the cache', () => {
+    expect(
+      summarizeHealth({ database: up, cache: timedOut, storage: up, rateLimitDegraded: false }),
+    ).toEqual({
+      statusCode: 503,
+      body: {
+        status: 'degraded',
+        services: { database: 'up', cache: 'down', rateLimit: 'up', storage: 'up' },
+      },
+    })
+  })
+
+  it('reports every dependency at once rather than the first that failed', () => {
+    expect(
+      summarizeHealth({ database: down, cache: down, storage: up, rateLimitDegraded: true }),
+    ).toEqual({
+      statusCode: 503,
+      body: {
+        status: 'degraded',
+        services: { database: 'down', cache: 'down', rateLimit: 'degraded', storage: 'up' },
+      },
+    })
+  })
+
+  it('answers 200 for exactly one of the sixteen combinations', () => {
+    /*
+     * The exhaustive form, so a dependency added later cannot be left out of
+     * the verdict the way the rate limiter was. It did its job: adding media
+     * storage broke this test rather than passing quietly with three of four
+     * dependencies covered.
+     */
     const outcomes = [false, true].flatMap((databaseDown) =>
       [false, true].flatMap((cacheDown) =>
-        [false, true].map((rateLimitDegraded) =>
-          summarizeHealth({
-            database: databaseDown ? down : up,
-            cache: cacheDown ? down : up,
-            rateLimitDegraded,
-          }),
+        [false, true].flatMap((storageDown) =>
+          [false, true].map((rateLimitDegraded) =>
+            summarizeHealth({
+              database: databaseDown ? down : up,
+              cache: cacheDown ? down : up,
+              storage: storageDown ? down : up,
+              rateLimitDegraded,
+            }),
+          ),
         ),
       ),
     )
+
+    expect(outcomes).toHaveLength(16)
 
     expect(outcomes.filter((outcome) => outcome.statusCode === 200)).toHaveLength(1)
     expect(outcomes.filter((outcome) => outcome.body.status === 'ok')).toHaveLength(1)
@@ -78,5 +106,23 @@ describe('the overall verdict', () => {
       // The status line and the code never disagree, whichever dependency it is.
       expect(outcome.body.status === 'ok').toBe(outcome.statusCode === 200)
     }
+  })
+
+  /*
+   * The bucket belongs in the verdict for the same reason the limiter's store
+   * does: an instance whose object store will not answer accepts an upload,
+   * spends the re-encode, and fails at the write. A refusal counts the same as
+   * an outage, because an upload cannot tell them apart either.
+   */
+  it('follows media storage', () => {
+    expect(
+      summarizeHealth({ database: up, cache: up, storage: down, rateLimitDegraded: false }),
+    ).toEqual({
+      statusCode: 503,
+      body: {
+        status: 'degraded',
+        services: { database: 'up', cache: 'up', rateLimit: 'up', storage: 'down' },
+      },
+    })
   })
 })

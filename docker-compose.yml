@@ -6,7 +6,7 @@ name: presslabz
 volumes:
   postgres-data:
   valkey-data:
-  minio-data:
+  storage-data:
 
 services:
   postgres:
@@ -45,20 +45,34 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+  # SeaweedFS rather than MinIO: MinIO's repository is archived and two
+  # unauthenticated-object-write advisories against it have no patched release
+  # and will never get one. See infra/storage/README.md for what was measured
+  # before this replaced it.
+  #
+  # Published on 9000 — the port MinIO used — so that an existing .env keeps
+  # working; SeaweedFS speaks S3 on 8333 inside the container.
+  storage:
+    image: chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
     restart: unless-stopped
-    command: ['server', '/data', '--console-address', ':9001']
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-presslabz}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-presslabz-dev-secret}
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.config=/etc/seaweedfs/s3-identities.json
     ports:
-      - '${S3_PORT:-9000}:9000'
-      - '${S3_CONSOLE_PORT:-9001}:9001'
+      - '${S3_PORT:-9000}:8333'
     volumes:
-      - minio-data:/data
+      - storage-data:/data
+      # The identities: the development key is a real credential here, and
+      # anonymous may read and nothing else.
+      - ./infra/storage/s3-identities.json:/etc/seaweedfs/s3-identities.json:ro
     healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
+      # Its own address, not localhost: SeaweedFS binds the S3 port to the
+      # container's interface, so a loopback probe is refused by a server that
+      # is working perfectly. `--spider` reports success on the 403 an unsigned
+      # request earns, which is exactly what a running, guarded endpoint says.
+      test: ['CMD-SHELL', 'wget -q --spider "http://$$(hostname -i):8333/" 2>&1 | grep -q "403\|200"']
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20

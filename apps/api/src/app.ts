@@ -24,7 +24,7 @@ import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
 import { startOrphanSweep } from './media/orphans.ts'
 import { mediaRoutes } from './media/routes.ts'
-import { ensureBucket } from './media/storage.ts'
+import { bucketState, ensureBucket } from './media/storage.ts'
 import { createValkeyStore, StoreHealth } from './rate-limit/valkey-store.ts'
 import { userRoutes } from './users/routes.ts'
 
@@ -356,6 +356,22 @@ export async function buildApp(options: BuildAppOptions = {}) {
     timeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
   })
 
+  /*
+   * The bucket, asked the cheapest question there is. `HeadBucket` costs one
+   * round trip and answers the thing an upload needs to know; listing objects
+   * would cost more and prove less.
+   *
+   * A refusal counts as down, not as up: credentials the store will not accept
+   * are indistinguishable from an outage as far as an upload is concerned.
+   */
+  const storageProbe = createProbe({
+    check: async () => {
+      const state = await bucketState()
+      if (state !== 'present') throw new Error(`object store is ${state}`)
+    },
+    timeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
+  })
+
   /**
    * What this installation serves, for a client that has to draw it.
    *
@@ -382,7 +398,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
    * above bounds the cost of concurrent calls, not of sequential ones.
    */
   app.get('/health', async (_request, reply) => {
-    const [database, cache] = await Promise.all([databaseProbe.run(), cacheProbe.run()])
+    const [database, cache, storage] = await Promise.all([
+      databaseProbe.run(),
+      cacheProbe.run(),
+      storageProbe.run(),
+    ])
     /*
      * The limiter's store counts towards the verdict, not just towards the
      * detail: login fails closed while it is unreachable, so an instance in
@@ -391,6 +411,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const { statusCode, body } = summarizeHealth({
       database,
       cache,
+      storage,
       rateLimitDegraded: storeHealth.degraded,
     })
 

@@ -95,7 +95,7 @@ describe.skipIf(!ready)('app configuration', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json()).toEqual({
         status: 'ok',
-        services: { database: 'up', cache: 'up', rateLimit: 'up' },
+        services: { database: 'up', cache: 'up', rateLimit: 'up', storage: 'up' },
       })
     })
 
@@ -128,7 +128,7 @@ describe.skipIf(!ready)('app configuration', () => {
         expect(response.statusCode).toBe(503)
         expect(response.json()).toEqual({
           status: 'degraded',
-          services: { database: 'up', cache: 'up', rateLimit: 'degraded' },
+          services: { database: 'up', cache: 'up', rateLimit: 'degraded', storage: 'up' },
         })
       } finally {
         await degraded.close()

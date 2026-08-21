@@ -55,7 +55,7 @@ These four rules are the point of the project. Designs that violate them should 
 | Public rendering | Astro | Zero JS by default plus islands — the main lever for "fast". A theme is an Astro package |
 | Database | PostgreSQL + Drizzle ORM | Type-safe, migrations as code, native JSONB and full-text search |
 | Cache / sessions | Valkey (Redis-compatible) | |
-| Media | S3-compatible (MinIO locally) + `sharp` → AVIF/WebP | Nothing executable is ever served from uploads |
+| Media | S3-compatible (SeaweedFS locally) + `sharp` → AVIF/WebP | Nothing executable is ever served from uploads |
 | Editor | Custom block model on Tiptap/ProseMirror | Output is typed JSON blocks, not HTML. The block model and the renderer are running; Tiptap is not in yet, which is why marks can be preserved and not created |
 | Auth | httpOnly sessions, Argon2id — passkeys/WebAuthn and TOTP committed to, not written | Built in from the start, not a plugin |
 | Validation | Zod at every boundary | |
@@ -218,6 +218,22 @@ A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text
 **The editor's identity is the document, and React is told so with a key.** A router keeps a route's component mounted when only a parameter changes — right for a listing, wrong for an editor. The draft was seeded once, from whichever document was opened first, while the save mutation followed the id in the URL: moving between two translations wrote the document being left over the one being opened, under a title bar that had already changed to the new one, so nothing looked wrong until the damage was read back. The key remounts everything the screen holds — draft, selected block, picker, the state of the last save — so nothing added here later has to remember to reset itself. A "new" document is keyed by the language and group in its URL, because starting a translation while composing is a move between two pieces of work.
 
 **A screen that holds unsaved work says so, and does not let go of it quietly.** `dirty` is set by the one function that changes the draft and cleared by a save that landed; "Saved" is a statement about what the server holds, so it disappears at the first keystroke rather than lingering through a paragraph of new writing. Leaving is intercepted with the router's blocker — internal navigation and closing the tab both — and the dialog offers three answers, not two: stay, leave without saving, or save and then leave. Two answers make the author responsible for remembering to press save first; the third is what people actually want, and the leaving waits for the save to land rather than navigating away from the screen that is making the request.
+
+## The object store
+
+**What runs in development and CI is SeaweedFS.** MinIO's repository is archived, and two advisories against it — `GHSA-hv4r-mvr4-25vw` and `GHSA-9c4q-hq6p-c237`, both *unauthenticated object write*, both high — have **no patched release and will not get one**, because there is nobody left to publish it. That is a different thing from being behind on updates.
+
+The replacement had to answer the seven S3 calls `apps/api/src/media/storage.ts` actually makes, and it was tested against them before it was chosen: `HeadBucket`, `CreateBucket`, `PutBucketPolicy`, `PutObject`, `ListObjectsV2`, `DeleteObjects`, and an anonymous `GET` returning our `Cache-Control`. Garage, the other candidate, implements no bucket-policy API at all — public reads would have needed a mechanism of its own, and one code path in development against another in production is the thing this seam exists to avoid.
+
+`infra/storage/s3-identities.json` makes the development store behave like a real one: the credentials in `.env.example` are an identity it checks, a wrong key is answered 403, and **anonymous is granted `Read` and nothing else** — reads are public because media is public, and an anonymous `PUT` is refused. The archived MinIO accepted unauthenticated writes by design of its advisories; this does not.
+
+**Nothing this repository ships may be a credential in production.** The four storage settings have no defaults there — they are filled in only outside production — and `DATABASE_URL`, `VALKEY_URL` and the storage keys are refused outright if they still hold a value printed in `.env.example` or `docker-compose.yml`. The check is by value, because "looks like a default" is not a rule anybody can write: what makes `presslabz` a bad secret is that it is published here. A production instance that would have started on them now refuses, naming the setting.
+
+**Three ways of hearing "no", told apart.** `catch {}` around `HeadBucket` treated every failure as "the bucket is missing" and answered by trying to create it — so a wrong key, an expired token or a store that was simply down all produced a `CreateBucket` that could not work either, and the operator's error was about creating a bucket rather than about the credential or the network. A 404 is missing and is created; 401, 403 and a redirect are *denied*; no status at all is *unreachable*. Only the first is ours to repair.
+
+**Creating a bucket states its region**, except in `us-east-1`, which is the one AWS endpoint that refuses `CreateBucketConfiguration`. Stores that ignore the field are unaffected. `S3_REGION` keeps a default because it is not a credential; against AWS it must name the bucket's real region, or the SDK's redirect turns into the `denied` state above.
+
+**Media storage is in `/health`.** An instance whose object store will not answer accepts an upload, spends the re-encode and fails at the write, and the report an operator acts on should not call that healthy. Valkey stays in the verdict for the reason given under the HTTP boundary — sign-in fails closed without it — which is why the issue's suggestion to drop it was not followed.
 
 ## Pagination
 
@@ -547,7 +563,7 @@ A module is a name and a function that registers handlers, returning one that re
 
 | Phase | Scope | Done when | State |
 |---|---|---|---|
-| 0 | Monorepo, docker-compose (Postgres/Valkey/MinIO), Drizzle schema **with `locale` present from the first migration**, `packages/tokens`, `packages/i18n`, CI | `pnpm dev` brings the stack up | Done |
+| 0 | Monorepo, docker-compose (Postgres/Valkey/object storage), Drizzle schema **with `locale` present from the first migration**, `packages/tokens`, `packages/i18n`, CI | `pnpm dev` brings the stack up | Done |
 | 1 | Auth, users, roles and capabilities, admin shell with working locale switch and theme switch | you can log in, in either language, in either theme | Done |
 | 2 | Content model, block editor, media library, translation linking UI | you can publish a post and its translation | Done |
 | 3 | Astro rendering, theme contract, tag-based cache, `hreflang` and language switcher | the public site exists in both locales | Done |
@@ -618,7 +634,7 @@ Two exceptions are declared in `knip.json` rather than argued about each time: t
 
 **Coverage is reported, never gated.** `pnpm test:coverage` exists to be read. There is no percentage to satisfy, because a floor is satisfied most cheaply by testing what is easy rather than what is risky, and this project has already been bitten by tests that ran without asserting anything — a number would have counted those as coverage.
 
-**The test task is not cached.** Half of these suites read a real Postgres, a real Valkey and a real MinIO, and none of that state is in any hash Turbo computes: a cache hit could report green about services that were absent, empty or broken. The suite is well under a minute, which is cheaper than a green that means nothing. Read the counts rather than the tick, too — a suite that quietly shrinks is worse than one that fails, and this repository has watched forty-five tests vanish from a passing build.
+**The test task is not cached.** Half of these suites read a real Postgres, a real Valkey and a real object store, and none of that state is in any hash Turbo computes: a cache hit could report green about services that were absent, empty or broken. The suite is well under a minute, which is cheaper than a green that means nothing. Read the counts rather than the tick, too — a suite that quietly shrinks is worse than one that fails, and this repository has watched forty-five tests vanish from a passing build.
 
 **A suite leaves nothing behind.** Scratch databases are dropped by the suite that made them and swept on the next run when a process died before its teardown — an hour old is abandoned, which no live run can be. The browser suite writes to a bucket of its own, emptied before each run: its database is dropped at the end, so anything it had written into the shared development bucket would be a file no row anywhere references. Media suites delete the objects they uploaded *and* the orphan records that deletion creates.
 
@@ -641,7 +657,7 @@ Requires Node 24.12+, pnpm 11+ and Docker. First run:
 ```sh
 cp .env.example .env
 pnpm install
-pnpm services:up      # Postgres, Valkey, MinIO — waits until all are healthy
+pnpm services:up      # Postgres, Valkey, object storage — waits until all are healthy
 pnpm db:migrate
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
 pnpm seed:demo        # optional: fixture posts and pages, for development

@@ -30,7 +30,7 @@ import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
 import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
 
 /*
- * Against the real MinIO, because what is being asserted is that bytes a
+ * Against the real object store, because what is being asserted is that bytes a
  * client sent do not survive the trip: the object in the bucket is one sharp
  * produced, under a key this server chose, with a content type it set. A fake
  * store would agree with any of that.
@@ -774,7 +774,7 @@ describe.skipIf(!ready)('media routes', () => {
      * The store is a separate system and the transaction cannot include it, so
      * the record of what it still owns is written where it is atomic — with
      * the row's deletion. This asserts that half directly, because a store
-     * that fails is not something this suite can arrange against a real MinIO.
+     * that fails is not something this suite can arrange against a real store.
      */
     it('lists every object when the store is not reachable', async () => {
       const uploaded = await upload(await samplePng(), 'stranded.png', 'image/png')

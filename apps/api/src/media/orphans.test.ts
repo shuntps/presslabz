@@ -23,7 +23,7 @@ import { abandonObjects, sweepOrphans } from './orphans.ts'
  * that the record of the leak is written in the same transaction as the
  * deletion — which is exactly what a fake would not tell us. The object store
  * is injected, since what matters here is what happens when it refuses, and
- * arranging that against a real MinIO means breaking it.
+ * arranging that against a real object store means breaking it.
  */
 const ready = hasIntegrationEnv()
 

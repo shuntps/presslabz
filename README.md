@@ -83,7 +83,7 @@ Requires Node 24.12+, pnpm 11+ and Docker.
 ```sh
 cp .env.example .env
 pnpm install
-pnpm services:up      # Postgres, Valkey, MinIO
+pnpm services:up      # Postgres, Valkey, object storage
 pnpm db:migrate
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
 pnpm seed:demo        # optional: fixture content, so the public site has something to show

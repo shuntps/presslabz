@@ -174,7 +174,73 @@ const httpUrl = z.url().refine(
 
 const milliseconds = z.coerce.number().int().positive()
 
-export const envSchema = z
+/**
+ * Values this repository ships, which therefore belong to nobody.
+ *
+ * Every one of them is in `.env.example`, in a public repository, and a
+ * `docker-compose.yml` anybody can read. In development they are a
+ * convenience: a fresh clone comes up without a scavenger hunt. In production
+ * they are a credential an attacker already has, and the failure they cause is
+ * silent — the installation works, which is exactly why nobody notices.
+ *
+ * Refused by value rather than by rule, because the rule ("looks like a
+ * default") cannot be written: the only thing that makes `presslabz` a bad
+ * secret is that it is printed in this repository.
+ */
+/**
+ * What a development installation gets for free, and production does not.
+ *
+ * Applied before parsing rather than as field defaults, because a default is
+ * indistinguishable from a value once parsing is over: the schema would have
+ * no way to tell an operator who configured their bucket from one who did not.
+ * Outside production these fill in; in production their absence is an error
+ * that names the setting.
+ */
+const DEVELOPMENT_STORAGE = {
+  S3_ENDPOINT: 'http://localhost:9000',
+  S3_BUCKET: 'presslabz-media',
+  S3_ACCESS_KEY_ID: 'presslabz',
+  S3_SECRET_ACCESS_KEY: 'presslabz-dev-secret',
+} as const
+
+function withDevelopmentStorage(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw
+
+  const input = raw as Record<string, unknown>
+  if (input.NODE_ENV === 'production') return input
+
+  /*
+   * Only the storage keys are filled in, and only when they are absent or
+   * empty — `S3_ENDPOINT=` in a .env means "not set yet", which is the same
+   * convention the admin's API URL follows.
+   *
+   * Deliberately not applied to every key: doing that silently redefined an
+   * empty value as an absent one for the whole schema, and a test that refuses
+   * an empty RATE_LIMIT_NAMESPACE caught it. An empty setting is a mistake
+   * everywhere else, and staying a mistake is the point.
+   */
+  const filled: Record<string, unknown> = { ...input }
+
+  for (const [name, value] of Object.entries(DEVELOPMENT_STORAGE)) {
+    if (filled[name] === undefined || filled[name] === '') filled[name] = value
+  }
+
+  return filled
+}
+
+const SHIPPED_CREDENTIALS = new Set([
+  'presslabz',
+  'presslabz-dev-secret',
+  'postgres://presslabz:presslabz@localhost:5432/presslabz',
+  'redis://localhost:6379',
+])
+
+/** Whether a setting still carries what this repository ships. */
+function isShipped(value: string | undefined): boolean {
+  return value !== undefined && SHIPPED_CREDENTIALS.has(value)
+}
+
+const parsedEnv = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     API_HOST: z.string().default('127.0.0.1'),
@@ -183,17 +249,17 @@ export const envSchema = z
     VALKEY_URL: z.string().min(1, 'VALKEY_URL is required'),
     /** Exact origins allowed to send credentialed requests. Never a wildcard. */
     ADMIN_ORIGIN: adminOrigins,
-    /* Object storage. MinIO locally, any S3-compatible service in production. */
-    S3_ENDPOINT: httpUrl.default('http://localhost:9000'),
+    /* Object storage. SeaweedFS locally, any S3-compatible service in production. */
+    S3_ENDPOINT: httpUrl,
     S3_REGION: z.string().default('us-east-1'),
-    S3_BUCKET: z.string().min(1).default('presslabz-media'),
-    S3_ACCESS_KEY_ID: z.string().min(1).default('presslabz'),
-    S3_SECRET_ACCESS_KEY: z.string().min(1).default('presslabz-dev-secret'),
+    S3_BUCKET: z.string().min(1),
+    S3_ACCESS_KEY_ID: z.string().min(1),
+    S3_SECRET_ACCESS_KEY: z.string().min(1),
     /**
      * Where a reader fetches media from. Separate from the endpoint the API
      * writes to, because in production those are rarely the same host: uploads
      * go to the bucket and reads come off a CDN in front of it. Defaults to
-     * path-style against the endpoint, which is what MinIO serves locally.
+     * path-style against the endpoint, which is what the dev store serves.
      */
     MEDIA_BASE_URL: httpUrl.optional(),
 
@@ -288,3 +354,41 @@ export const envSchema = z
   .refine((env) => env.HTTP_HEADERS_TIMEOUT_MS <= env.HTTP_REQUEST_TIMEOUT_MS, {
     message: 'HTTP_HEADERS_TIMEOUT_MS must not exceed HTTP_REQUEST_TIMEOUT_MS',
   })
+  /*
+   * A production instance refuses to start on anything this repository ships.
+   *
+   * Defaults exist so that a clone runs; they are printed in `.env.example`
+   * and in `docker-compose.yml`, so in production they are a credential
+   * everybody already has. The check is by value and names the setting,
+   * because "your object store is readable by the internet" is not a thing to
+   * discover from an access log.
+   */
+  .superRefine((env, context) => {
+    if (env.NODE_ENV !== 'production') return
+
+    const shipped: [string, string | undefined][] = [
+      ['S3_ACCESS_KEY_ID', env.S3_ACCESS_KEY_ID],
+      ['S3_SECRET_ACCESS_KEY', env.S3_SECRET_ACCESS_KEY],
+      ['DATABASE_URL', env.DATABASE_URL],
+      ['VALKEY_URL', env.VALKEY_URL],
+    ]
+
+    for (const [name, value] of shipped) {
+      if (isShipped(value)) {
+        context.addIssue({
+          code: 'custom',
+          path: [name],
+          message: `${name} still holds the value this repository ships. It is public; set your own.`,
+        })
+      }
+    }
+  })
+
+/**
+ * The environment, with development's conveniences applied first.
+ *
+ * `z.preprocess` rather than a wrapper function so that the whole rule — what
+ * is supplied, what is required, and what is refused — is one schema a test
+ * can hand an object to.
+ */
+export const envSchema = z.preprocess(withDevelopmentStorage, parsedEnv)
