@@ -85,6 +85,7 @@ cp .env.example .env
 pnpm install
 pnpm services:up      # Postgres, Valkey, object storage
 pnpm db:migrate
+pnpm storage:init      # creates the media bucket, once — the API never does
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
 pnpm seed:demo        # optional: fixture content, so the public site has something to show
 pnpm dev              # API on :3000, admin on :5173, public site on :4321

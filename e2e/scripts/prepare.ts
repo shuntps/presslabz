@@ -96,12 +96,18 @@ try {
 }
 
 /*
- * The bucket, emptied rather than dropped: MinIO and S3 both refuse to delete
- * one that still holds objects, and creating it is the API's own job at boot
- * (`ensureBucket`). What matters is that nothing from a previous run is in it
- * when this one starts, and that nothing this run writes ends up in the bucket
- * somebody is developing against.
+ * The bucket, emptied rather than dropped: SeaweedFS and S3 both refuse to
+ * delete one that still holds objects. What matters is that nothing from a
+ * previous run is in it when this one starts, and that nothing this run writes
+ * ends up in the bucket somebody is developing against.
+ *
+ * Provisioned here rather than by the API. Creating a bucket and writing its
+ * policy are installation steps with their own command now — the server does
+ * neither, so this suite has to ask for what it needs like any other
+ * installation would.
  */
+run(['--filter', '@presslabz/api', 'storage:init'], { S3_BUCKET: E2E_BUCKET })
+
 const s3 = new S3Client({
   endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
   region: process.env.S3_REGION ?? 'us-east-1',
@@ -135,12 +141,20 @@ try {
 
   if (removed > 0) console.warn(`Emptied ${removed} objects from ${E2E_BUCKET}.`)
 } catch (error) {
-  // A bucket that does not exist yet is the ordinary first run; the API
-  // creates it when it starts.
+  // A bucket that does not exist yet is the ordinary first run, and the line
+  // above has just made one.
   if ((error as { name?: string }).name !== 'NoSuchBucket') throw error
 } finally {
   s3.destroy()
 }
+
+/*
+ * Again, and it is not redundant: emptying the bucket also removed the small
+ * object `/health` fetches to prove that readers can read. The command is
+ * idempotent, which is what makes putting it back this cheap — it creates
+ * nothing, writes no policy, and rewrites one object.
+ */
+run(['--filter', '@presslabz/api', 'storage:init'], { S3_BUCKET: E2E_BUCKET })
 
 run(['--filter', '@presslabz/db', 'migrate'])
 

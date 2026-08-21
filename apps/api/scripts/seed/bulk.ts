@@ -18,7 +18,7 @@ import {
 import sharp from 'sharp'
 import { env } from '../../src/env.ts'
 import { processImage, RENDITIONS, type RenditionName } from '../../src/media/process.ts'
-import { ensureBucket, putObject } from '../../src/media/storage.ts'
+import { bucketState, putObject } from '../../src/media/storage.ts'
 import { heading, paragraph, text } from './blocks.ts'
 
 /**
@@ -229,7 +229,18 @@ async function seedMedia(db: Database, uploadedById: string): Promise<MediaRow[]
     return existing
   }
 
-  await ensureBucket()
+  /*
+   * Asked, not arranged. Creating a bucket is an installation step with its
+   * own command now, and a seed script that quietly provisioned one was a
+   * second place that owned infrastructure — and the reason the credentials a
+   * developer runs with needed CreateBucket at all.
+   */
+  const state = await bucketState()
+  if (state !== 'present') {
+    throw new Error(
+      `The object store is ${state} for bucket "${env.S3_BUCKET}". Run \`pnpm storage:init\` first; this script writes objects, it does not provision them.`,
+    )
+  }
 
   const assets: MediaRow[] = [...existing]
 

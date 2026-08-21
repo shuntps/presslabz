@@ -16,15 +16,23 @@ import { createApiPageCache } from './cache/purge.ts'
 import { contentRoutes } from './content/routes.ts'
 import { startScheduler } from './content/scheduler.ts'
 import { env } from './env.ts'
-import { createProbe } from './health/probe.ts'
+import { createProbe, type ProbeResult } from './health/probe.ts'
 import { summarizeHealth } from './health/status.ts'
+import { reportChanges } from './health/transitions.ts'
 import { createApiHooks } from './hooks.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
 import { startOrphanSweep } from './media/orphans.ts'
 import { mediaRoutes } from './media/routes.ts'
-import { bucketState, ensureBucket } from './media/storage.ts'
+import {
+  type BucketState,
+  bucketState,
+  checkDelivery,
+  type DeliveryOutcome,
+  deliveryCheckUrl,
+  deliveryFailureMessage,
+} from './media/storage.ts'
 import { createValkeyStore, StoreHealth } from './rate-limit/valkey-store.ts'
 import { userRoutes } from './users/routes.ts'
 
@@ -82,6 +90,29 @@ export interface BuildAppOptions {
    * all without reaching inside the routes.
    */
   readonly modules?: readonly Module[]
+}
+
+/**
+ * The diagnostic word behind a storage verdict.
+ *
+ * It is what the log says, and — since a cause is part of what makes a
+ * transition — it is also what decides whether a state that has not changed is
+ * still worth a line. A store that goes from *missing* to *denied* is news;
+ * two thousand consecutive *denied* are not.
+ *
+ * A `degraded` verdict whose recorded outcome still reads `ok` means the probe
+ * lost its race rather than getting an answer: the closure never ran to
+ * completion, so nothing overwrote it. That is an unreachable base.
+ */
+function storageCauseOf(
+  verdict: 'up' | 'down' | 'degraded',
+  bucket: ProbeResult,
+  bucketCause: BucketState,
+  delivery: DeliveryOutcome,
+): string {
+  if (verdict === 'down') return bucket.timedOut ? 'timed out' : bucketCause
+  if (verdict === 'degraded') return delivery.ok ? 'unreachable' : delivery.cause
+  return 'ok'
 }
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -314,15 +345,6 @@ export async function buildApp(options: BuildAppOptions = {}) {
     orphanSweep.stop()
   })
 
-  /*
-   * A fresh clone plus `pnpm services:up` should leave a working installation.
-   * Without this the first upload fails on a bucket nobody was told to create,
-   * which is a fine error to read and a poor one to hit.
-   */
-  await ensureBucket().catch((error) => {
-    app.log.warn({ error }, 'media bucket is not reachable; uploads will fail')
-  })
-
   const sweeper = startSessionSweep({ sweep: () => deleteExpiredSessions(db), log: app.log })
 
   app.addHook('onClose', async () => {
@@ -357,20 +379,50 @@ export async function buildApp(options: BuildAppOptions = {}) {
   })
 
   /*
-   * The bucket, asked the cheapest question there is. `HeadBucket` costs one
-   * round trip and answers the thing an upload needs to know; listing objects
-   * would cost more and prove less.
+   * Whether the bucket is there and answers this credential.
    *
-   * A refusal counts as down, not as up: credentials the store will not accept
-   * are indistinguishable from an outage as far as an upload is concerned.
+   * What it is **not** is evidence that an upload will work. `HeadBucket` and
+   * `PutObject` are different permissions on every store worth the name, and a
+   * credential that passes the first and fails the second is a real and
+   * ordinary configuration — so `up` here means "the store answered", and
+   * nothing in this file claims more than that.
+   *
+   * The cause is kept here rather than put in the response. `/health` is
+   * unauthenticated and says only `down`; whether the bucket was missing,
+   * refused, erroring or unreachable goes to the log, where the operator is.
    */
+  let storageCause: BucketState = 'present'
   const storageProbe = createProbe({
     check: async () => {
       const state = await bucketState()
+      storageCause = state
       if (state !== 'present') throw new Error(`object store is ${state}`)
     },
     timeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
   })
+
+  /*
+   * And the half a credentialed call cannot answer: whether a reader can
+   * actually fetch an object, over the URL a reader actually uses.
+   *
+   * In both delivery modes. `deliveryCheckUrl()` is `MEDIA_BASE_URL` when one
+   * is set and the store's own endpoint otherwise, so this asks the question
+   * readers ask either way — and an external base answering 403, 404 or
+   * nothing at all is exactly as broken as a bucket that does. Skipping the
+   * check because a CDN is somebody else's to run was a way to answer 200
+   * while every image on the site failed.
+   */
+  let deliveryOutcome: DeliveryOutcome = { ok: true }
+  const deliveryProbe = createProbe({
+    check: async () => {
+      const url = deliveryCheckUrl()
+      deliveryOutcome = await checkDelivery(url, env.HEALTH_CHECK_TIMEOUT_MS)
+      if (!deliveryOutcome.ok) throw new Error(deliveryOutcome.cause)
+    },
+    timeoutMs: env.HEALTH_CHECK_TIMEOUT_MS,
+  })
+
+  const reportStorage = reportChanges(app.log, 'storage')
 
   /**
    * What this installation serves, for a client that has to draw it.
@@ -398,10 +450,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
    * above bounds the cost of concurrent calls, not of sequential ones.
    */
   app.get('/health', async (_request, reply) => {
-    const [database, cache, storage] = await Promise.all([
+    const [database, cache, storage, mediaDeliveryResult] = await Promise.all([
       databaseProbe.run(),
       cacheProbe.run(),
       storageProbe.run(),
+      deliveryProbe.run(),
     ])
     /*
      * The limiter's store counts towards the verdict, not just towards the
@@ -412,8 +465,28 @@ export async function buildApp(options: BuildAppOptions = {}) {
       database,
       cache,
       storage,
+      mediaDelivery: mediaDeliveryResult,
       rateLimitDegraded: storeHealth.degraded,
     })
+
+    /*
+     * Named here and nowhere else. The body carries a verdict; this carries
+     * the reason — and the reason is part of what makes a transition, so a
+     * store that goes from missing to refusing says so instead of being
+     * suppressed as "still down".
+     */
+    const verdict = body.services.storage
+    const cause = storageCauseOf(verdict, storage, storageCause, deliveryOutcome)
+
+    reportStorage(
+      verdict,
+      String(cause),
+      verdict === 'down'
+        ? `the object store did not answer this instance: ${cause}`
+        : verdict === 'degraded'
+          ? deliveryFailureMessage(deliveryCheckUrl(), deliveryOutcome)
+          : 'the object store answers, and media is readable over its public URL',
+    )
 
     return reply.code(statusCode).send(body)
   })

@@ -25,6 +25,7 @@
     "db:generate": "pnpm --filter @presslabz/db generate",
     "db:migrate": "pnpm --filter @presslabz/db migrate",
     "db:studio": "pnpm --filter @presslabz/db studio",
+    "storage:init": "pnpm --filter @presslabz/api storage:init",
     "seed": "pnpm --filter @presslabz/api seed",
     "seed:demo": "pnpm --filter @presslabz/api seed:demo",
     "seed:bulk": "pnpm --filter @presslabz/api seed:bulk",

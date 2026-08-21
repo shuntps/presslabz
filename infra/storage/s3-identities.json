@@ -6,6 +6,20 @@
       "actions": ["Admin", "Read", "Write", "List", "Tagging"]
     },
     {
+      "name": "presslabz-runtime",
+      "credentials": [
+        { "accessKey": "presslabz-runtime", "secretKey": "presslabz-runtime-secret" }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "presslabz-readonly",
+      "credentials": [
+        { "accessKey": "presslabz-readonly", "secretKey": "presslabz-readonly-secret" }
+      ],
+      "actions": ["Read", "List"]
+    },
+    {
       "name": "anonymous",
       "actions": ["Read"]
     }
