@@ -9,7 +9,6 @@ import {
 } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { abandonObjects, sweepOrphans } from './orphans.ts'
 
 /**
  * The half of the media lifecycle that cannot be a transaction.
@@ -27,6 +26,21 @@ import { abandonObjects, sweepOrphans } from './orphans.ts'
  */
 const ready = hasIntegrationEnv()
 
+/**
+ * Loaded in beforeAll rather than at the top of the file, and as a type here:
+ * orphans.ts imports storage.ts, which imports env.ts, which validates and
+ * throws at import time on an incomplete environment. A top-level import runs
+ * before `hasIntegrationEnv()` has decided anything — before it has even had
+ * the chance to load the repository's .env — so it turned "this suite is
+ * skipped" and "this suite is configured" alike into "this file failed to
+ * load". `pnpm test` failed on a machine with a perfectly valid .env.
+ *
+ * `typeof import(...)` is a type, so nothing here reaches the module until the
+ * suite that needs it runs. Same reasoning, and the same shape, as the storage
+ * module in routes.test.ts.
+ */
+let orphansModule: typeof import('./orphans.ts')
+
 const log = { info: vi.fn(), warn: vi.fn() }
 
 describe.skipIf(!ready)('objects with no row', () => {
@@ -35,6 +49,7 @@ describe.skipIf(!ready)('objects with no row', () => {
   let db: Database
 
   beforeAll(async () => {
+    orphansModule = await import('./orphans.ts')
     scratch = await createScratchDatabase('orphans')
     handle = createDb(scratch.url, { maxConnections: 4 })
     db = handle.db
@@ -93,7 +108,7 @@ describe.skipIf(!ready)('objects with no row', () => {
     const row = await asset('removed')
     await deleteMedia(db, row.id)
 
-    const removed = await sweepOrphans(db, log, async () => {})
+    const removed = await orphansModule.sweepOrphans(db, log, async () => {})
 
     expect(removed).toBe(2)
     expect(await keysOf()).toEqual([])
@@ -108,7 +123,7 @@ describe.skipIf(!ready)('objects with no row', () => {
     const row = await asset('stubborn')
     await deleteMedia(db, row.id)
 
-    const removed = await sweepOrphans(db, log, async () => {
+    const removed = await orphansModule.sweepOrphans(db, log, async () => {
       throw new Error('the bucket is unreachable')
     })
 
@@ -127,12 +142,12 @@ describe.skipIf(!ready)('objects with no row', () => {
     const failing = async () => {
       throw new Error('still unreachable')
     }
-    await sweepOrphans(db, log, failing)
-    await sweepOrphans(db, log, failing)
+    await orphansModule.sweepOrphans(db, log, failing)
+    await orphansModule.sweepOrphans(db, log, failing)
 
     expect((await listOrphans(db))[0]?.attempts).toBe(2)
 
-    await sweepOrphans(db, log, async () => {})
+    await orphansModule.sweepOrphans(db, log, async () => {})
     expect(await keysOf()).toEqual([])
   })
 
@@ -145,7 +160,7 @@ describe.skipIf(!ready)('objects with no row', () => {
     const row = await asset('partial')
     await deleteMedia(db, row.id)
 
-    const removed = await sweepOrphans(db, log, async ([key]) => {
+    const removed = await orphansModule.sweepOrphans(db, log, async ([key]) => {
       if (key?.endsWith('.webp')) throw new Error('that one is stuck')
     })
 
@@ -160,6 +175,7 @@ describe.skipIf(!ready)('objects with no row yet', () => {
   let db: Database
 
   beforeAll(async () => {
+    orphansModule = await import('./orphans.ts')
     scratch = await createScratchDatabase('abandoned')
     handle = createDb(scratch.url, { maxConnections: 4 })
     db = handle.db
@@ -178,7 +194,7 @@ describe.skipIf(!ready)('objects with no row yet', () => {
   it('removes what an abandoned upload wrote, and lists nothing afterwards', async () => {
     const removed: string[][] = []
 
-    await abandonObjects(
+    await orphansModule.abandonObjects(
       db,
       crypto.randomUUID(),
       ['media/a.avif', 'media/a.webp'],
@@ -193,7 +209,7 @@ describe.skipIf(!ready)('objects with no row yet', () => {
   })
 
   it('leaves them listed when the store cannot be reached', async () => {
-    await abandonObjects(db, crypto.randomUUID(), ['media/b.avif'], log, async () => {
+    await orphansModule.abandonObjects(db, crypto.randomUUID(), ['media/b.avif'], log, async () => {
       throw new Error('unreachable')
     })
 
@@ -201,6 +217,8 @@ describe.skipIf(!ready)('objects with no row yet', () => {
   })
 
   it('does nothing at all when there is nothing to abandon', async () => {
-    await expect(abandonObjects(db, crypto.randomUUID(), [], log)).resolves.toBeUndefined()
+    await expect(
+      orphansModule.abandonObjects(db, crypto.randomUUID(), [], log),
+    ).resolves.toBeUndefined()
   })
 })
