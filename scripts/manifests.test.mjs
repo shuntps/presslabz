@@ -18,9 +18,9 @@ import { fileURLToPath } from 'node:url'
  * covers the repository root — a `.ts` file here would look type-checked and
  * would not be.
  *
- * It is not part of `pnpm test`. Those 907 tests are the product's; this one
- * is the repository's, it runs as its own command and its own CI step, and
- * keeping the two counts apart is the point.
+ * It is not part of `pnpm test`. The product's suites are the product's;
+ * this one is the repository's, it runs as its own command and its own CI
+ * step, and keeping the two apart is the point.
  *
  * Every rule below is paired with tests of the rule itself, not only of the
  * repository: what it catches, and what it must leave alone. A guard nobody
