@@ -11,6 +11,7 @@ import {
   hasIntegrationEnv,
   held,
   holdContentRow,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
   settle,
 } from '../testing.ts'
 import {
@@ -94,7 +95,7 @@ describe.skipIf(!ready)('contents repository', () => {
   afterAll(async () => {
     await handle.close()
     await scratch.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   describe('locale scoping', () => {
     it('never returns another language from a listing', async () => {

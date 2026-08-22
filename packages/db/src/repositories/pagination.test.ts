@@ -3,7 +3,11 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { contents, translationGroups } from '../schema/contents.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 import { listContents } from './contents.ts'
 
 /**
@@ -92,7 +96,7 @@ describe.skipIf(!ready)('a page of the listing, at volume', () => {
   afterAll(async () => {
     await client?.end({ timeout: 5 })
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** Runs the repository, then explains the statement it sent. */
   async function planOf(call: () => Promise<unknown>): Promise<PlanNode[]> {

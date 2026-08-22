@@ -4,7 +4,11 @@ import { postType } from '@presslabz/core'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 import { createContent } from './contents.ts'
 
 /**
@@ -100,7 +104,7 @@ describe.skipIf(!ready)('the search vector', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** Whether the stored vector matches a query, as a search route would ask. */
   async function finds(term: string): Promise<boolean> {

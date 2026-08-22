@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 
 /**
  * What the terms tables refuse.
@@ -55,7 +59,7 @@ describe.skipIf(!ready)('the terms schema', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** The constraint a statement broke, or null when the database took it. */
   async function refusalFor(statement: ReturnType<typeof sql>): Promise<string | null> {

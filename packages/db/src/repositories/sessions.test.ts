@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 import { createSession, deleteExpiredSessions, findValidSession } from './sessions.ts'
 import { countUsers, createInitialAdministrator, createUser } from './users.ts'
 
@@ -26,7 +30,7 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
   afterAll(async () => {
     await handle.close()
     await scratch.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   describe('sweeping expired sessions', () => {
     it('removes what has expired and keeps what has not', async () => {
@@ -72,7 +76,7 @@ describe.skipIf(!ready)('session and bootstrap safety', () => {
     afterAll(async () => {
       await bootstrapHandle.close()
       await bootstrap.drop()
-    })
+    }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
     it('creates at most one when several processes start together', async () => {
       const attempts = Array.from({ length: 5 }, (_, index) =>

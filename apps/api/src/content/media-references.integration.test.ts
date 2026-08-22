@@ -13,6 +13,7 @@ import {
   createScratchDatabase,
   hasIntegrationEnv,
   openBackends,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
   setMediaReferenceSyncState,
 } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
@@ -83,7 +84,7 @@ describe.skipIf(!ready)('a document that names an asset', () => {
     if (namespace) await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   const as = () => ({ [cookieName]: cookie })
 
@@ -249,7 +250,7 @@ describe.skipIf(!ready)('an installation whose references were never reconciled'
     for (const instance of started.splice(0)) await instance.close()
     await ownHandle?.close()
     await ownScratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   it('refuses to start, says which command to run, and leaves nothing open', async () => {
     await setMediaReferenceSyncState(ownHandle.db, 'pending')

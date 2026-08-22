@@ -10,6 +10,7 @@ import {
 import {
   createScratchDatabase,
   hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
   withUserFromBeforeTheConstraints,
 } from '@presslabz/db/testing'
 import { DEFAULT_LOCALE } from '@presslabz/i18n'
@@ -80,7 +81,7 @@ describe.skipIf(!ready)('authentication', () => {
     await app?.close()
     await scratch?.drop()
     await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /**
    * A sign-in attempt, from a caller of its own.

@@ -2,7 +2,11 @@ import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
 import { type ContentPage, contentPageSchema, type Role } from '@presslabz/core'
 import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '@presslabz/db/testing'
 import type { Module } from '@presslabz/modules'
 import type { FastifyInstance } from 'fastify'
 import { Valkey } from 'iovalkey'
@@ -142,7 +146,7 @@ describe.skipIf(!ready)('content routes', () => {
     await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
     await pageCache.clear()
     await cacheClient.quit()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   async function post(role: string, body: Record<string, unknown>) {
     const response = await app.inject({

@@ -9,7 +9,11 @@ import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
 import { contents } from '../schema/contents.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 import { type ContentRow, type ContentState, createContent } from './contents.ts'
 import {
   countPublished,
@@ -50,7 +54,7 @@ describe.skipIf(!ready)('public content reads', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** Its own type per group of tests, so no two of them can see each other. */
   async function open(type: AnyContentType, overrides: Partial<ContentState>): Promise<ContentRow> {

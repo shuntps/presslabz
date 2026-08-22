@@ -1,7 +1,11 @@
 import http from 'node:http'
 import net from 'node:net'
 import { createDb, createSession, createUser, type Database } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { generateSessionToken, hashSessionToken } from '../auth/session.ts'
@@ -116,7 +120,7 @@ describe.skipIf(!ready)('an API already carrying all the uploads it can', () => 
     }
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /*
    * Two active and sixteen waiting are eighteen uploads admitted. The
@@ -395,7 +399,7 @@ describe.skipIf(!ready)('an upload that fails where nothing expected it to', () 
     await ownScratch?.drop()
     vi.unstubAllEnvs()
     vi.resetModules()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   let brokenAdmission: Admission
 

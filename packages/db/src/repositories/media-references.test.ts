@@ -10,6 +10,7 @@ import {
   gate,
   hasIntegrationEnv,
   held,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
   settle,
 } from '../testing.ts'
 import { createContent, MediaReferenceError, updateContent } from './contents.ts'
@@ -46,7 +47,7 @@ describe.skipIf(!ready)('media references a document holds', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** An asset, inserted with a known id so a block can name it first. */
   async function asset(): Promise<string> {
