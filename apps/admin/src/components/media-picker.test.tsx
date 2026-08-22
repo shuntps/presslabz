@@ -339,3 +339,148 @@ describe('the dialog is opened after the render, not during it', () => {
     expect(document.querySelector('dialog')?.open).toBe(false)
   })
 })
+
+/*
+ * What an upload failure is called, and what survives the picker closing.
+ *
+ * Every failed upload used to be answered with "that file is not an image
+ * this installation accepts" — a 503 from a full server, a network failure
+ * and a too-large photograph alike — and the diagnostic outlived its session:
+ * closing the picker on an error and reopening it later greeted the person
+ * with a stale accusation about a file they had long moved on from.
+ */
+describe('when an upload fails', () => {
+  /** A transport that owns POST /media and delegates everything else. */
+  function uploadAnswering(answer: () => Promise<Response>) {
+    let posts = 0
+    api = fakeApi({ media: [] })
+    const inner = api.fetchMock
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        if (String(input).endsWith('/media') && init.method === 'POST') {
+          posts += 1
+          return answer()
+        }
+        return inner(input, init)
+      }),
+    )
+    return { postsSoFar: () => posts }
+  }
+
+  async function openEditorAndPicker() {
+    renderApp()
+    await signIn()
+    window.history.pushState({}, '', '/content/post/new')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await screen.findByPlaceholderText(/^title$/i)
+    await userEvent.click(screen.getByRole('button', { name: /^image$/i }))
+  }
+
+  const aFile = () => new File(['not-really-a-png'], 'photo.png', { type: 'image/png' })
+
+  const send = async () => {
+    await userEvent.upload(await screen.findByLabelText(/upload/i), aFile())
+  }
+
+  it.for([
+    [503, { error: 'unavailable', reason: 'upload-capacity' }, /try again in a moment/i],
+    [413, { error: 'file_too_large' }, /too large for this installation/i],
+    [415, { error: 'unsupported_media_type' }, /not an image this installation accepts/i],
+    [403, { error: 'forbidden' }, /permission/i],
+    [429, { error: 'too_many_requests' }, /too many requests/i],
+  ] as const)('says what a %i actually was', async ([status, body, expected]) => {
+    uploadAnswering(async () => Response.json(body, { status }))
+    await openEditorAndPicker()
+    await send()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(expected)
+    // And never the blanket accusation, except for the one case it is true of.
+    if (status !== 415) expect(alert.textContent).not.toMatch(/not an image/i)
+  })
+
+  it('says nothing answered when nothing did', async () => {
+    uploadAnswering(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await openEditorAndPicker()
+    await send()
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/did not answer/i)
+  })
+
+  it('clears the diagnostic the moment a new attempt starts', async () => {
+    let answers = 0
+    uploadAnswering(async () => {
+      answers += 1
+      if (answers === 1) return Response.json({ error: 'file_too_large' }, { status: 413 })
+      return new Promise<Response>(() => {})
+    })
+    await openEditorAndPicker()
+    await send()
+    await screen.findByRole('alert')
+
+    await send()
+
+    // Pending now: the old message is gone and nothing has replaced it.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText(/uploading/i)).toBeDefined()
+  })
+
+  it('shows no stale diagnostic after closing and reopening', async () => {
+    uploadAnswering(async () => Response.json({ error: 'file_too_large' }, { status: 413 }))
+    await openEditorAndPicker()
+    await send()
+    await screen.findByRole('alert')
+
+    await userEvent.click(screen.getByRole('button', { name: /close/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^image$/i }))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows no stale diagnostic when the failure lands while the picker is closed', async () => {
+    let reject: (error: Error) => void = () => {}
+    uploadAnswering(() => new Promise<Response>((_resolve, r) => (reject = r)))
+    await openEditorAndPicker()
+    await send()
+
+    await userEvent.click(screen.getByRole('button', { name: /close/i }))
+    reject(new TypeError('Failed to fetch'))
+    await waitFor(() => expect(screen.queryByText(/uploading/i)).toBeNull())
+
+    await userEvent.click(screen.getByRole('button', { name: /^image$/i }))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  /*
+   * reset() puts a mutation back to its initial state; it does not cancel the
+   * request. So a pending upload is never reset: closing and reopening keeps
+   * the pending state, keeps the field disabled, allows no second POST — and
+   * the first upload keeps its success callback.
+   */
+  it('keeps a pending upload across close and reopen, and its success when it lands', async () => {
+    let resolve: (response: Response) => void = () => {}
+    const transport = uploadAnswering(() => new Promise<Response>((r) => (resolve = r)))
+    await openEditorAndPicker()
+    await send()
+    expect(screen.getByText(/uploading/i)).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: /close/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^image$/i }))
+
+    // Still the same upload: pending survived the round trip, the field is
+    // closed to a second file, and exactly one POST has ever left.
+    expect(screen.getByText(/uploading/i)).toBeDefined()
+    expect(screen.getByLabelText(/upload/i)).toHaveProperty('disabled', true)
+    expect(transport.postsSoFar()).toBe(1)
+
+    resolve(Response.json({ media: fakeMedia({ id: 'fresh-upload' }) }, { status: 201 }))
+
+    // The success callback was kept: picking closes the dialog and the block
+    // now names the uploaded asset.
+    await waitFor(() => expect(document.querySelector('dialog')?.open).toBe(false))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})

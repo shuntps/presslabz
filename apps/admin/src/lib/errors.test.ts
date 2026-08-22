@@ -27,11 +27,35 @@ describe('what to tell somebody about a request that did not work', () => {
     [401, 'error.unauthorized'],
     [403, 'error.forbidden'],
     [404, 'error.notFound'],
-    [429, 'auth.tooManyAttempts'],
     [500, 'error.server'],
     [418, 'error.unexpected'],
   ] as const)('maps %i as it always did', ([status, expected]) => {
     expect(messageForError(new ApiError(status, 'whatever'))).toBe(expected)
+  })
+
+  /*
+   * Code-sensitive, not status-only: these two statuses mean "your file" only
+   * when they carry the media route's own codes. Another route's 413 or 415
+   * must not be dressed up as a media problem.
+   */
+  it('tells a too-large file from any other 413', () => {
+    expect(messageForError(new ApiError(413, 'file_too_large'))).toBe('media.tooLarge')
+    expect(messageForError(new ApiError(413, 'payload_too_large'))).toBe('error.unexpected')
+  })
+
+  it('tells a refused image from any other 415', () => {
+    expect(messageForError(new ApiError(415, 'unsupported_media_type'))).toBe('media.rejected')
+    expect(messageForError(new ApiError(415, 'whatever'))).toBe('error.unexpected')
+  })
+
+  /*
+   * Neutral, because every route sits behind the global limiter and this
+   * table serves every screen. The sign-in form keeps "too many attempts"
+   * through its own contextual handling — the one screen where the attempts
+   * are the person's own.
+   */
+  it('answers a rate limit without accusing anybody of attempts', () => {
+    expect(messageForError(new ApiError(429, 'too_many_requests'))).toBe('error.tooManyRequests')
   })
 
   it('keeps naming what nothing answered', () => {

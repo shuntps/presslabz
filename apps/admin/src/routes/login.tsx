@@ -23,11 +23,19 @@ export function LoginPage() {
    * all reported as "that email and password do not match" — an accusation
    * about the person, for a fault that was never theirs, and one they could
    * only respond to by retyping a correct password.
+   *
+   * The 429 is contextual on purpose. The shared table answers a neutral
+   * "too many requests" now, because every route sits behind the global
+   * limiter and an upload hitting it is nobody's "attempts" — but here the
+   * attempts really are the person's own sign-ins, so this screen keeps the
+   * message that says so.
    */
   const errorKey =
     signIn.error instanceof ApiError && signIn.error.status === 401
       ? 'auth.invalidCredentials'
-      : messageForError(signIn.error)
+      : signIn.error instanceof ApiError && signIn.error.status === 429
+        ? 'auth.tooManyAttempts'
+        : messageForError(signIn.error)
 
   return (
     <main className="centered">

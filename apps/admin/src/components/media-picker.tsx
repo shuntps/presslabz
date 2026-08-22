@@ -29,7 +29,6 @@ export function MediaPicker({
   const library = useMediaLibrary()
   const upload = useUploadMedia()
   const dialog = useRef<HTMLDialogElement>(null)
-  const [rejected, setRejected] = useState(false)
 
   const assets = assetsOf(library.data?.pages)
   // One answer for the whole library, so it is read off whichever page arrived.
@@ -50,6 +49,23 @@ export function MediaPicker({
     if (open && !element.open) element.showModal()
     if (!open && element.open) element.close()
   }, [open])
+
+  /*
+   * A finished upload's diagnostic belongs to the session it happened in:
+   * without this, closing the picker on an error and reopening it later
+   * greeted the person with a stale message about a file they had long moved
+   * on from. A **pending** mutation is never reset — reset() puts the
+   * mutation back to its initial state, it does not cancel the request, so
+   * resetting mid-flight would drop the pending state (re-enabling the field
+   * for a second POST) while the first upload lands anyway. So: settled and
+   * closed, clean up — including an upload that settles while the picker is
+   * closed, which this effect catches the moment it settles.
+   */
+  const settled = !upload.isPending && (upload.isError || upload.isSuccess)
+  const resetUpload = upload.reset
+  useEffect(() => {
+    if (!open && settled) resetUpload()
+  }, [open, settled, resetUpload])
 
   return (
     <dialog ref={dialog} className="picker" onClose={onClose} aria-label={t('media.pick')}>
@@ -73,11 +89,7 @@ export function MediaPicker({
               onChange={(event) => {
                 const file = event.target.files?.[0]
                 if (!file) return
-                setRejected(false)
-                upload.mutate(file, {
-                  onSuccess: onPick,
-                  onError: () => setRejected(true),
-                })
+                upload.mutate(file, { onSuccess: onPick })
                 event.target.value = ''
               }}
             />
@@ -89,9 +101,9 @@ export function MediaPicker({
         </button>
       </div>
 
-      {rejected && (
+      {upload.isError && (
         <p className="error" role="alert">
-          {t('media.rejected')}
+          {t(messageForError(upload.error))}
         </p>
       )}
 
