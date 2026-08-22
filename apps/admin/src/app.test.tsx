@@ -236,6 +236,24 @@ describe('what the sign-in screen says went wrong', () => {
     expect(alert.textContent).not.toMatch(/do not match/i)
   })
 
+  /*
+   * A 200 that is not a session. The password may well have been right, so
+   * "those do not match" would be an accusation about the person for a fault
+   * that is between two builds — and the half-payload behind it must not reach
+   * the shell either.
+   */
+  it('does not blame the credentials for an answer it cannot read', async () => {
+    const alert = await attemptSignIn(async () =>
+      Response.json({ user: { id: 'u1', role: 'administrator' } }, { status: 200 }),
+    )
+
+    expect(alert.textContent).toMatch(/does not understand/i)
+    expect(alert.textContent).not.toMatch(/do not match/i)
+    // Still on the sign-in screen rather than in a shell built from a
+    // fragment.
+    expect(screen.queryByRole('navigation')).toBeNull()
+  })
+
   it('says so when the attempt was rate limited', async () => {
     const alert = await attemptSignIn(async () =>
       Response.json({ error: 'too_many_requests' }, { status: 429 }),
@@ -325,5 +343,144 @@ describe('preferences that outlive the tab', () => {
     expect(screen.getByRole('button', { name: /sombre/i }).getAttribute('aria-pressed')).toBe(
       'true',
     )
+  })
+})
+
+/*
+ * A 200 whose body is not a session.
+ *
+ * The reported case is an API a version ahead of the interface, but anything
+ * on that address answering 200 lands here — a proxy's own page, another
+ * service, a build mid-deploy. Until the session call was parsed, the fields
+ * went straight into React and failed several components later as "undefined
+ * is not an object", about a component that was never at fault.
+ *
+ * The person is not signed out. Their session may be perfectly valid; what is
+ * broken is the protocol between the two builds, and dropping their cookie
+ * over it would lose their work and tell them the wrong thing.
+ */
+describe('a session response this build cannot read', () => {
+  /** The API renamed a field. Everything else about the answer is right. */
+  const renamedField = {
+    id: 'u1',
+    email: 'someone@presslabz.test',
+    display_name: 'Someone',
+    role: 'administrator',
+    locale: 'en',
+    themePreference: 'system',
+    capabilities: [],
+  }
+
+  /*
+   * Signed in as far as the server is concerned — the cookie is valid and the
+   * route answers 200. That is the case being described: the session is fine
+   * and the body is not.
+   */
+  function withSession(session: unknown) {
+    api = fakeApi({ session })
+    api.state.signedIn = true
+    vi.stubGlobal('fetch', api.fetchMock)
+  }
+
+  it('says the answer was not understood, not that something went wrong', async () => {
+    withSession(renamedField)
+    renderApp()
+
+    /*
+     * This is the assertion that would have failed before: the root screen
+     * knew "nothing answered" and said "Something went wrong" for every other
+     * case, including this one — the one case that names what to do about it.
+     */
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/does not understand/i)
+    expect(alert.textContent).not.toMatch(/something went wrong/i)
+  })
+
+  it('does not send the person back to the sign-in form', async () => {
+    withSession(renamedField)
+    renderApp()
+
+    await screen.findByRole('alert')
+    expect(screen.queryByLabelText(/password/i)).toBeNull()
+    expect(screen.queryByRole('navigation')).toBeNull()
+  })
+
+  it('offers a way back rather than a dead screen', async () => {
+    withSession(renamedField)
+    renderApp()
+
+    await screen.findByRole('alert')
+    expect(screen.getByRole('button', { name: /try again/i })).toBeDefined()
+  })
+
+  it('lets a retry succeed once the API answers properly', async () => {
+    withSession(renamedField)
+    renderApp()
+
+    await screen.findByRole('alert')
+
+    // The deploy finished: the same address now answers a session.
+    api = fakeApi()
+    api.state.signedIn = true
+    vi.stubGlobal('fetch', api.fetchMock)
+
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+    expect(await screen.findByRole('navigation')).toBeDefined()
+  })
+
+  it('puts nothing from the body into the query cache', async () => {
+    withSession(renamedField)
+    const { client } = renderApp()
+
+    await screen.findByRole('alert')
+
+    /*
+     * Not a partial user, not an empty object, not null — null is what a
+     * signed-out visitor is, and writing it here would be the sign-out this
+     * case must not perform. The query holds no data at all and carries the
+     * error instead.
+     */
+    expect(client.getQueryData(['session'])).toBeUndefined()
+    expect(client.getQueryState(['session'])?.status).toBe('error')
+  })
+
+  it('admits none of the body into the interface', async () => {
+    withSession({ ...renamedField, locale: 'de', themePreference: 'neon' })
+    renderApp()
+
+    await screen.findByRole('alert')
+
+    /*
+     * Half a payload is worse than none: a language nothing is translated into
+     * and a theme matching no palette, applied to the document and remembered
+     * in a cookie, would outlive the failed request and the tab.
+     */
+    expect(document.documentElement.getAttribute('lang')).not.toBe('de')
+    expect(document.documentElement.getAttribute('data-theme')).not.toBe('neon')
+    expect(document.cookie).not.toContain('neon')
+  })
+
+  it('is still an unreadable answer when the whole envelope is wrong', async () => {
+    // Not an object with a user at all — a proxy's error page, say.
+    withSession(undefined)
+    renderApp()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/does not understand/i)
+  })
+
+  /*
+   * The one case that keeps its own message: the address is the useful part of
+   * it, and no shared table can supply the address.
+   */
+  it('still names the API address when nothing answers at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
+    )
+    renderApp()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(API_URL)
   })
 })

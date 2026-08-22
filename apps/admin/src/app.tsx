@@ -1,6 +1,7 @@
 import { RouterProvider } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { API_URL, ApiError, NO_RESPONSE } from './lib/api.ts'
+import { messageForError } from './lib/errors.ts'
 import { useLocale } from './lib/i18n.tsx'
 import { useSession } from './lib/session.ts'
 import { useTheme } from './lib/theme.tsx'
@@ -52,10 +53,19 @@ export function App() {
      */
     const unreachable = error instanceof ApiError && error.status === NO_RESPONSE
 
+    /*
+     * Everything that is not "nothing answered" went through the shared error
+     * table, which this screen used to skip: it said "something went wrong"
+     * for every case, including the one that has a name — a 200 carrying a
+     * body this build cannot read, which means the interface and the API are
+     * different versions and is a different thing to do about it. The address
+     * message stays its own branch because it is the whole message and the URL
+     * is the useful part of it, which no shared table can supply.
+     */
     return (
       <main className="centered">
         <p className="error" role="alert">
-          {unreachable ? t('error.apiUnreachable', { url: API_URL }) : t('error.unexpected')}
+          {unreachable ? t('error.apiUnreachable', { url: API_URL }) : t(messageForError(error))}
         </p>
         {unreachable && <p className="muted">{t('error.apiUnreachableHint')}</p>}
         <button type="button" className="primary" onClick={() => void refetch()}>

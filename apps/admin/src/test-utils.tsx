@@ -11,6 +11,7 @@ import {
   type MediaSummary,
   mediaDocumentSchema,
   mediaPageSchema,
+  sessionResponseSchema,
   translationSetSchema,
 } from '@presslabz/core'
 import { LOCALE_COOKIE_NAME } from '@presslabz/i18n'
@@ -131,6 +132,15 @@ export interface FakeApiOptions {
    * to write one of its members, which is a fact about the group.
    */
   translationPermissions?: { create: boolean }
+  /**
+   * What the two session routes answer instead of a session.
+   *
+   * For the one case a schema cannot be used to build: a body the contract
+   * refuses. An API a version ahead, something else on the port, a proxy
+   * answering 200 with its own page. Sent exactly as given, and deliberately
+   * not validated on the way out — validating it is the thing under test.
+   */
+  session?: unknown
 }
 
 interface RequestRecord {
@@ -189,6 +199,9 @@ export function fakeApi(options: FakeApiOptions = {}) {
     )
   }
 
+  /** A session, checked against the contract the client parses it with. */
+  const sessionOf = (user: unknown) => json({ user }, 200, sessionResponseSchema)
+
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(String(input))
     const method = init.method ?? 'GET'
@@ -203,11 +216,12 @@ export function fakeApi(options: FakeApiOptions = {}) {
     })
 
     if (route === 'GET /auth/me') {
-      return state.signedIn ? json({ user: currentUser() }) : json({}, 401)
+      if (!state.signedIn) return json({}, 401)
+      return 'session' in options ? json(options.session) : sessionOf(currentUser())
     }
     if (route === 'POST /auth/login') {
       state.signedIn = true
-      return json({ user: currentUser() })
+      return 'session' in options ? json(options.session) : sessionOf(currentUser())
     }
     if (route === 'POST /auth/logout') {
       state.signedIn = false
@@ -395,17 +409,25 @@ export function forgetPreferences() {
   document.documentElement.removeAttribute('lang')
 }
 
+/**
+ * The cache is returned along with the render, for the tests whose subject is
+ * what did **not** get into it. A screen that looks right can still be sitting
+ * on a half-admitted payload that the next component to read it will trip over.
+ */
 export function renderApp(children?: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
 
-  return render(
-    <QueryClientProvider client={client}>
-      <LocaleProvider>
-        <ThemeProvider>{children ?? <App />}</ThemeProvider>
-      </LocaleProvider>
-    </QueryClientProvider>,
+  return Object.assign(
+    render(
+      <QueryClientProvider client={client}>
+        <LocaleProvider>
+          <ThemeProvider>{children ?? <App />}</ThemeProvider>
+        </LocaleProvider>
+      </QueryClientProvider>,
+    ),
+    { client },
   )
 }
 

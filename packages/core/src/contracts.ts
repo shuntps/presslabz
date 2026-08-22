@@ -1,6 +1,8 @@
 import { blockSchema } from '@presslabz/blocks'
 import { isLocale } from '@presslabz/i18n'
+import { THEME_PREFERENCES } from '@presslabz/tokens/preferences'
 import { z } from 'zod'
+import { CAPABILITIES, ROLES } from './capabilities.ts'
 import { CONTENT_STATUSES } from './content-types.ts'
 
 /**
@@ -212,3 +214,50 @@ export const pageQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
   cursor: cursorSchema.optional(),
 })
+
+/**
+ * Who is signed in, as the API answers it.
+ *
+ * The one response the admin took on trust. `apiFetch` has parsed every other
+ * body against a schema from this file since the day a renamed field reached
+ * React state and failed three components later as `undefined is not an
+ * object`; the session call was written before that and never went back. So a
+ * role, a language and a theme arrived as `string` and were used as domain
+ * values — the language reaching `Intl` as `undefined`, which formats dates in
+ * the browser's locale rather than the product's, and the theme reaching the
+ * `data-theme` attribute, which matches no palette and quietly renders as
+ * "system" while the control shows nothing selected.
+ *
+ * Each field is checked against the list that owns it, and no second list is
+ * written here: roles come from `ROLES`, the interface languages from the
+ * i18n catalogue, the themes from `THEME_PREFERENCES`.
+ *
+ * The **catalogue**, deliberately, and not `SUPPORTED_LOCALES`: this is the
+ * language the interface is drawn in, and an installation that serves English
+ * alone is still administered in French by whoever prefers it.
+ */
+export const sessionUserSchema = z.object({
+  id,
+  email: z.string().min(1),
+  displayName: z.string().min(1),
+  role: z.enum(ROLES),
+  locale,
+  themePreference: z.enum(THEME_PREFERENCES),
+  /**
+   * What the interface may hide, never what it may do. Every one of these is
+   * enforced again by the server on the request that uses it; this list only
+   * decides whether a control is drawn.
+   *
+   * Against the closed catalogue, like the three fields above it. As
+   * `z.string()` this accepted `made:up` — a capability no build declares —
+   * and handed it to the admin as something to draw a control from. The type
+   * that comes out is `Capability[]`, so a screen asking about a capability
+   * that does not exist stops compiling rather than quietly hiding a control
+   * forever.
+   */
+  capabilities: z.array(z.enum(CAPABILITIES)),
+})
+
+export type SessionUser = z.infer<typeof sessionUserSchema>
+
+export const sessionResponseSchema = z.object({ user: sessionUserSchema })

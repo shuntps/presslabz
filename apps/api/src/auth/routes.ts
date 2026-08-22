@@ -1,3 +1,4 @@
+import type { SessionUser } from '@presslabz/core'
 import {
   createSession,
   type Database,
@@ -5,12 +6,12 @@ import {
   findUserByEmail,
   updateUserPreferences,
 } from '@presslabz/db'
-import { isLocale } from '@presslabz/i18n'
-import { isThemePreference } from '@presslabz/tokens/preferences'
+import { LOCALES } from '@presslabz/i18n'
+import { THEME_PREFERENCES } from '@presslabz/tokens/preferences'
 import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
 import { equalizeTiming, verifyPassword } from './password.ts'
-import { toAuthenticatedUser } from './plugin.ts'
+import { type AuthenticatedUser, reportSessionCorrections, toAuthenticatedUser } from './plugin.ts'
 import {
   generateSessionToken,
   hashSessionToken,
@@ -24,10 +25,16 @@ const loginBody = z.object({
   password: z.string().min(1).max(1024),
 })
 
+/*
+ * `z.enum` over the constants rather than `z.string().refine(isLocale)`: both
+ * refuse the same bodies, but only the enum carries the literal union out the
+ * other side, so the repository's typed signature is checked here instead of
+ * being satisfied by a `string` that happens to be right.
+ */
 const preferencesBody = z
   .object({
-    locale: z.string().refine(isLocale).optional(),
-    themePreference: z.string().refine(isThemePreference).optional(),
+    locale: z.enum(LOCALES).optional(),
+    themePreference: z.enum(THEME_PREFERENCES).optional(),
   })
   .refine((body) => body.locale !== undefined || body.themePreference !== undefined, {
     message: 'Provide at least one preference',
@@ -83,6 +90,9 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
       reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(isProduction))
 
       const authenticated = toAuthenticatedUser(user)
+      // Signing in does not go through the onRequest hook — there is no
+      // session yet — so this is the second and last place that reports.
+      reportSessionCorrections(request.log, user)
       return reply.send({ user: serializeUser(authenticated) })
     },
   )
@@ -99,6 +109,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
   app.get('/auth/me', { onRequest: [app.requireAuth] }, async (request, reply) => {
     // requireAuth has already answered 401 when there is no user.
     if (!request.user) return
+
     return reply.send({ user: serializeUser(request.user) })
   })
 
@@ -115,15 +126,22 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
   })
 }
 
-function serializeUser(user: {
-  id: string
-  email: string
-  displayName: string
-  role: string
-  locale: string
-  themePreference: string
-  capabilities: ReadonlySet<string>
-}) {
+/**
+ * The account as the two session routes answer it.
+ *
+ * Typed `SessionUser` — the type inferred from the schema the admin parses
+ * these responses with — rather than an object literal that happens to match.
+ * The parameter used to widen every domain field to `string` and the
+ * capabilities to `ReadonlySet<string>`, which meant the compiler would have
+ * accepted a role the contract refuses and left the disagreement to be found
+ * at runtime by a browser. Both ends now describe the same thing, and the
+ * return type is checked against the contract rather than inferred from what
+ * this function happens to build.
+ *
+ * The explicit field list stays: a column added to `users` must not ship
+ * because somebody spread a row.
+ */
+function serializeUser(user: AuthenticatedUser): SessionUser {
   return {
     id: user.id,
     email: user.email,

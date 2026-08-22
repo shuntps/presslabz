@@ -94,7 +94,7 @@ describe.skipIf(!ready)('media routes', () => {
    * The database starts empty, so these are simply created. Ownership is the
    * thing under test, so there has to be more than one person.
    */
-  async function signIn(who: string, email: string, role = who) {
+  async function signIn(who: string, email: string, role: Role) {
     const user = await createUser(db, { email, displayName: who, role, passwordHash: null })
     const token = generateSessionToken()
     await createSession(db, hashSessionToken(token), user.id, new Date(Date.now() + 3_600_000))
@@ -123,11 +123,11 @@ describe.skipIf(!ready)('media routes', () => {
     handle = createDb(scratch.url, { maxConnections: 5 })
     db = handle.db
 
-    await signIn('subscriber', 'mt-subscriber@presslabz.test')
-    await signIn('administrator', 'mt-admin@presslabz.test')
-    await signIn('author', 'mt-author@presslabz.test')
-    await signIn('editor', 'mt-editor@presslabz.test')
-    await signIn('contributor', 'mt-contributor@presslabz.test')
+    await signIn('subscriber', 'mt-subscriber@presslabz.test', 'subscriber')
+    await signIn('administrator', 'mt-admin@presslabz.test', 'administrator')
+    await signIn('author', 'mt-author@presslabz.test', 'author')
+    await signIn('editor', 'mt-editor@presslabz.test', 'editor')
+    await signIn('contributor', 'mt-contributor@presslabz.test', 'contributor')
     // A second author, to ask the question ownership exists to answer.
     await signIn('other', 'mt-other@presslabz.test', 'author')
   }, 60_000)
