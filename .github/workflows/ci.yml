@@ -110,6 +110,13 @@ jobs:
       - name: Manifests
         run: pnpm lint:manifests
 
+      # Files, exports and dependencies nothing imports. Pinned through the
+      # catalogue like every other tool, so the version that audits a PR is
+      # the one the lockfile names rather than whatever the registry serves
+      # that day.
+      - name: Unused code
+        run: pnpm lint:unused
+
       - name: Typecheck
         run: pnpm typecheck
 

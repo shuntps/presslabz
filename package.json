@@ -16,7 +16,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
-    "lint:unused": "pnpm dlx knip@6",
+    "lint:unused": "knip",
     "lint:manifests": "node --test \"scripts/**/*.test.mjs\"",
     "e2e": "pnpm --filter @presslabz/e2e e2e",
     "lint": "biome check .",
@@ -38,6 +38,7 @@
   "devDependencies": {
     "@biomejs/biome": "catalog:",
     "@types/node": "catalog:",
+    "knip": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:"
   }

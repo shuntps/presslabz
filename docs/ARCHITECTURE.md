@@ -699,7 +699,7 @@ It is plain ESM run by `node --test`: no dependency, no workspace of its own, no
 
 ## Nothing unused stays
 
-**An export nothing imports is not an API, it is a claim.** `pnpm lint:unused` reports files, exports and dependencies that nothing reaches — it needs no installation, and it is the check that found two functions nobody called, seventeen exports narrowed back to their own module, four dependencies declared and never imported, and ten message keys in two languages that no screen renders. A constant that names a policy stays where it is; what goes is the `export` in front of it, because the surface should say what is actually used and can widen again the day something needs it.
+**An export nothing imports is not an API, it is a claim.** `pnpm lint:unused` reports files, exports and dependencies that nothing reaches — knip, pinned through the catalogue and run in CI like every other check, and the audit that found two functions nobody called, seventeen exports narrowed back to their own module, four dependencies declared and never imported, and ten message keys in two languages that no screen renders. A constant that names a policy stays where it is; what goes is the `export` in front of it, because the surface should say what is actually used and can widen again the day something needs it.
 
 `knip.json` declares one thing and one only: the browser suite's sign-in setup is an entry point, because Playwright reaches it through `testMatch` and nothing imports it. There is no list of dependencies to overlook. A second entry did exist, said to be about a subpath the tool could not resolve, and it was not — `@presslabz/tokens` was declared twice in the default theme, as a dependency and again as a development one, and the ignore was hiding the duplicate rather than the duplicate being removed. The package belongs in development alone: the theme's own stylesheet never imports it, `@presslabz/theme-kit` is what brings the token layer into a page, and only the theme's test reads the values back.
 
@@ -754,7 +754,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm test` | Vitest across all workspaces |
 | `pnpm e2e` | Playwright, in a real browser, against its own database and its own pair of servers. Not part of `pnpm test`: it needs the service containers running |
 | `pnpm test:coverage` | The same suites with a coverage report. Read, never gated — see "What the tests are for" |
-| `pnpm lint:unused` | Files, exports and dependencies nothing imports. Run it before adding anything; it is how the last sweep found ten dead translations and two functions nobody called |
+| `pnpm lint:unused` | Files, exports and dependencies nothing imports. Runs in CI, and worth running before adding anything; it is how the last sweep found ten dead translations and two functions nobody called |
 | `pnpm lint:manifests` | The invariants every `package.json` and the catalogue have to keep: a package declared once, a version pointed at rather than written, no catalogue entry nobody asks for, a workspace that states what it is. Runs in CI, needs nothing started |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |
 | `node apps/api/scripts/measure-upload-burst.ts [n] [passes]` | A measurement, by hand and never in CI: what an upload burst costs between the gate and the encoder. Client and server in separate processes; reports medians and ranges |
