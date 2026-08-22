@@ -29,6 +29,8 @@ import { isLocale } from '@presslabz/i18n'
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { AuthenticatedUser } from '../auth/plugin.ts'
+import { fixedFailure } from '../http/errors.ts'
+import { type Admission, RETRY_AFTER_SECONDS, type Slot, UploadCapacityError } from './admission.ts'
 import { abandonObjects } from './orphans.ts'
 import {
   isAcceptedInputType,
@@ -40,44 +42,15 @@ import {
 } from './process.ts'
 import { deleteObjects, mediaUrl, putObject } from './storage.ts'
 
-/**
- * How many uploads may be decoded and re-encoded at once.
- *
- * Each one decodes a full-size image and encodes two more, and libvips uses
- * its own threads for that — so concurrent uploads multiply the memory a
- * single one costs, and nothing about this route bounded it. Two is enough to
- * keep a single slow encode from stalling everyone and low enough that a burst
- * is slow rather than fatal.
- */
-const MAX_CONCURRENT_ENCODES = 2
-
-/**
- * A queue, not a rejection. An upload that arrives during a burst waits its
- * turn; answering 503 to somebody who did nothing wrong would push the problem
- * into their hands, and the request timeout already bounds the wait.
- */
-function createQueue(limit: number) {
-  let running = 0
-  const waiting: (() => void)[] = []
-
-  return async function run<T>(work: () => Promise<T>): Promise<T> {
-    if (running >= limit) await new Promise<void>((resolve) => waiting.push(resolve))
-    running += 1
-
-    try {
-      return await work()
-    } finally {
-      running -= 1
-      waiting.shift()?.()
-    }
-  }
-}
-
-const encodingQueue = createQueue(MAX_CONCURRENT_ENCODES)
-
 interface MediaRoutesOptions {
   db: Database
   hooks: CoreHooks
+  /**
+   * The upload gate, built by the application rather than by this module. One
+   * per instance: two applications in one process must not share counters or
+   * block one another, which a module-level queue did.
+   */
+  admission: Admission
 }
 
 /**
@@ -168,7 +141,10 @@ function serializeMedia(actor: Actor, row: MediaRow) {
   }
 }
 
-export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, { db, hooks }) => {
+export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (
+  app,
+  { db, hooks, admission },
+) => {
   app.get('/media', { onRequest: [requireMediaOperation('read')] }, async (request, reply) => {
     if (!request.user) return
     const actor = actorOf(request.user)
@@ -213,6 +189,79 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
   app.post('/media', { onRequest: [requireMediaOperation('upload')] }, async (request, reply) => {
     if (!request.user) return
 
+    /*
+     * Before `request.file()`, not merely before `toBuffer()`: the moment the
+     * multipart parser is asked for a part it begins retaining the body, and
+     * the whole point of this gate is that a request waiting for a turn holds
+     * no upload. Authentication has already run in `onRequest`, so a request
+     * with no business here spends no capacity.
+     */
+    let slot: Slot
+    try {
+      slot = await admission.acquire(request.signal)
+    } catch (error) {
+      if (error instanceof UploadCapacityError) {
+        /*
+         * Temporary overload, said the way RFC 9110 says it: 503 with
+         * Retry-After. The body is the boundary's own fixed contract plus one
+         * closed reason — the interface tells this from any other 503 and says
+         * "try again in a moment" instead of "the server is broken". Nothing
+         * here comes from the exception; `kind` stays in the log.
+         */
+        /*
+         * The request's logger, not the application's, so the line carries the
+         * same `reqId` the client was handed in the body — a refusal somebody
+         * reports and a refusal in the log can then be the same one.
+         *
+         * One line per refusal, at warn. The global limiter bounds it **per
+         * client key** — 300 requests a minute — which bounds one caller and
+         * not the total: many keys make many lines, and a distributed burst is
+         * exactly the situation that produces both. It is still one line per
+         * refusal, because each answers a question the count alone cannot —
+         * whether the server was full or the client waited too long — and the
+         * refusals are already rare by construction. If that ever stops being
+         * true, sampling belongs here rather than silence.
+         */
+        request.log.warn(
+          { kind: error.kind, active: admission.active, waiting: admission.waiting },
+          'refused an upload: no capacity',
+        )
+
+        return reply
+          .code(503)
+          .header('retry-after', String(RETRY_AFTER_SECONDS))
+          .send({ ...fixedFailure(503, request.id), reason: 'upload-capacity' })
+      }
+
+      /*
+       * The one case where answering nothing is right: the client is really
+       * gone. Confirmed against the signal itself rather than guessed from the
+       * error's type — Fastify aborts this signal on a disconnect and on
+       * handlerTimeout, and either way there is nobody left to answer.
+       * Anything else is a defect and belongs to the error boundary.
+       */
+      if (request.signal.aborted && error === request.signal.reason) return
+      throw error
+    }
+
+    /*
+     * Held until the buffers are gone — the input and the encoded renditions
+     * alike — which means through the object writes that consume them, not
+     * merely through `processImage`.
+     */
+    try {
+      return await handleUpload(request, reply)
+    } finally {
+      slot.release()
+    }
+  })
+
+  async function handleUpload(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<undefined | FastifyReply> {
+    if (!request.user) return
+
     const file = await request.file({ limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } })
     if (!file) return reply.code(400).send({ error: 'no_file' })
 
@@ -231,14 +280,10 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
 
     let processed: Awaited<ReturnType<typeof processImage>>
     try {
-      /*
-       * One re-encode at a time beyond a small number of them. Each upload
-       * decodes a full-size image and encodes two more, and libvips does that
-       * with its own threads — so a handful of concurrent uploads is a
-       * multiple of the memory a single one costs, and nothing about the
-       * route bounded it. The queue makes a burst slow instead of fatal.
-       */
-      processed = await encodingQueue(() => processImage(input))
+      // Unqueued here on purpose: the admission gate above is the only
+      // semaphore, and taking it twice is how a request waits for a permit
+      // only it could return.
+      processed = await processImage(input)
     } catch (error) {
       if (error instanceof UnsupportedImageError) {
         return reply.code(415).send({ error: 'unsupported_media_type', reason: error.refusal })
@@ -298,7 +343,7 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (app, {
       await abandonObjects(db, id, written, app.log)
       throw error
     }
-  })
+  }
 
   /**
    * Alt text is the only thing about an asset a person edits after upload.

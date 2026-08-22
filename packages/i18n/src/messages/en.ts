@@ -146,6 +146,7 @@ export const en = {
   'error.malformedResponse':
     'The API answered with something this interface does not understand. It may be running a different version.',
   'error.server': 'The server ran into a problem. Nothing you did caused it.',
+  'error.busy': 'The server is already handling as many uploads as it can. Try again in a moment.',
   'content.loadMore': 'Load more',
   'content.shownOf': 'Showing {shown} of {total}',
   'media.loadMore': 'Load more',

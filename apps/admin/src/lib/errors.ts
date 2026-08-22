@@ -24,7 +24,10 @@ import { ApiError, NO_RESPONSE } from './api.ts'
  *   too many attempts are four different problems with four different next
  *   steps.
  * - **Broken over there.** A 5xx is not something the reader can fix, and
- *   saying so is more honest than inviting them to try again forever.
+ *   saying so is more honest than inviting them to try again forever. With one
+ *   exception the server names explicitly: an upload refused because the API
+ *   is already carrying as many as it can is temporary, and "try again in a
+ *   moment" is both true and actionable.
  */
 export function messageForError(error: unknown): MessageKey {
   if (!(error instanceof ApiError)) return 'error.unexpected'
@@ -51,6 +54,14 @@ export function messageForError(error: unknown): MessageKey {
       return conflictMessage(error.reason)
     case 429:
       return 'auth.tooManyAttempts'
+    case 503:
+      /*
+       * The one 5xx somebody can do something about: wait. The server says so
+       * with a closed reason rather than a message, so this is the only 503
+       * that reads differently — any other one is still "broken over there",
+       * because it is.
+       */
+      return error.reason === 'upload-capacity' ? 'error.busy' : 'error.server'
     default:
       return error.status >= 500 ? 'error.server' : 'error.unexpected'
   }

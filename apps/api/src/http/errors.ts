@@ -157,8 +157,14 @@ function normalizeStatus(value: unknown): number {
  * does not say. Whether anything is actually retried stays the client's
  * decision — it depends on the method, on whether it is idempotent, and on the
  * client's own policy. The signal is preserved; no safe replay is promised.
+ *
+ * Exported so a route that answers a fixed 5xx of its own — the object store
+ * being full of uploads is one — builds the same body as this boundary does,
+ * from the same table, rather than assembling a lookalike beside it. It takes
+ * a status and a request id and reads nothing else: no exception, no message,
+ * nothing a caller could smuggle a string through.
  */
-function genericFor(statusCode: number, requestId: string): Failure {
+export function fixedFailure(statusCode: number, requestId: string): Failure {
   const fallback = statusCode < CLIENT_ERROR_CEILING ? 'error' : 'internal'
   return { statusCode, error: GENERIC[statusCode] ?? fallback, requestId }
 }
@@ -176,7 +182,7 @@ export function registerErrorHandling(app: FastifyInstance): void {
       return classify(error, request, reply)
     } catch (failure) {
       recordHandlerFailure(request, failure)
-      return reply.code(500).send(genericFor(500, request.id))
+      return reply.code(500).send(fixedFailure(500, request.id))
     }
   })
 
@@ -231,7 +237,7 @@ function classify(error: FastifyError, request: FastifyRequest, reply: FastifyRe
   if (error instanceof RateLimitStoreUnavailableError) {
     // 503 written here, not read: the property is as mutable as any other, and
     // a store outage answering 200 was measured.
-    return reply.code(503).send(genericFor(503, request.id))
+    return reply.code(503).send(fixedFailure(503, request.id))
   }
 
   /*
@@ -286,7 +292,7 @@ function classify(error: FastifyError, request: FastifyRequest, reply: FastifyRe
     'request failed',
   )
 
-  return reply.code(statusCode).send(genericFor(statusCode, request.id))
+  return reply.code(statusCode).send(fixedFailure(statusCode, request.id))
 }
 
 /**
