@@ -235,7 +235,17 @@ Encoder cost varies enormously with content: measured, one 2400×1600 image of *
 
 **The bucket and the database cannot share a transaction, so the gap is recorded rather than hoped away.** Objects are written before the row that names them and deleted after it, which means either half can fail with the other already done. Every key an upload wrote is remembered so a failed insert can be undone; every key a deleted row named is written to `media_orphans` **inside the transaction that removes the row**, then removed from the store and forgotten. A store that refuses keeps the record, with the attempt count and the last error on it, and a background sweep finishes what the request could not. That is what makes a crash between the two recoverable instead of a silent leak — the previous behaviour left bytes nothing referenced, nothing listed, and nothing would ever try again.
 
-**Deleting an asset asks what uses it.** The reference query runs against the GIN indexes on `blocks` and `meta` rather than reading every document, and a used asset is refused with 409 and the documents named — "in use" is not actionable, "in use by these three" is. Without it a published article lost its illustration because somebody tidied the library, and the loss showed up as a hole on the site rather than as an error anybody saw.
+**A reference to an asset is a row the database can hold to.** The references themselves live in JSONB — an image block names one, a post's metadata names a featured one — and JSONB cannot carry a foreign key. So two things were possible and both were silent: a document could name an asset that had never existed, and deleting an asset asked a question and acted on the answer in a second transaction, which a save committing in between made wrong. `content_media` mirrors every live reference as rows with `ON DELETE RESTRICT` on the asset and `ON DELETE CASCADE` on the document. Whichever of a save and a deletion commits first, the other is refused rather than allowed to disagree with it — a write naming a missing asset gets **422 `media-missing`** with the block or metadata key named, a deletion of one still in use gets **409 `media-in-use`** with the documents named.
+
+**Live state only.** There is no revision column and there will not be one: with `content_id` alone the table cannot represent `content_revisions`. A revision keeps the identifiers it was written with, exactly as it keeps a `parentId` whose document may since have gone, and restoring one that names a deleted asset is refused where somebody can act on it. A third option exists — keeping deleted assets as tombstones — and is not taken here: it would need a retention and collection cycle of its own.
+
+**The mirror is kept by the repositories, not by a trigger.** What counts as a reference is declared in TypeScript: the block vocabulary states, per block type, whether it names an asset, and each content type declares `mediaIn` — required, even when it always returns nothing. A trigger would have to re-implement both in PL/pgSQL and could not read a declaration a module contributed. So `createContent` and `updateContent` maintain the rows inside their own transaction, by difference — a save that changes a title touches no reference row — and one statement per added reference in sorted order, because that order is the order row locks are taken in. The seam that keeps a third write path from appearing is that `@presslabz/db` no longer exports the table objects: a route cannot assemble its own `update(contents)`. Raw SQL could still go around it; that is a seam, not a wall.
+
+**Applying the migration and building the mirror are two events, and the second is remembered.** `media_reference_sync` holds one row. A database that already had documents when the table appeared is `pending`; one that was empty — a fresh install, a scratch database a test just made — is `ready`, because there is nothing to mirror. **The API refuses to start while it is `pending`**, reading that single row rather than scanning anything. `pnpm db:upgrade` is the command an installation runs: migrations, then `db:reconcile`, which diagnoses first and writes nothing at all if a document names an asset that is gone — reporting the documents and the places — and otherwise fills the table and flips the marker in one transaction. Interrupt it and nothing is left behind.
+
+**Upgrading an installation that already holds documents** means stopping every instance that can write, installing the new code, running `pnpm db:upgrade`, and starting only the new instances once it reports success. There is no rolling upgrade that closes the window: an old instance does not know the table, and a mirror it never maintained is a mirror the foreign keys cannot protect.
+
+**Deleting an asset still asks what uses it, and now asks the same set the constraint enforces.** The query reads `content_media` instead of two JSONB containment predicates, so what a refusal reports and what the database refuses for cannot disagree, and the metadata key is no longer a name the query has to know. The check is informative: the refusal belongs to the constraint, and a document created between the question and the answer is caught there and translated to the same 409.
 
 A block stores a `mediaId`, never a URL, so moving a file or fixing its alt text does not mean rewriting every document that uses it. Alt text is a per-locale JSONB map on the media row rather than one row per language — the objections that rule out per-field translation for documents do not apply to a short string that never publishes on its own. The caption belongs to one *use* of an image, so it lives on the block. Who may write that alt text is covered under permissions below: it belongs to whoever uploaded the asset.
 
@@ -719,7 +729,7 @@ Requires Node 24.12+, pnpm 11+ and Docker. First run:
 cp .env.example .env
 pnpm install
 pnpm services:up      # Postgres, Valkey, object storage — waits until all are healthy
-pnpm db:migrate
+pnpm db:upgrade         # migrations, then the media reference mirror
 pnpm storage:init      # creates the media bucket, once — the API never does
 pnpm seed             # first administrator, from SEED_ADMIN_* in .env
 pnpm seed:demo        # optional: fixture posts and pages, for development
@@ -742,7 +752,9 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm seed:demo` | Fixture content in both languages — published, draft, scheduled and a nested page. Idempotent by slug, and refuses to run in production |
 | `pnpm seed:bulk` | Volume instead of particulars: twenty-five posts across every status, some translated, six to twenty-three blocks each, and real images through the real pipeline. Deterministic, and idempotent by slug |
 | `pnpm db:generate` | Write a migration from the schema diff |
-| `pnpm db:migrate` | Apply pending migrations |
+| `pnpm db:upgrade` | The whole upgrade: migrations, then the media reference reconciliation. **This is the command an installation runs** |
+| `pnpm db:migrate` | The schema half alone. A primitive `db:upgrade` calls, and what a test uses to make an empty scratch database |
+| `pnpm db:reconcile` | Build the relational mirror of every media reference and mark the installation ready. Idempotent; refuses, and names them, if a document points at media that is gone |
 | `pnpm storage:init` | Create the media bucket and, for a bucket it creates itself, give it the minimal public-read policy. Idempotent, and the only thing in PressLabz that writes a bucket policy |
 | `pnpm db:studio` | Browse the database |
 | `pnpm services:up` / `:down` / `:reset` | Local service containers; `:reset` wipes the volumes |

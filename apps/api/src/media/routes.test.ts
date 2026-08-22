@@ -5,6 +5,7 @@ import {
   MEDIA_OPERATIONS,
   type MediaPage,
   mediaPageSchema,
+  postType,
   type Role,
 } from '@presslabz/core'
 import {
@@ -83,6 +84,8 @@ describe.skipIf(!ready)('media routes', () => {
    * failed to load".
    */
   let storage: typeof import('./storage.ts')
+  /** Documents this suite made, removed before the assets they reference. */
+  const documented: string[] = []
   const cookies: Record<string, string> = {}
   const ids: Record<string, string> = {}
   const created: string[] = []
@@ -135,6 +138,15 @@ describe.skipIf(!ready)('media routes', () => {
    * scratch database cannot take those with it.
    */
   afterEach(async () => {
+    /*
+     * The documents first. An asset a document still references cannot be
+     * deleted at all now — `content_media` holds a row and the foreign key
+     * refuses — so a teardown that removed the asset alone would be asking the
+     * database to break its own guarantee. Deleting the document takes its
+     * reference rows with it, by cascade.
+     */
+    for (const id of documented.splice(0)) await deleteContent(db, id)
+
     for (const id of created.splice(0)) {
       const row = await deleteMedia(db, id)
       if (!row) continue
@@ -651,8 +663,8 @@ describe.skipIf(!ready)('media routes', () => {
      * answers for both.
      */
     async function documentUsing(media: string, where: 'blocks' | 'meta', title: string) {
-      return createContent(db, {
-        type: 'post',
+      const row = await createContent(db, {
+        type: postType,
         locale: 'en',
         authorId: null,
         state: {
@@ -667,6 +679,9 @@ describe.skipIf(!ready)('media routes', () => {
           publishedAt: new Date(),
         },
       })
+
+      documented.push(row.id)
+      return row
     }
 
     /*
@@ -691,6 +706,7 @@ describe.skipIf(!ready)('media routes', () => {
       expect(response.json().references).toHaveLength(1)
       expect(response.json().references[0]).toMatchObject({
         title: 'An article with a picture',
+        // The API answers with the type's *name*, which is what a client sees.
         type: 'post',
         locale: 'en',
         where: ['blocks'],

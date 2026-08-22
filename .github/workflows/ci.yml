@@ -92,7 +92,7 @@ jobs:
           docker logs storage >&2
           exit 1
 
-      # An installation step, like db:migrate below, and no longer something the
+      # An installation step, like db:upgrade below, and no longer something the
       # API does at boot: creating a bucket and writing its policy are things
       # an installation does once, not something an ordinary restart re-sends
       # over whatever an operator has configured.
@@ -123,8 +123,8 @@ jobs:
       # Before the tests, not after: the repository suite runs against the
       # real database, because the guarantees worth asserting there are
       # properties of a transaction and do not survive a fake.
-      - name: Apply migrations
-        run: pnpm db:migrate
+      - name: Apply migrations and reconcile media references
+        run: pnpm db:upgrade
 
       - name: Test
         run: pnpm test

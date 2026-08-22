@@ -34,10 +34,10 @@ function document(overrides: Record<string, unknown> = {}) {
 
 describe('defineContentType', () => {
   it('refuses a name that could not sit in a URL or the type column', () => {
-    expect(() => defineContentType({ name: 'Post' })).toThrow()
-    expect(() => defineContentType({ name: 'my post' })).toThrow()
-    expect(() => defineContentType({ name: '2post' })).toThrow()
-    expect(() => defineContentType({ name: '' })).toThrow()
+    expect(() => defineContentType({ name: 'Post', mediaIn: () => [] })).toThrow()
+    expect(() => defineContentType({ name: 'my post', mediaIn: () => [] })).toThrow()
+    expect(() => defineContentType({ name: '2post', mediaIn: () => [] })).toThrow()
+    expect(() => defineContentType({ name: '', mediaIn: () => [] })).toThrow()
   })
 
   it('accepts a whole document', () => {
@@ -82,6 +82,7 @@ describe('defineContentType', () => {
     const strict = defineContentType({
       name: 'release',
       meta: z.object({ version: z.string() }),
+      mediaIn: () => [],
     })
 
     const { meta: _dropped, ...withoutMeta } = document()
@@ -192,6 +193,7 @@ describe('canPerform', () => {
     const locked = defineContentType({
       name: 'setting-page',
       access: { update: { any: 'settings:manage' } },
+      mediaIn: () => [],
     })
     expect(canPerform(locked, 'update', actor('editor'), { authorId: alice })).toBe(false)
     expect(canPerform(locked, 'update', actor('administrator'), { authorId: bob })).toBe(true)
@@ -633,17 +635,23 @@ describe('createContentTypeRegistry', () => {
 
 describe('public base path', () => {
   it('defaults to the type name, which can never collide', () => {
-    expect(defineContentType({ name: 'recipe' }).basePath).toBe('recipe')
+    expect(defineContentType({ name: 'recipe', mediaIn: () => [] }).basePath).toBe('recipe')
   })
 
   it('takes the declared segment, including the locale root', () => {
-    expect(defineContentType({ name: 'post', basePath: 'blog' }).basePath).toBe('blog')
-    expect(defineContentType({ name: 'page', basePath: '' }).basePath).toBe('')
+    expect(defineContentType({ name: 'post', basePath: 'blog', mediaIn: () => [] }).basePath).toBe(
+      'blog',
+    )
+    expect(defineContentType({ name: 'page', basePath: '', mediaIn: () => [] }).basePath).toBe('')
   })
 
   it('refuses a base path that is not a single path segment', () => {
-    expect(() => defineContentType({ name: 'post', basePath: 'blog/posts' })).toThrow(/base path/)
-    expect(() => defineContentType({ name: 'post', basePath: 'Blog' })).toThrow(/base path/)
+    expect(() =>
+      defineContentType({ name: 'post', basePath: 'blog/posts', mediaIn: () => [] }),
+    ).toThrow(/base path/)
+    expect(() => defineContentType({ name: 'post', basePath: 'Blog', mediaIn: () => [] })).toThrow(
+      /base path/,
+    )
   })
 
   /*
@@ -652,15 +660,15 @@ describe('public base path', () => {
    * different content on different installations.
    */
   it('refuses two types claiming one segment', () => {
-    const first = defineContentType({ name: 'post', basePath: 'blog' })
-    const second = defineContentType({ name: 'article', basePath: 'blog' })
+    const first = defineContentType({ name: 'post', basePath: 'blog', mediaIn: () => [] })
+    const second = defineContentType({ name: 'article', basePath: 'blog', mediaIn: () => [] })
 
     expect(() => createContentTypeRegistry([first, second])).toThrow(/both claim "\/blog"/)
   })
 
   it('refuses two types claiming the locale root', () => {
-    const first = defineContentType({ name: 'page', basePath: '' })
-    const second = defineContentType({ name: 'landing', basePath: '' })
+    const first = defineContentType({ name: 'page', basePath: '', mediaIn: () => [] })
+    const second = defineContentType({ name: 'landing', basePath: '', mediaIn: () => [] })
 
     expect(() => createContentTypeRegistry([first, second])).toThrow(/both claim the locale root/)
   })

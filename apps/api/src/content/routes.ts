@@ -37,6 +37,7 @@ import {
   listRevisions,
   listSiblingsAcrossLocales,
   listTranslations,
+  MediaReferenceError,
   stateOfRevision,
   updateContent,
 } from '@presslabz/db'
@@ -148,6 +149,24 @@ async function replyForWriteError(error: unknown, reply: FastifyReply): Promise<
   if (error instanceof ContentForbiddenError) {
     return reply.code(403).send({ error: 'forbidden', reason: error.reason })
   }
+  /*
+   * The same family as `parent-not-found`, and answered the same way: the
+   * request is well formed and names something that is not there. The
+   * references are details — the refusal is the database's and stands whether
+   * or not the list could be filled in after the rollback.
+   */
+  if (error instanceof MediaReferenceError) {
+    return reply.code(422).send({
+      error: 'unprocessable',
+      reason: error.reason,
+      references: error.references.map((reference) => ({
+        mediaId: reference.mediaId,
+        source: reference.source,
+        at: reference.at,
+      })),
+    })
+  }
+
   if (error instanceof ContentConflictError) {
     /*
      * 422 when the request names something that cannot be what it is being
@@ -630,9 +649,9 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       const row = await createContent(
         db,
         translationGroupId === undefined
-          ? { type: type.name, locale, authorId: request.user.id, state }
+          ? { type, locale, authorId: request.user.id, state }
           : {
-              type: type.name,
+              type,
               locale,
               translationGroupId,
               authorId: request.user.id,

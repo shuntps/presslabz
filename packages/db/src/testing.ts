@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 import type { Sql } from 'postgres'
 import type { Database } from './client.ts'
+import { mediaReferenceSync } from './schema/content-media.ts'
 import { contents } from './schema/contents.ts'
 
 /**
@@ -273,4 +274,37 @@ export async function backendsWaitingOnLocks(db: Database): Promise<number> {
   `)
 
   return Number((rows as unknown as { waiting: number }[])[0]?.waiting ?? 0)
+}
+
+/**
+ * Forces the media reference marker, for the suites that are about what
+ * happens on either side of it.
+ *
+ * Here rather than in those suites because setting it means reaching for
+ * drizzle and the schema, and the API's tests have neither — the same reason
+ * `holdContentRow` lives here.
+ */
+export async function setMediaReferenceSyncState(
+  db: Database,
+  state: 'pending' | 'ready',
+): Promise<void> {
+  await db.update(mediaReferenceSync).set({ state }).where(eq(mediaReferenceSync.id, true))
+}
+
+/**
+ * How many backends are connected to this database.
+ *
+ * For the suites that assert a failure path let go of what it had opened. A
+ * refusal that throws while holding its pool leaks one backend per attempt,
+ * and the attempts happen at boot, in front of somebody restarting the process
+ * to see whether it takes this time.
+ */
+export async function openBackends(db: Database): Promise<number> {
+  const rows = await db.execute(sql`
+    select count(*)::int as open
+      from pg_stat_activity
+     where datname = current_database()
+  `)
+
+  return Number((rows as unknown as { open: number }[])[0]?.open ?? 0)
 }

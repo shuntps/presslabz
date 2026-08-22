@@ -24,6 +24,8 @@
     "format": "biome format --write .",
     "db:generate": "pnpm --filter @presslabz/db generate",
     "db:migrate": "pnpm --filter @presslabz/db migrate",
+    "db:reconcile": "pnpm --filter @presslabz/api db:reconcile",
+    "db:upgrade": "pnpm db:migrate && pnpm db:reconcile",
     "db:studio": "pnpm --filter @presslabz/db studio",
     "storage:init": "pnpm --filter @presslabz/api storage:init",
     "seed": "pnpm --filter @presslabz/api seed",

@@ -1,4 +1,10 @@
-import { CONTENT_STATUSES, type ContentStatus, isPubliclyVisible } from '@presslabz/core'
+import {
+  type AnyContentType,
+  CONTENT_STATUSES,
+  type ContentStatus,
+  defineContentType,
+  isPubliclyVisible,
+} from '@presslabz/core'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
@@ -47,7 +53,7 @@ describe.skipIf(!ready)('public content reads', () => {
   })
 
   /** Its own type per group of tests, so no two of them can see each other. */
-  async function open(type: string, overrides: Partial<ContentState>): Promise<ContentRow> {
+  async function open(type: AnyContentType, overrides: Partial<ContentState>): Promise<ContentRow> {
     return createContent(db, {
       type,
       locale: 'en',
@@ -58,6 +64,7 @@ describe.skipIf(!ready)('public content reads', () => {
 
   describe('visibility', () => {
     const TYPE = 'public-matrix'
+    const TYPE_DEF = defineContentType({ name: TYPE, mediaIn: () => [] })
     const dates: readonly (Date | null)[] = [PAST, NOW, FUTURE, null]
     const fixtures: { row: ContentRow; status: ContentStatus; publishedAt: Date | null }[] = []
 
@@ -65,7 +72,7 @@ describe.skipIf(!ready)('public content reads', () => {
       for (const status of CONTENT_STATUSES) {
         for (const [index, publishedAt] of dates.entries()) {
           const row = await createContent(db, {
-            type: TYPE,
+            type: TYPE_DEF,
             locale: 'en',
             authorId: null,
             state: state({
@@ -125,18 +132,23 @@ describe.skipIf(!ready)('public content reads', () => {
 
   describe('scoping', () => {
     const TYPE = 'public-scope'
+    const TYPE_DEF = defineContentType({ name: TYPE, mediaIn: () => [] })
 
     beforeAll(async () => {
-      const english = await open(TYPE, { slug: 'shared', status: 'published', publishedAt: PAST })
+      const english = await open(TYPE_DEF, {
+        slug: 'shared',
+        status: 'published',
+        publishedAt: PAST,
+      })
       await createContent(db, {
-        type: TYPE,
+        type: TYPE_DEF,
         locale: 'fr',
         translationGroupId: english.translationGroupId,
         authorizeJoin: () => true,
         authorId: null,
         state: state({ slug: 'partage', title: 'Partagé', status: 'draft' }),
       })
-      await open(TYPE, { slug: 'other-draft', status: 'draft' })
+      await open(TYPE_DEF, { slug: 'other-draft', status: 'draft' })
     })
 
     it('does not answer one locale with another locale row', async () => {
@@ -163,11 +175,12 @@ describe.skipIf(!ready)('public content reads', () => {
 
   describe('pagination', () => {
     const TYPE = 'public-pages'
+    const TYPE_DEF = defineContentType({ name: TYPE, mediaIn: () => [] })
     const SIZE = 7
 
     beforeAll(async () => {
       for (let index = 0; index < SIZE; index += 1) {
-        await open(TYPE, {
+        await open(TYPE_DEF, {
           slug: `page-${index}`,
           title: `Page ${index}`,
           status: 'published',
@@ -207,16 +220,17 @@ describe.skipIf(!ready)('public content reads', () => {
 
   describe('every published path', () => {
     const TYPE = 'public-paths'
+    const TYPE_DEF = defineContentType({ name: TYPE, mediaIn: () => [] })
 
     it('reports each document once, with the path it is reachable at', async () => {
-      const root = await open(TYPE, { slug: 'guide', status: 'published', publishedAt: PAST })
-      await open(TYPE, {
+      const root = await open(TYPE_DEF, { slug: 'guide', status: 'published', publishedAt: PAST })
+      await open(TYPE_DEF, {
         slug: 'chapter',
         status: 'published',
         publishedAt: PAST,
         parentId: root.id,
       })
-      await open(TYPE, { slug: 'hidden', status: 'draft' })
+      await open(TYPE_DEF, { slug: 'hidden', status: 'draft' })
 
       const rows = (await listPublishedPaths(db, { now: NOW })).filter((row) => row.type === TYPE)
       const paths = rows.map((row) => row.path.join('/')).sort()
@@ -242,8 +256,8 @@ describe.skipIf(!ready)('public content reads', () => {
      * data the schema still allows.
      */
     it('omits a document whose path cannot be resolved', async () => {
-      const first = await open(TYPE, { slug: 'ring-a', status: 'published', publishedAt: PAST })
-      const second = await open(TYPE, {
+      const first = await open(TYPE_DEF, { slug: 'ring-a', status: 'published', publishedAt: PAST })
+      const second = await open(TYPE_DEF, {
         slug: 'ring-b',
         status: 'published',
         publishedAt: PAST,
@@ -269,10 +283,11 @@ describe.skipIf(!ready)('public content reads', () => {
 
   describe('ancestry', () => {
     const TYPE = 'public-tree'
+    const TYPE_DEF = defineContentType({ name: TYPE, mediaIn: () => [] })
 
     it('reads a nested path root first', async () => {
-      const root = await open(TYPE, { slug: 'about', status: 'published', publishedAt: PAST })
-      const child = await open(TYPE, {
+      const root = await open(TYPE_DEF, { slug: 'about', status: 'published', publishedAt: PAST })
+      const child = await open(TYPE_DEF, {
         slug: 'team',
         status: 'published',
         publishedAt: PAST,
@@ -308,14 +323,14 @@ describe.skipIf(!ready)('public content reads', () => {
      */
     it('cannot be given a parent in another language at all', async () => {
       const frenchParent = await createContent(db, {
-        type: TYPE,
+        type: TYPE_DEF,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'a-propos', title: 'À propos', status: 'published' }),
       })
 
       await expect(
-        open(TYPE, {
+        open(TYPE_DEF, {
           slug: 'stranded',
           status: 'published',
           publishedAt: PAST,
@@ -330,8 +345,8 @@ describe.skipIf(!ready)('public content reads', () => {
      * with no depth guard would not return at all.
      */
     it('terminates on a cycle instead of hanging', async () => {
-      const first = await open(TYPE, { slug: 'loop-a', status: 'published', publishedAt: PAST })
-      const second = await open(TYPE, {
+      const first = await open(TYPE_DEF, { slug: 'loop-a', status: 'published', publishedAt: PAST })
+      const second = await open(TYPE_DEF, {
         slug: 'loop-b',
         status: 'published',
         publishedAt: PAST,

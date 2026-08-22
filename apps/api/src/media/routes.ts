@@ -19,6 +19,7 @@ import {
   forgetOrphan,
   listMedia,
   MediaForbiddenError,
+  MediaInUseError,
   type MediaMeta,
   type MediaRow,
   patchMediaAlt,
@@ -432,7 +433,33 @@ export const mediaRoutes: FastifyPluginAsync<MediaRoutesOptions> = async (
        * before the row that named them disappears — that is what makes a crash
        * between the two recoverable instead of a silent leak.
        */
-      const row = await deleteMedia(db, params.data.id)
+      let row: Awaited<ReturnType<typeof deleteMedia>>
+      try {
+        row = await deleteMedia(db, params.data.id)
+      } catch (error) {
+        /*
+         * The check above lost a race: a document started using this asset
+         * between the question and the answer. The constraint refused, and the
+         * refusal is the same one — the list is re-read for the message, and
+         * an empty list still means refused.
+         */
+        if (!(error instanceof MediaInUseError)) throw error
+
+        const now = await findMediaReferences(db, params.data.id)
+        return reply.code(409).send({
+          error: 'conflict',
+          reason: 'media-in-use',
+          references: now.map((reference) => ({
+            id: reference.id,
+            type: reference.type,
+            locale: reference.locale,
+            slug: reference.slug,
+            title: reference.title,
+            where: reference.where,
+          })),
+        })
+      }
+
       if (!row) return reply.code(404).send({ error: 'not_found' })
 
       // Every page that rendered it now renders one image fewer.

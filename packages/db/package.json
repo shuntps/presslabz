@@ -6,7 +6,6 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts",
     "./testing": "./src/testing.ts"
   },
   "//": "Repositories are the only place drizzle query building happens; callers never import drizzle-orm.",

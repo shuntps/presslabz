@@ -36,6 +36,14 @@ export const postType = defineContentType({
     /** A reference, like every image block — never a URL copied into a row. */
     featuredMediaId: z.uuid().optional(),
   }),
+  /*
+   * The first use of the declaration, and the reason it exists: `featured
+   * MediaId` used to be a key that a containment query elsewhere had to know
+   * by name. Now the type says where its references are and nothing else has
+   * to guess.
+   */
+  mediaIn: (meta) =>
+    meta.featuredMediaId ? [{ mediaId: meta.featuredMediaId, at: 'featuredMediaId' }] : [],
 })
 
 export const pageType = defineContentType({
@@ -50,6 +58,8 @@ export const pageType = defineContentType({
   meta: z.object({
     seo: seoSchema,
   }),
+  /* Declared even though it is always empty: silence is not a declaration. */
+  mediaIn: () => [],
 })
 
 export const BUILTIN_CONTENT_TYPES = [

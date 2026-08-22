@@ -4,7 +4,12 @@ import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import rateLimit, { normalizeIP } from '@fastify/rate-limit'
 import { contentEventOf, createBuiltinRegistry, transitionsFor } from '@presslabz/core'
-import { createDb, deleteExpiredSessions, publishDueContent } from '@presslabz/db'
+import {
+  createDb,
+  deleteExpiredSessions,
+  publishDueContent,
+  readMediaReferenceSyncState,
+} from '@presslabz/db'
 import { negotiateLocale } from '@presslabz/i18n'
 import type { Module } from '@presslabz/modules'
 import Fastify from 'fastify'
@@ -175,6 +180,34 @@ export async function buildApp(options: BuildAppOptions = {}) {
   registerErrorHandling(app)
 
   const { db, ping: pingDb, close: closeDb } = createDb(options.databaseUrl ?? env.DATABASE_URL)
+
+  /*
+   * Before a single other resource exists.
+   *
+   * The mirror is only a guarantee once something has built it, and applying a
+   * migration and building it are two events: an installation that ran the
+   * first without the second would enforce nothing while looking exactly like
+   * one that had. One row, read once — not a scan, which is the entire point
+   * of writing the answer down.
+   *
+   * Checked here rather than beside the routes because a refusal further down
+   * would already have opened two Valkey connections, registered a rate-limit
+   * store and started three background timers, and thrown while holding all of
+   * them. The one resource that does exist by now is closed on the way out.
+   */
+  try {
+    const referenceState = await readMediaReferenceSyncState(db)
+    if (referenceState !== 'ready') {
+      throw new Error(
+        'Media references have not been reconciled with the database yet. Run ' +
+          '`pnpm db:upgrade` — or `pnpm db:reconcile` if the migrations are already ' +
+          'applied — and start this again once it reports success.',
+      )
+    }
+  } catch (error) {
+    await closeDb()
+    throw error
+  }
   const valkey = new Valkey(env.VALKEY_URL, { lazyConnect: true, maxRetriesPerRequest: 2 })
   valkey.on('error', () => {
     // Without a listener iovalkey prints the stack to console.error, outside

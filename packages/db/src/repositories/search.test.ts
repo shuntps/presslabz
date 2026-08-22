@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { blocksToPlainText } from '@presslabz/blocks'
+import { postType } from '@presslabz/core'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
@@ -26,6 +27,14 @@ describe.skipIf(!ready)('the search vector', () => {
   let handle: ReturnType<typeof createDb>
   let db: Database
   let documentId: string
+
+  /*
+   * The image block names a real asset. A document cannot name one that does
+   * not exist any more — the mirror's foreign key refuses the row — so this
+   * suite creates the asset it is about to reference, which is also what a
+   * person does through the picker.
+   */
+  const PICTURED = randomUUID()
 
   /** One of each block type that carries words, and one that carries none. */
   const blocks = [
@@ -56,7 +65,7 @@ describe.skipIf(!ready)('the search vector', () => {
     {
       id: randomUUID(),
       type: 'image' as const,
-      mediaId: randomUUID(),
+      mediaId: PICTURED,
       caption: [{ type: 'text' as const, text: 'a captioned photograph' }],
     },
     { id: randomUUID(), type: 'divider' as const },
@@ -67,8 +76,13 @@ describe.skipIf(!ready)('the search vector', () => {
     handle = createDb(scratch.url, { maxConnections: 4 })
     db = handle.db
 
+    await db.execute(sql`
+      insert into media (id, storage_key, mime_type, byte_size, width, height)
+      values (${PICTURED}::uuid, 'media/searchable.avif', 'image/avif', 10, 4, 4)
+    `)
+
     const created = await createContent(db, {
-      type: 'post',
+      type: postType,
       locale: 'en',
       authorId: null,
       state: {
