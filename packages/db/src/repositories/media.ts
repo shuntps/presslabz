@@ -1,6 +1,7 @@
 import { type Cursor, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '@presslabz/core'
-import { asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
+import { contentMedia } from '../schema/content-media.ts'
 import { contents } from '../schema/contents.ts'
 import { media, mediaOrphans } from '../schema/media.ts'
 
@@ -104,7 +105,51 @@ export async function findMediaByIds(db: Database, ids: readonly string[]): Prom
  * delete is what makes a crash in between survivable — the bytes are always
  * listed somewhere before the row that named them is gone.
  */
+/** A live document still names this asset, and the database said so. */
+export class MediaInUseError extends Error {
+  readonly reason = 'media-in-use'
+
+  constructor() {
+    super('A document still uses this asset')
+    this.name = 'MediaInUseError'
+  }
+}
+
+/** Postgres foreign key violation. */
+const FOREIGN_KEY_VIOLATION = '23503'
+
+function isInUseViolation(error: unknown): boolean {
+  let current: unknown = error
+
+  for (let depth = 0; depth < 5 && typeof current === 'object' && current !== null; depth++) {
+    const candidate = current as { code?: unknown; constraint_name?: unknown; cause?: unknown }
+    if (candidate.code !== undefined) {
+      return (
+        candidate.code === FOREIGN_KEY_VIOLATION &&
+        String(candidate.constraint_name ?? '') === 'content_media_media_fk'
+      )
+    }
+    current = candidate.cause
+  }
+
+  return false
+}
+
 export async function deleteMedia(db: Database, id: string): Promise<MediaRow | null> {
+  try {
+    return await deleteMediaRow(db, id)
+  } catch (error) {
+    /*
+     * The refusal, arriving from the constraint rather than from the check the
+     * route ran first. That check is informative — it produces the list a 409
+     * names — and a document created between the two is caught here instead.
+     */
+    if (isInUseViolation(error)) throw new MediaInUseError()
+    throw error
+  }
+}
+
+async function deleteMediaRow(db: Database, id: string): Promise<MediaRow | null> {
   return db.transaction(async (tx) => {
     const rows = await tx.delete(media).where(eq(media.id, id)).returning()
     const row = rows[0]
@@ -271,20 +316,22 @@ export interface MediaReference {
  * because somebody tidied the library — and the loss showed up as a hole in a
  * published article, not as an error anybody saw.
  *
- * Containment against the GIN indexes rather than reading every document: the
- * question is asked before every deletion, and an installation with ten
- * thousand documents should not scan them to answer it. Two predicates, since
- * an image block names the asset in `blocks` and a featured image names it in
- * `meta`.
+ * Read from `content_media`, which is the same set the foreign key enforces —
+ * so what this reports and what a deletion is actually refused for cannot
+ * disagree. It used to be two JSONB containment predicates, which meant the
+ * question "which documents use this" was asked one way and answered another,
+ * and which knew the metadata key `featuredMediaId` by name rather than asking
+ * the content type where its references are.
+ *
+ * **Informative, not deciding.** The refusal belongs to `ON DELETE RESTRICT`;
+ * this produces the list a refusal names, and a document created between this
+ * query and the delete is caught by the constraint rather than by this.
  */
 export async function findMediaReferences(
   db: Database,
   mediaId: string,
   limit = 20,
 ): Promise<MediaReference[]> {
-  const inBlocks = sql`${contents.blocks} @> ${JSON.stringify([{ mediaId }])}::jsonb`
-  const inMeta = sql`${contents.meta} @> ${JSON.stringify({ featuredMediaId: mediaId })}::jsonb`
-
   const rows = await db
     .select({
       id: contents.id,
@@ -292,11 +339,13 @@ export async function findMediaReferences(
       locale: contents.locale,
       slug: contents.slug,
       title: contents.title,
-      blocks: sql<boolean>`${inBlocks}`,
-      meta: sql<boolean>`${inMeta}`,
+      blocks: sql<boolean>`bool_or(${contentMedia.source} = 'block')`,
+      meta: sql<boolean>`bool_or(${contentMedia.source} = 'meta')`,
     })
-    .from(contents)
-    .where(or(inBlocks, inMeta))
+    .from(contentMedia)
+    .innerJoin(contents, eq(contents.id, contentMedia.contentId))
+    .where(eq(contentMedia.mediaId, mediaId))
+    .groupBy(contents.id, contents.type, contents.locale, contents.slug, contents.title)
     .orderBy(asc(contents.title))
     .limit(Math.min(100, Math.max(1, Math.trunc(limit))))
 

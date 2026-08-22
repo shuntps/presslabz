@@ -1,4 +1,4 @@
-import { blocksSchema } from '@presslabz/blocks'
+import { type Blocks, blocksSchema, mediaReferencesInBlocks } from '@presslabz/blocks'
 import { isLocale } from '@presslabz/i18n'
 import { z } from 'zod'
 import { type Actor, allows, type OperationAccess } from './access.ts'
@@ -86,6 +86,21 @@ export interface ContentTypeOptions<TMeta extends z.ZodType = typeof metaDefault
   readonly taxonomies?: readonly string[]
   /** Shape of `contents.meta`, in place of an unknowable key-value table. */
   readonly meta?: TMeta
+  /**
+   * Which media a document of this type names in its **metadata**, and under
+   * which key.
+   *
+   * Required, and required even when the answer is always none. A convention
+   * about key names — "anything ending in MediaId" — is a rule nobody can see
+   * from a type declaration and that a future type breaks by accident; a
+   * declaration is a thing the compiler can insist on. `featuredMediaId` is
+   * the first use of it, and it stops being a name that a query elsewhere has
+   * to know.
+   *
+   * The body is not asked about here: blocks declare their own references, in
+   * `@presslabz/blocks`, once for the whole vocabulary.
+   */
+  readonly mediaIn: (meta: z.infer<TMeta>) => readonly MetaMediaReference[]
   /** Overrides the defaults above, one operation at a time. */
   readonly access?: Partial<Record<ContentOperation, OperationAccess>>
   /**
@@ -123,6 +138,8 @@ export interface AnyContentType {
   readonly basePath: string
   readonly taxonomies: readonly string[]
   readonly meta: z.ZodType
+  /** Erased to `unknown`: a caller holding AnyContentType has no meta type. */
+  readonly mediaIn: (meta: never) => readonly MetaMediaReference[]
   readonly access: Readonly<Record<ContentOperation, OperationAccess>>
   /**
    * The invariants of a whole document, wherever that state came from. The
@@ -270,6 +287,7 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
     hierarchical,
     taxonomies: options.taxonomies ?? [],
     meta,
+    mediaIn: options.mediaIn as AnyContentType['mediaIn'],
     access: { ...DEFAULT_ACCESS, ...options.access },
     stateSchema,
     createSchema,
@@ -527,4 +545,56 @@ export function createContentTypeRegistry(types: readonly AnyContentType[]): Con
     names: () => [...byName.keys()],
     all: () => [...byName.values()],
   }
+}
+
+/** Where in a document's metadata an asset is named. */
+export interface MetaMediaReference {
+  readonly mediaId: string
+  /** The metadata key, so a refusal can name it. */
+  readonly at: string
+}
+
+/** One reference, from wherever it came. */
+export interface ContentMediaReference {
+  readonly mediaId: string
+  readonly source: 'block' | 'meta'
+  /** A block id or a metadata key — what the message needs to be actionable. */
+  readonly at: string
+}
+
+/**
+ * Every asset a document names, from its body and its metadata together.
+ *
+ * The single definition the write path, the relational mirror and the
+ * diagnostic all use. Two callers with two definitions of "what counts as a
+ * reference" is how a mirror comes to disagree with the thing it mirrors.
+ *
+ * Deduplicated on `(mediaId, source)` — one asset used by three blocks is one
+ * row — and **sorted**, because the order references are inserted in is the
+ * order row locks are taken in, and a fixed order is what keeps two concurrent
+ * writers from arranging a cycle between them.
+ */
+export function mediaReferencesOf(
+  type: AnyContentType,
+  state: { readonly blocks: Blocks; readonly meta: Record<string, unknown> },
+): readonly ContentMediaReference[] {
+  const found = new Map<string, ContentMediaReference>()
+
+  for (const reference of mediaReferencesInBlocks(state.blocks)) {
+    const key = `block:${reference.mediaId}`
+    if (!found.has(key)) {
+      found.set(key, { mediaId: reference.mediaId, source: 'block', at: reference.blockId })
+    }
+  }
+
+  for (const reference of type.mediaIn(state.meta as never)) {
+    const key = `meta:${reference.mediaId}`
+    if (!found.has(key)) {
+      found.set(key, { mediaId: reference.mediaId, source: 'meta', at: reference.at })
+    }
+  }
+
+  return [...found.values()].sort(
+    (a, b) => a.mediaId.localeCompare(b.mediaId) || a.source.localeCompare(b.source),
+  )
 }

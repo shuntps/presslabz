@@ -95,7 +95,7 @@ describe('resolveRoute', () => {
 
   it('answers nothing when no type sits at the root', () => {
     const prefixedOnly = createContentTypeRegistry([
-      defineContentType({ name: 'post', basePath: 'blog' }),
+      defineContentType({ name: 'post', basePath: 'blog', mediaIn: () => [] }),
     ])
     expect(plain(resolveRoute(prefixedOnly, ['about']))).toBeNull()
     expect(plain(resolveRoute(prefixedOnly, ['blog']))).not.toBeNull()
@@ -108,8 +108,8 @@ describe('resolveRoute', () => {
    */
   it('follows a base path that was declared differently', () => {
     const moved = createContentTypeRegistry([
-      defineContentType({ name: 'post', basePath: 'journal' }),
-      defineContentType({ name: 'page', basePath: '', hierarchical: true }),
+      defineContentType({ name: 'post', basePath: 'journal', mediaIn: () => [] }),
+      defineContentType({ name: 'page', basePath: '', hierarchical: true, mediaIn: () => [] }),
     ])
 
     expect(plain(resolveRoute(moved, ['journal', 'hello']))).toEqual({

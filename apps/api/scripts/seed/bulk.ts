@@ -349,7 +349,12 @@ async function seedPosts(
       meta: chance(0.5) && media.length > 0 ? { featuredMediaId: pick(media).id } : {},
     }) as ContentState
 
-    const row: ContentRow = await createContent(db, { type: 'post', locale: 'en', authorId, state })
+    const row: ContentRow = await createContent(db, {
+      type: postType,
+      locale: 'en',
+      authorId,
+      state,
+    })
     written += 1
 
     // Roughly a third are translated, so the listing shows pairs *and* gaps.
@@ -367,7 +372,7 @@ async function seedPosts(
     }) as ContentState
 
     await createContent(db, {
-      type: 'post',
+      type: postType,
       locale: 'fr',
       authorId,
       state: french,
@@ -398,7 +403,7 @@ async function seedPages(db: Database, authorId: string, media: readonly MediaRo
       meta: {},
     }) as ContentState
 
-    await createContent(db, { type: 'page', locale: 'en', authorId, state })
+    await createContent(db, { type: pageType, locale: 'en', authorId, state })
     written += 1
   }
 

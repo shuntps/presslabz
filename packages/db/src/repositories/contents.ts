@@ -1,15 +1,19 @@
 import type { Blocks } from '@presslabz/blocks'
 import {
   type AnyContentType,
+  type ContentMediaReference,
   type ContentStatus,
   type Cursor,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  mediaReferencesOf,
   PUBLIC_CONTENT_STATUSES,
 } from '@presslabz/core'
 import { and, desc, eq, inArray, isNotNull, lte, ne, or, sql } from 'drizzle-orm'
 import type { Database } from '../client.ts'
+import { contentMedia } from '../schema/content-media.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
+import { media } from '../schema/media.ts'
 
 /**
  * Reads are locale-scoped and there is no way to ask for "all locales" by
@@ -66,6 +70,33 @@ export class ContentConflictError extends Error {
   }
 }
 
+/**
+ * A document named an asset that does not exist.
+ *
+ * Its own class rather than a reason on `ContentConflictError`, which means
+ * 409 and a conflict between two writers — this is neither. It carries no HTTP
+ * status: the API layer decides that a missing reference is 422, and the
+ * repository has no business knowing what a status code is.
+ *
+ * The references it carries are best-effort *details*, not the refusal. The
+ * refusal is the database's, and it stands whether or not this list could be
+ * filled in afterwards.
+ */
+export class MediaReferenceError extends Error {
+  readonly reason = 'media-missing'
+  readonly references: readonly ContentMediaReference[]
+
+  constructor(references: readonly ContentMediaReference[]) {
+    super(
+      references.length > 0
+        ? `No media with ${references.map((reference) => reference.mediaId).join(', ')}`
+        : 'A media reference in this document no longer exists',
+    )
+    this.name = 'MediaReferenceError'
+    this.references = references
+  }
+}
+
 export type ContentForbiddenReason = 'document-forbidden' | 'group-forbidden'
 
 export class ContentForbiddenError extends Error {
@@ -80,6 +111,8 @@ export class ContentForbiddenError extends Error {
 
 /** Postgres unique violation. */
 const UNIQUE_VIOLATION = '23505'
+/** Postgres foreign key violation. */
+const FOREIGN_KEY_VIOLATION = '23503'
 
 interface DriverError {
   code?: unknown
@@ -113,6 +146,14 @@ function isUniqueViolation(error: unknown): boolean {
  * check raises, so a caller sees one failure mode whether it lost a race or
  * was simply wrong.
  */
+function isMediaForeignKeyViolation(error: unknown): boolean {
+  const driver = driverError(error)
+  return (
+    driver?.code === FOREIGN_KEY_VIOLATION &&
+    String(driver.constraint_name ?? '') === 'content_media_media_fk'
+  )
+}
+
 function translateUniqueViolation(error: unknown): never {
   const constraint = String(driverError(error)?.constraint_name ?? '')
 
@@ -351,7 +392,16 @@ export async function listTranslations(
 }
 
 interface CreateContentBase {
-  readonly type: string
+  /**
+   * The declared type, not its name.
+   *
+   * A document cannot be written without the declaration that says where its
+   * media references are — the mirror this write maintains is built from
+   * `type.mediaIn`, and a caller holding only a string could not have one.
+   * `updateContent` has always taken the type; this is the same rule, applied
+   * to the other funnel.
+   */
+  readonly type: AnyContentType
   readonly locale: string
   readonly authorId: string | null
   /** Already validated by the type's createSchema. */
@@ -403,11 +453,13 @@ export type CreateContentInput = OpenGroupInput | JoinGroupInput
  * and a page.
  */
 export async function createContent(db: Database, input: CreateContentInput): Promise<ContentRow> {
+  const references = mediaReferencesOf(input.type, input.state)
+
   try {
     return await db.transaction(async (tx) => {
       const groupId =
         input.translationGroupId === undefined
-          ? await openGroup(tx, input.type)
+          ? await openGroup(tx, input.type.name)
           : await joinGroup(tx, input)
 
       if (input.state.parentId !== undefined) {
@@ -416,7 +468,7 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
           // is only checking that the parent itself is usable.
           childId: null,
           parentId: input.state.parentId,
-          type: input.type,
+          type: input.type.name,
           locale: input.locale,
         })
       }
@@ -424,7 +476,7 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
       const rows = await tx
         .insert(contents)
         .values({
-          type: input.type,
+          type: input.type.name,
           locale: input.locale,
           translationGroupId: groupId,
           authorId: input.authorId,
@@ -434,10 +486,16 @@ export async function createContent(db: Database, input: CreateContentInput): Pr
 
       const created = rows[0]
       if (!created) throw new Error('Insert returned no row')
+
+      await syncMediaReferences(tx, created.id, references)
+
       return created
     })
   } catch (error) {
     if (isUniqueViolation(error)) translateUniqueViolation(error)
+    if (isMediaForeignKeyViolation(error)) {
+      throw new MediaReferenceError(await absentMedia(db, references))
+    }
     throw error
   }
 }
@@ -478,10 +536,10 @@ async function joinGroup(tx: Transaction, input: JoinGroupInput): Promise<string
     )
   }
 
-  if (group.type !== input.type) {
+  if (group.type !== input.type.name) {
     throw new ContentConflictError(
       'group-type-mismatch',
-      `That translation group holds "${group.type}" documents, not "${input.type}"`,
+      `That translation group holds "${group.type}" documents, not "${input.type.name}"`,
     )
   }
 
@@ -569,6 +627,9 @@ export async function updateContent(
   patch: Record<string, unknown>,
   options: UpdateContentOptions,
 ): Promise<ContentRow | null> {
+  /* Filled in once the merge has happened, and read again if it is refused. */
+  let references: readonly ContentMediaReference[] = []
+
   try {
     return await db.transaction(async (tx) => {
       const locked = await tx
@@ -627,10 +688,21 @@ export async function updateContent(
         .where(eq(contents.id, id))
         .returning()
 
+      /*
+       * The state that was just written, not the patch: a save that removes
+       * the last image block has to remove the row that named it, and a patch
+       * that says nothing about blocks must leave both alone.
+       */
+      references = mediaReferencesOf(type, next)
+      await syncMediaReferences(tx, id, references)
+
       return rows[0] ?? null
     })
   } catch (error) {
     if (isUniqueViolation(error)) translateUniqueViolation(error)
+    if (isMediaForeignKeyViolation(error)) {
+      throw new MediaReferenceError(await absentMedia(db, references))
+    }
     throw error
   }
 }
@@ -846,6 +918,94 @@ export async function publishDueContent(
  * write and a sweep that might never run.
  */
 export const REVISION_LIMIT = 50
+
+/**
+ * Brings `content_media` in line with what the document now says.
+ *
+ * The rows are what the database can hold to: JSONB cannot carry a foreign
+ * key, so the references live twice — once where they are written, once where
+ * they can be enforced. Keeping the second in step with the first is this
+ * repository's job, and the reason it is not a trigger is that the shapes are
+ * declared in TypeScript: a trigger would have to re-implement the block
+ * vocabulary and every content type's metadata in PL/pgSQL, and could not read
+ * a declaration a module added.
+ *
+ * **By difference.** A save that changes a title touches no reference row at
+ * all. Rewriting the set every time would be churn for nothing, and would take
+ * and release locks on assets whose relationship to this document did not
+ * change.
+ *
+ * **One statement per added reference, in sorted order.** Each insert has its
+ * foreign key checked, and that check takes a `FOR KEY SHARE` on the media row
+ * — so the order these run in is the order locks are taken in. A single
+ * multi-row insert would not promise any order at all. Two writers taking the
+ * same assets in the same order cannot arrange a cycle between them when a
+ * deletion queues an exclusive request in the middle.
+ */
+async function syncMediaReferences(
+  tx: Transaction,
+  contentId: string,
+  references: readonly ContentMediaReference[],
+): Promise<void> {
+  const current = await tx
+    .select({ mediaId: contentMedia.mediaId, source: contentMedia.source })
+    .from(contentMedia)
+    .where(eq(contentMedia.contentId, contentId))
+
+  const held = new Set(current.map((row) => `${row.mediaId}:${row.source}`))
+  const wanted = new Set(references.map((reference) => `${reference.mediaId}:${reference.source}`))
+
+  const gone = current.filter((row) => !wanted.has(`${row.mediaId}:${row.source}`))
+  const added = references.filter(
+    (reference) => !held.has(`${reference.mediaId}:${reference.source}`),
+  )
+
+  for (const row of gone) {
+    await tx
+      .delete(contentMedia)
+      .where(
+        and(
+          eq(contentMedia.contentId, contentId),
+          eq(contentMedia.mediaId, row.mediaId),
+          eq(contentMedia.source, row.source),
+        ),
+      )
+  }
+
+  for (const reference of added) {
+    await tx.insert(contentMedia).values({
+      contentId,
+      mediaId: reference.mediaId,
+      source: reference.source,
+    })
+  }
+}
+
+/**
+ * Which of the ids a write named are genuinely absent, asked after the write
+ * has already been rolled back.
+ *
+ * The violation says a foreign key failed; it does not say which row of a
+ * batch caused it, and reporting every reference the document holds as missing
+ * would name assets that are perfectly fine. So the ids are looked up again.
+ *
+ * A second write can restore or remove an asset between the rollback and this
+ * query, which is why the answer is a detail and not the refusal: an empty
+ * list still means the write was refused, it means only that by the time
+ * anyone asked, nothing was missing any more.
+ */
+async function absentMedia(
+  db: Database,
+  references: readonly ContentMediaReference[],
+): Promise<readonly ContentMediaReference[]> {
+  const ids = [...new Set(references.map((reference) => reference.mediaId))]
+  if (ids.length === 0) return []
+
+  const found = await db.select({ id: media.id }).from(media).where(inArray(media.id, ids))
+  const present = new Set(found.map((row) => row.id))
+
+  return references.filter((reference) => !present.has(reference.mediaId))
+}
 
 /**
  * Records what a document was, immediately before it becomes something else.

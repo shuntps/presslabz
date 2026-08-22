@@ -143,7 +143,7 @@ describe.skipIf(!ready)('the public site', () => {
 
   async function seedFixtures(db: Database): Promise<void> {
     const english = await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'en',
       authorId: null,
       state: state({
@@ -157,7 +157,7 @@ describe.skipIf(!ready)('the public site', () => {
     helloId = english.id
 
     await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'fr',
       translationGroupId: english.translationGroupId,
       authorizeJoin: () => true,
@@ -166,7 +166,7 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     const draft = await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'en',
       authorId: null,
       state: state({ slug: 'a-draft', title: 'A draft', status: 'draft', publishedAt: undefined }),
@@ -174,7 +174,7 @@ describe.skipIf(!ready)('the public site', () => {
     draftId = draft.id
 
     await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'en',
       authorId: null,
       state: state({
@@ -186,21 +186,21 @@ describe.skipIf(!ready)('the public site', () => {
     })
 
     const about: ContentRow = await createContent(db, {
-      type: pageType.name,
+      type: pageType,
       locale: 'en',
       authorId: null,
       state: state({ slug: 'about', title: 'About' }),
     })
 
     await createContent(db, {
-      type: pageType.name,
+      type: pageType,
       locale: 'en',
       authorId: null,
       state: state({ slug: 'team', title: 'The team', parentId: about.id }),
     })
 
     await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'en',
       authorId: null,
       state: state({
@@ -212,7 +212,7 @@ describe.skipIf(!ready)('the public site', () => {
 
     // No excerpt at all: what a first-party module is expected to supply.
     await createContent(db, {
-      type: postType.name,
+      type: postType,
       locale: 'en',
       authorId: null,
       state: state({

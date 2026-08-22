@@ -156,7 +156,14 @@ try {
  */
 run(['--filter', '@presslabz/api', 'storage:init'], { S3_BUCKET: E2E_BUCKET })
 
-run(['--filter', '@presslabz/db', 'migrate'])
+/*
+ * The whole upgrade, not the schema half. Applying migrations and reconciling
+ * the media references are two steps, and an installation that does only the
+ * first has a relational mirror nothing has built — which the API refuses to
+ * start against. This suite is a rehearsal of an installation, so it rehearses
+ * that too.
+ */
+run(['db:upgrade'])
 
 run(['--filter', '@presslabz/api', 'seed'], {
   SEED_ADMIN_EMAIL: E2E_ADMIN.email,

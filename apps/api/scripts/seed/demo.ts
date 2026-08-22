@@ -198,11 +198,15 @@ async function seed(database: Database, authorId: string): Promise<void> {
       parentId: parent?.id,
     }) as ContentState
 
+    // The fixture names its type readably; the repository takes the
+    // declaration, because that is what carries the media extractor.
+    const type = fixture.type === 'post' ? postType : pageType
+
     const row = await createContent(
       database,
       sibling
         ? {
-            type: fixture.type,
+            type,
             locale: fixture.locale,
             authorId,
             state,
@@ -212,7 +216,7 @@ async function seed(database: Database, authorId: string): Promise<void> {
             // to name a group without deciding who may join it.
             authorizeJoin: () => true,
           }
-        : { type: fixture.type, locale: fixture.locale, authorId, state },
+        : { type, locale: fixture.locale, authorId, state },
     )
 
     created.set(fixture.slug, row)

@@ -1,3 +1,4 @@
+export * from './content-media.ts'
 export * from './contents.ts'
 export * from './media.ts'
 export * from './settings.ts'

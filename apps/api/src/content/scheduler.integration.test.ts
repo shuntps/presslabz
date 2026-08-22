@@ -1,4 +1,5 @@
 import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
+import { postType } from '@presslabz/core'
 import {
   createContent,
   createDb,
@@ -51,7 +52,7 @@ describe.skipIf(!ready)('a scheduled document on a running API', () => {
     // Both rows exist before the API starts, so the pass it runs at boot is
     // the one under test.
     const due = await createContent(db, {
-      type: 'post',
+      type: postType,
       locale: 'en',
       authorId: null,
       state: {
@@ -66,7 +67,7 @@ describe.skipIf(!ready)('a scheduled document on a running API', () => {
     dueId = due.id
 
     const later = await createContent(db, {
-      type: 'post',
+      type: postType,
       locale: 'en',
       authorId: null,
       state: {
@@ -203,7 +204,7 @@ describe.skipIf(!ready)('two API instances sharing one database', () => {
     db = handle.db
 
     const due = await createContent(db, {
-      type: 'post',
+      type: postType,
       locale: 'en',
       authorId: null,
       state: {

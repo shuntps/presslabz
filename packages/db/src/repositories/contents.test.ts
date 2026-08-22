@@ -44,7 +44,9 @@ const ready = hasIntegrationEnv()
 
 /** Its own type name, so nothing here can see or disturb real documents. */
 const TYPE = 'test-doc'
-const testType = defineContentType({ name: TYPE })
+const testType = defineContentType({ name: TYPE, mediaIn: () => [] })
+/** A second declaration, for the cases that are about types disagreeing. */
+const otherTestType = defineContentType({ name: `${TYPE}-other`, mediaIn: () => [] })
 
 function state(overrides: Partial<ContentState> = {}): ContentState {
   return {
@@ -96,9 +98,9 @@ describe.skipIf(!ready)('contents repository', () => {
 
   describe('locale scoping', () => {
     it('never returns another language from a listing', async () => {
-      await createContent(db, { type: TYPE, locale: 'fr', authorId: null, state: state() })
+      await createContent(db, { type: testType, locale: 'fr', authorId: null, state: state() })
       await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         authorId: null,
         state: state({ slug: 'first-en' }),
@@ -110,18 +112,18 @@ describe.skipIf(!ready)('contents repository', () => {
     })
 
     it('lets the same slug exist once per language', async () => {
-      await createContent(db, { type: TYPE, locale: 'fr', authorId: null, state: state() })
+      await createContent(db, { type: testType, locale: 'fr', authorId: null, state: state() })
       await expect(
-        createContent(db, { type: TYPE, locale: 'en', authorId: null, state: state() }),
+        createContent(db, { type: testType, locale: 'en', authorId: null, state: state() }),
       ).resolves.toBeDefined()
 
       await expect(
-        createContent(db, { type: TYPE, locale: 'fr', authorId: null, state: state() }),
+        createContent(db, { type: testType, locale: 'fr', authorId: null, state: state() }),
       ).rejects.toMatchObject({ reason: 'slug-taken' })
     })
 
     it('finds by slug only within the language asked for', async () => {
-      await createContent(db, { type: TYPE, locale: 'fr', authorId: null, state: state() })
+      await createContent(db, { type: testType, locale: 'fr', authorId: null, state: state() })
       expect(
         await findContentBySlug(db, { type: TYPE, locale: 'fr', slug: 'first' }),
       ).not.toBeNull()
@@ -132,13 +134,13 @@ describe.skipIf(!ready)('contents repository', () => {
   describe('translation groups', () => {
     it('links a sibling and reports both, across locales, on request', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
       })
       await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         authorId: null,
         translationGroupId: first.translationGroupId,
@@ -152,7 +154,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('refuses a second document in a language the group already has', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -160,7 +162,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       await expect(
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'fr',
           authorId: null,
           translationGroupId: first.translationGroupId,
@@ -172,7 +174,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('refuses a group that holds another type', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -180,7 +182,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       await expect(
         createContent(db, {
-          type: `${TYPE}-other`,
+          type: otherTestType,
           locale: 'en',
           authorId: null,
           translationGroupId: first.translationGroupId,
@@ -194,7 +196,7 @@ describe.skipIf(!ready)('contents repository', () => {
       // The claim being tested is that locking the siblings makes the check
       // atomic, and that the unique index catches it if the lock ever does not.
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -202,7 +204,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       const race = [1, 2].map((n) =>
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'en',
           authorId: null,
           translationGroupId: first.translationGroupId,
@@ -233,7 +235,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       await expect(
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'fr',
           translationGroupId: invented,
           authorId: null,
@@ -250,7 +252,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       const results = await Promise.allSettled([
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'fr',
           translationGroupId: invented,
           authorId: null,
@@ -260,7 +262,7 @@ describe.skipIf(!ready)('contents repository', () => {
           },
         }),
         createContent(db, {
-          type: `${TYPE}-other`,
+          type: otherTestType,
           locale: 'en',
           translationGroupId: invented,
           authorId: null,
@@ -279,7 +281,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('refuses a join the caller does not authorize, before saying what is inside', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -290,7 +292,7 @@ describe.skipIf(!ready)('contents repository', () => {
       // somebody who may not see it.
       await expect(
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'fr',
           translationGroupId: first.translationGroupId,
           authorId: null,
@@ -302,7 +304,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('hands the authorizer the members it is deciding about', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -310,7 +312,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       let seen: string[] = []
       await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         translationGroupId: first.translationGroupId,
         authorId: null,
@@ -326,7 +328,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('serializes concurrent joins of the same language', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -334,7 +336,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       const race = [1, 2].map((n) =>
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'en',
           translationGroupId: first.translationGroupId,
           authorId: null,
@@ -356,7 +358,7 @@ describe.skipIf(!ready)('contents repository', () => {
       // there is nothing to hold update permission over — so an empty one is a
       // row no path can use again.
       const only = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -366,7 +368,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
       await expect(
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'en',
           translationGroupId: only.translationGroupId,
           authorId: null,
@@ -378,13 +380,13 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('keeps the group while any member remains', async () => {
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
       })
       const second = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         translationGroupId: first.translationGroupId,
         authorId: null,
@@ -407,7 +409,7 @@ describe.skipIf(!ready)('contents repository', () => {
        * transaction was already removing.
        */
       const only = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -416,7 +418,7 @@ describe.skipIf(!ready)('contents repository', () => {
       const [deletion, join] = await Promise.allSettled([
         deleteContent(db, only.id),
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'en',
           translationGroupId: only.translationGroupId,
           authorId: null,
@@ -448,7 +450,7 @@ describe.skipIf(!ready)('contents repository', () => {
        * after another transaction published it.
        */
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -504,7 +506,7 @@ describe.skipIf(!ready)('contents repository', () => {
        * document that was on its way out.
        */
       const only = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -535,7 +537,7 @@ describe.skipIf(!ready)('contents repository', () => {
       let sawMembers: string[] | null = null
       const join = held(
         createContent(db, {
-          type: TYPE,
+          type: testType,
           locale: 'en',
           translationGroupId: only.translationGroupId,
           authorId: null,
@@ -565,13 +567,13 @@ describe.skipIf(!ready)('contents repository', () => {
       // Two members, so the deletion never reaches the group delete: what it
       // waits on can only be the group lock it takes first.
       const first = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
       })
       await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         translationGroupId: first.translationGroupId,
         authorId: null,
@@ -619,7 +621,7 @@ describe.skipIf(!ready)('contents repository', () => {
   describe('updates validate the merged state', () => {
     it('accepts a schedule when the stored row already carries a date', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ publishedAt: new Date('2026-09-01T09:00:00Z') }),
@@ -641,7 +643,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('refuses the same patch when the stored row has no date', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state(),
@@ -657,7 +659,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('leaves fields the patch did not mention alone', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ excerpt: 'Un extrait', title: 'Titre' }),
@@ -685,7 +687,7 @@ describe.skipIf(!ready)('contents repository', () => {
   describe('atomicity', () => {
     it('records what the document was, not what it became', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ title: 'Avant' }),
@@ -704,7 +706,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('takes the revision with it when authorization refuses', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ title: 'Avant' }),
@@ -735,7 +737,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('decides on the state the write would produce, not on the patch', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ publishedAt: new Date('2026-09-01T09:00:00Z') }),
@@ -769,7 +771,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     async function scheduled(slug: string, when: Date) {
       return createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ slug, status: 'scheduled', publishedAt: when }),
@@ -780,7 +782,7 @@ describe.skipIf(!ready)('contents repository', () => {
       const due = await scheduled('due-now', at('2026-08-20T11:00:00.000Z'))
       const later = await scheduled('due-later', at('2026-08-21T11:00:00.000Z'))
       const draft = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'en',
         authorId: null,
         state: state({ slug: 'still-drafting', status: 'draft' }),
@@ -1097,17 +1099,17 @@ describe.skipIf(!ready)('contents repository', () => {
 
   describe('clearing a field', () => {
     const NESTING = 'test-nesting'
-    const nestingType = defineContentType({ name: NESTING, hierarchical: true })
+    const nestingType = defineContentType({ name: NESTING, hierarchical: true, mediaIn: () => [] })
 
     it('removes a parent when the patch says null, and keeps it when silent', async () => {
       const parent = await createContent(db, {
-        type: NESTING,
+        type: nestingType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'le-parent' }),
       })
       const child = await createContent(db, {
-        type: NESTING,
+        type: nestingType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'l-enfant', parentId: parent.id }),
@@ -1140,7 +1142,7 @@ describe.skipIf(!ready)('contents repository', () => {
   describe('history a restore can use', () => {
     it('snapshots every editorial field, not the three somebody thought of', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({
@@ -1167,7 +1169,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('counts the version up on every write', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'counted' }),
@@ -1205,7 +1207,7 @@ describe.skipIf(!ready)('contents repository', () => {
      */
     it('refuses a write composed against a version that has moved', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'contested-row' }),
@@ -1222,7 +1224,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('lets a caller say it does not care, and only if it says so', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'restores-and-migrations' }),
@@ -1248,7 +1250,7 @@ describe.skipIf(!ready)('contents repository', () => {
      */
     it('keeps a bounded history', async () => {
       const row = await createContent(db, {
-        type: TYPE,
+        type: testType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'much-edited' }),
@@ -1276,11 +1278,16 @@ describe.skipIf(!ready)('contents repository', () => {
 
   describe('what a parent may be', () => {
     const TREE = 'test-tree'
-    const treeType = defineContentType({ name: TREE, hierarchical: true })
+    const treeType = defineContentType({ name: TREE, hierarchical: true, mediaIn: () => [] })
+    const otherTreeType = defineContentType({
+      name: 'test-other-tree',
+      hierarchical: true,
+      mediaIn: () => [],
+    })
 
     async function page(slug: string, parentId?: string, locale = 'fr') {
       return createContent(db, {
-        type: TREE,
+        type: treeType,
         locale,
         authorId: null,
         state: state({ slug, ...(parentId === undefined ? {} : { parentId }) }),
@@ -1307,7 +1314,7 @@ describe.skipIf(!ready)('contents repository', () => {
 
     it('refuses a parent of another type', async () => {
       const otherType = await createContent(db, {
-        type: 'test-other-tree',
+        type: otherTreeType,
         locale: 'fr',
         authorId: null,
         state: state({ slug: 'not-a-page' }),
