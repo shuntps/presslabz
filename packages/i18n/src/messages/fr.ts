@@ -146,6 +146,8 @@ export const fr: Messages = {
   'error.malformedResponse':
     'L’API a répondu quelque chose que cette interface ne comprend pas. Elle tourne peut-être dans une autre version.',
   'error.server': 'Le serveur a rencontré un problème. Vous n’y êtes pour rien.',
+  'error.busy':
+    'Le serveur traite déjà autant de fichiers qu’il le peut. Réessayez dans un instant.',
   'content.loadMore': 'Charger la suite',
   'content.shownOf': '{shown} sur {total} affichés',
   'media.loadMore': 'Charger la suite',

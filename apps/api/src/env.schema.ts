@@ -316,9 +316,12 @@ const parsedEnv = z
     HTTP_REQUEST_TIMEOUT_MS: milliseconds.default(120_000),
     /**
      * The route lifecycle. Zero — disabled — on purpose: Fastify's timeout is
-     * cooperative, and nothing in this codebase observes `request.signal` yet,
-     * so a positive value would answer 503 while the write it was meant to
-     * stop carried on and landed. See docs/ARCHITECTURE.md.
+     * cooperative, and almost nothing here observes `request.signal`, so a
+     * positive value would answer 503 while the write it was meant to stop
+     * carried on and landed. The one place that does observe it is the upload
+     * gate, which drops a queued upload the moment its client goes — and that
+     * is the point: a request waiting for a turn can be dropped safely,
+     * whereas one already writing cannot. See docs/ARCHITECTURE.md.
      */
     HTTP_HANDLER_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(0),
     /** How long /health waits for a dependency before reporting it down. */

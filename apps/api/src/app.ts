@@ -23,6 +23,7 @@ import { createApiHooks } from './hooks.ts'
 import clientIpPlugin, { type ClientIpOptions, trustProxyFor } from './http/client-ip.ts'
 import { corsOptions } from './http/cors.ts'
 import { ClientFacingError, REDACTED_LOG_PATHS, registerErrorHandling } from './http/errors.ts'
+import { type Admission, createAdmission } from './media/admission.ts'
 import { startOrphanSweep } from './media/orphans.ts'
 import { mediaRoutes } from './media/routes.ts'
 import {
@@ -55,6 +56,17 @@ export interface BuildAppOptions {
    * before importing this module.
    */
   readonly databaseUrl?: string
+  /**
+   * The gate that bounds concurrent uploads, and how many may wait.
+   *
+   * Built here by default, one per application, so two instances in one
+   * process neither share counters nor block one another — which a
+   * module-level queue did. Injectable rather than exposed as a decoration:
+   * a suite that needs to read `active` and `waiting` builds the gate itself
+   * and keeps the reference, and nothing about a running server has to grow a
+   * public surface for the benefit of a test.
+   */
+  readonly admission?: Admission
   /**
    * Overrides the rate-limit key prefix.
    *
@@ -330,7 +342,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   await app.register(contentRoutes, { db, registry: createBuiltinRegistry(), hooks })
   await app.register(multipart)
-  await app.register(mediaRoutes, { db, hooks })
+  await app.register(mediaRoutes, {
+    db,
+    hooks,
+    admission: options.admission ?? createAdmission(),
+  })
 
   /*
    * Media lives in two systems that cannot share a transaction, so a failed

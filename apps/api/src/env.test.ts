@@ -30,9 +30,10 @@ describe('defaults', () => {
   })
 
   it('leaves the application timeout off', () => {
-    // Fastify's handler timeout is cooperative and nothing here observes
-    // request.signal yet, so a positive default would answer 503 while the
-    // write it was meant to stop carried on.
+    // Fastify's handler timeout is cooperative, and the only thing here that
+    // observes request.signal is the upload gate — which drops a *queued*
+    // upload, never one already writing. So a positive default would still
+    // answer 503 while the write it was meant to stop carried on.
     const result = parse()
     expect(result.success && result.data.HTTP_HANDLER_TIMEOUT_MS).toBe(0)
   })
@@ -185,11 +186,12 @@ describe('timeouts', () => {
   it('accepts a positive application timeout, which is the operator to decide', () => {
     /*
      * Off is the default, not the contract. Fastify's handler timeout is
-     * cooperative: it answers 503 and aborts request.signal, and nothing here
-     * observes that signal yet, so a positive value bounds the answer and not
-     * the work. That is a real trade-off an operator may want — a slow route
-     * answered rather than left open — so the schema takes it rather than
-     * refusing a value the server supports.
+     * cooperative: it answers 503 and aborts request.signal, and the only
+     * thing here that observes that signal is the upload gate — so for
+     * everything else a positive value bounds the answer and not the work.
+     * That is a real trade-off an operator may want — a slow route answered
+     * rather than left open — so the schema takes it rather than refusing a
+     * value the server supports.
      */
     const result = parse({ HTTP_HANDLER_TIMEOUT_MS: '30000' })
     expect(result.success && result.data.HTTP_HANDLER_TIMEOUT_MS).toBe(30_000)

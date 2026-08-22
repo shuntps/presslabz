@@ -187,9 +187,10 @@ describe('the application timeout, and why it is off by default', () => {
   it('answers 503 while the work it meant to stop runs to completion', async () => {
     /*
      * Measured, and the whole reason the default is off: Fastify's handler
-     * timeout is cooperative. It answers 503 and aborts request.signal, but
-     * nothing in this codebase observes that signal, so the handler carries on
-     * and its write lands anyway — the client is told the service is
+     * timeout is cooperative. It answers 503 and aborts request.signal, and
+     * apart from the upload gate — which only ever drops a request still
+     * waiting for its turn — nothing here observes that signal, so the handler
+     * carries on and its write lands anyway. The client is told the service is
      * unavailable for an operation that in fact completed.
      *
      * The value is still accepted from an operator: this is a trade-off to
