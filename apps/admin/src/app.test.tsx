@@ -6,7 +6,7 @@
 // biome-ignore-all lint/suspicious/noDocumentCookie: standing in for a browser
 import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { API_URL } from './lib/api.ts'
 import {
   fakeApi,
@@ -243,15 +243,33 @@ describe('what the sign-in screen says went wrong', () => {
    * the shell either.
    */
   it('does not blame the credentials for an answer it cannot read', async () => {
-    const alert = await attemptSignIn(async () =>
-      Response.json({ user: { id: 'u1', role: 'administrator' } }, { status: 200 }),
-    )
+    /*
+     * This one provokes the malformed-response diagnostic on purpose, so the
+     * console is spied for exactly this test — and asserted, not silenced.
+     * The finally puts the real console back even when an assertion throws.
+     */
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    expect(alert.textContent).toMatch(/does not understand/i)
-    expect(alert.textContent).not.toMatch(/do not match/i)
-    // Still on the sign-in screen rather than in a shell built from a
-    // fragment.
-    expect(screen.queryByRole('navigation')).toBeNull()
+    try {
+      const alert = await attemptSignIn(async () =>
+        Response.json({ user: { id: 'u1', role: 'administrator' } }, { status: 200 }),
+      )
+
+      expect(alert.textContent).toMatch(/does not understand/i)
+      expect(alert.textContent).not.toMatch(/do not match/i)
+      // Still on the sign-in screen rather than in a shell built from a
+      // fragment.
+      expect(screen.queryByRole('navigation')).toBeNull()
+
+      // One diagnostic, about the sign-in route, carrying a validation error
+      // — and nothing else wrote to the console.
+      expect(diagnostics).toHaveBeenCalledTimes(1)
+      const [message, error] = diagnostics.mock.calls[0] ?? []
+      expect(message).toBe('Malformed response from /auth/login')
+      expect(error).toHaveProperty('issues')
+    } finally {
+      diagnostics.mockRestore()
+    }
   })
 
   it('says so when the attempt was rate limited', async () => {
@@ -360,6 +378,37 @@ describe('preferences that outlive the tab', () => {
  * over it would lose their work and tell them the wrong thing.
  */
 describe('a session response this build cannot read', () => {
+  /*
+   * Every test here provokes the malformed-response diagnostic on purpose,
+   * and `apiFetch` writes it to console.error in development — which a test
+   * run is. Captured for exactly this describe, and asserted rather than
+   * silenced: each test states how many diagnostics it expects and about
+   * which route, so an unexpected line fails a count instead of scrolling
+   * past as noise. `mockRestore` in the describe's own afterEach puts the
+   * real console back even when an assertion throws; every other suite keeps
+   * an unspied console, so a new, undeclared console.error stays visible.
+   */
+  let diagnostics: MockInstance<typeof console.error>
+
+  beforeEach(() => {
+    diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    diagnostics.mockRestore()
+  })
+
+  /** The captured diagnostics: so many, about this route, each a validation error. */
+  function expectDiagnostics(count: number, route = '/auth/me') {
+    expect(diagnostics).toHaveBeenCalledTimes(count)
+    for (const [message, error] of diagnostics.mock.calls) {
+      expect(message).toBe(`Malformed response from ${route}`)
+      // A Zod validation error carries its findings in `issues`; asserting on
+      // the shape keeps this file from importing zod for one line.
+      expect(error).toHaveProperty('issues')
+    }
+  }
+
   /** The API renamed a field. Everything else about the answer is right. */
   const renamedField = {
     id: 'u1',
@@ -394,6 +443,7 @@ describe('a session response this build cannot read', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/does not understand/i)
     expect(alert.textContent).not.toMatch(/something went wrong/i)
+    expectDiagnostics(1)
   })
 
   it('does not send the person back to the sign-in form', async () => {
@@ -403,6 +453,7 @@ describe('a session response this build cannot read', () => {
     await screen.findByRole('alert')
     expect(screen.queryByLabelText(/password/i)).toBeNull()
     expect(screen.queryByRole('navigation')).toBeNull()
+    expectDiagnostics(1)
   })
 
   it('offers a way back rather than a dead screen', async () => {
@@ -411,6 +462,7 @@ describe('a session response this build cannot read', () => {
 
     await screen.findByRole('alert')
     expect(screen.getByRole('button', { name: /try again/i })).toBeDefined()
+    expectDiagnostics(1)
   })
 
   it('lets a retry succeed once the API answers properly', async () => {
@@ -426,6 +478,8 @@ describe('a session response this build cannot read', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /try again/i }))
     expect(await screen.findByRole('navigation')).toBeDefined()
+    // Only the first answer was malformed; the retry that worked adds no line.
+    expectDiagnostics(1)
   })
 
   it('puts nothing from the body into the query cache', async () => {
@@ -442,6 +496,7 @@ describe('a session response this build cannot read', () => {
      */
     expect(client.getQueryData(['session'])).toBeUndefined()
     expect(client.getQueryState(['session'])?.status).toBe('error')
+    expectDiagnostics(1)
   })
 
   it('admits none of the body into the interface', async () => {
@@ -458,6 +513,7 @@ describe('a session response this build cannot read', () => {
     expect(document.documentElement.getAttribute('lang')).not.toBe('de')
     expect(document.documentElement.getAttribute('data-theme')).not.toBe('neon')
     expect(document.cookie).not.toContain('neon')
+    expectDiagnostics(1)
   })
 
   it('is still an unreadable answer when the whole envelope is wrong', async () => {
@@ -467,6 +523,7 @@ describe('a session response this build cannot read', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/does not understand/i)
+    expectDiagnostics(1)
   })
 
   /*

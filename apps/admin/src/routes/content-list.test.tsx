@@ -162,14 +162,34 @@ describe('when the listing cannot be read', () => {
    * that was never at fault.
    */
   it('refuses a malformed answer instead of rendering it', async () => {
-    await openBrokenListing(async () =>
-      Response.json({ contents: [{ id: 'doc-1', title: 'From an older API' }] }),
-    )
+    /*
+     * The refusal writes the development diagnostic to console.error, which
+     * this test provokes on purpose — so the console is spied for exactly
+     * this test, and the diagnostic is asserted rather than silenced. The
+     * finally restores the real console even when an assertion throws, and
+     * every other test in this file keeps an unspied console.
+     */
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toMatch(/does not understand/i)
-    // And the shape it could not read is nowhere on the screen.
-    expect(screen.queryByText(/from an older api/i)).toBeNull()
+    try {
+      await openBrokenListing(async () =>
+        Response.json({ contents: [{ id: 'doc-1', title: 'From an older API' }] }),
+      )
+
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toMatch(/does not understand/i)
+      // And the shape it could not read is nowhere on the screen.
+      expect(screen.queryByText(/from an older api/i)).toBeNull()
+
+      // One diagnostic, about the listing route, carrying a validation error
+      // — and nothing else wrote to the console.
+      expect(diagnostics).toHaveBeenCalledTimes(1)
+      const [message, error] = diagnostics.mock.calls[0] ?? []
+      expect(String(message)).toMatch(/^Malformed response from \/content\/post/)
+      expect(error).toHaveProperty('issues')
+    } finally {
+      diagnostics.mockRestore()
+    }
   })
 
   it('says a refusal is a refusal, not a breakage', async () => {
