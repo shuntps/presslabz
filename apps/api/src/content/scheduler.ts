@@ -13,9 +13,12 @@ import type { FastifyBaseLogger } from 'fastify'
  *
  * A timer in the API process rather than a job runner, for the same reason the
  * session sweep is one: there is no scheduler in this stack, and introducing
- * one to run a single UPDATE would be the wrong trade. Several instances
- * running it at once is safe because the claim is a single statement — see
- * `publishDueContent` — so a document is published once and announced once
+ * one to run this would be the wrong trade. Several instances running it at
+ * once is safe because of how the claim is written — a `SELECT … FOR UPDATE`
+ * inside a transaction, whose predicate Postgres re-evaluates against the row
+ * as it stands once the lock is granted, so an instance that waited finds the
+ * document already published and takes nothing. See `publishDueContent`. A
+ * document is therefore published once, versioned once and announced once,
  * however many processes are awake.
  *
  * It takes its work as functions rather than a database handle and a hook

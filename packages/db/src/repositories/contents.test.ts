@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { defineContentType } from '@presslabz/core'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
 import { contentRevisions, contents, translationGroups } from '../schema/contents.ts'
-import { createScratchDatabase, gate, hasIntegrationEnv, held, settle } from '../testing.ts'
+import {
+  backendsWaitingOnLocks,
+  createScratchDatabase,
+  gate,
+  hasIntegrationEnv,
+  held,
+  holdContentRow,
+  settle,
+} from '../testing.ts'
 import {
   ContentConflictError,
   ContentForbiddenError,
@@ -808,26 +816,275 @@ describe.skipIf(!ready)('contents repository', () => {
     })
 
     /*
+     * A publication is a write, and every write in this file leaves the same
+     * trace. It used to leave none: `status` and `updated_at` moved, the
+     * version did not, and no revision was written — so a published document
+     * sat at the version an editor still had open.
+     */
+    it('versions the row once and records the state it superseded', async () => {
+      const when = at('2026-08-20T10:00:00.000Z')
+      const row = await scheduled('a-promise-kept', when)
+      expect(row.version).toBe(1)
+
+      const [published] = await publishDueContent(db, NOW)
+
+      expect(published?.status).toBe('published')
+      expect(published?.version).toBe(2)
+      // The moment it was promised for, not the moment it was noticed.
+      expect(published?.publishedAt?.toISOString()).toBe(when.toISOString())
+
+      const revisions = await listRevisions(db, row.id)
+      expect(revisions).toHaveLength(1)
+
+      const [snapshot] = revisions
+      expect(snapshot).toMatchObject({
+        version: 1,
+        status: 'scheduled',
+        slug: 'a-promise-kept',
+        title: row.title,
+        authorId: row.authorId,
+        parentId: row.parentId,
+      })
+      expect(snapshot?.blocks).toEqual(row.blocks)
+      expect(snapshot?.meta).toEqual(row.meta)
+      expect(snapshot?.publishedAt?.toISOString()).toBe(when.toISOString())
+    })
+
+    /*
+     * The defect, as a sequence. An editor opens a scheduled document, the
+     * moment arrives, and their next save carries a form that still says
+     * `scheduled` with the version they loaded. That save used to be accepted
+     * — the row really was still at that version — and it took the
+     * publication back down.
+     */
+    it('refuses the save of an editor who had it open when it went live', async () => {
+      const row = await scheduled('open-in-a-tab', at('2026-08-20T10:00:00.000Z'))
+      const openedAt = row.version
+
+      await publishDueContent(db, NOW)
+
+      const stale = updateContent(
+        db,
+        testType,
+        row.id,
+        { title: 'Edited while it was going live', status: 'scheduled' },
+        { expectedVersion: openedAt },
+      )
+
+      await expect(stale).rejects.toBeInstanceOf(ContentConflictError)
+      await expect(stale).rejects.toMatchObject({ reason: 'stale-version' })
+
+      const after = await findContentById(db, row.id)
+      expect(after?.status).toBe('published')
+      expect(after?.version).toBe(openedAt + 1)
+      // A refused save writes nothing, including no revision of its own.
+      expect(await listRevisions(db, row.id)).toHaveLength(1)
+    })
+
+    /*
      * The property the whole design rests on: several API instances run this
      * on their own timers, and a document must be claimed — and therefore
-     * announced to every hook handler — exactly once. Reading the due set and
-     * then updating it would hand the same rows to both.
+     * versioned and announced to every hook handler — exactly once.
+     *
+     * The guarantee is no longer "it is one statement". It is the row lock,
+     * the predicate re-evaluated under READ COMMITTED once the lock is
+     * granted, and the transaction around both.
      */
-    it('hands each document to one caller when two run at once', async () => {
-      const ids = new Set<string>()
-      for (const slug of ['race-a', 'race-b', 'race-c', 'race-d']) {
-        ids.add((await scheduled(slug, at('2026-08-20T10:00:00.000Z'))).id)
+    it('hands the document to one caller when two are made to run at once', async () => {
+      /*
+       * One row, so the control transaction below locks exactly what both
+       * claimants will reach for, and there is no ordering to get wrong.
+       *
+       * `Promise.all` on its own proves nothing here: the first call can be
+       * finished before the second one starts, and the test passes without
+       * anything ever having overlapped. So the row is taken and held first,
+       * both claimants are started and observed to be waiting, and only then
+       * is it released — which is the moment the property is actually about.
+       *
+       * Nothing is asserted until the lock is released and every promise this
+       * test started has settled. A failed expectation in the middle would
+       * otherwise leave a transaction holding a row and two more waiting on
+       * it, and the suite would hang rather than fail.
+       */
+      const row = await scheduled('race-for-one', at('2026-08-20T10:00:00.000Z'))
+      const release = await holdContentRow(db, row.id)
+
+      let finished = 0
+      const claim = () =>
+        held(
+          publishDueContent(db, NOW).then((rows) => {
+            finished += 1
+            return rows
+          }),
+        )
+
+      const first = claim()
+      const second = claim()
+
+      /* Recorded while the row is held; checked once everything has settled. */
+      let waiting = 0
+      let finishedWhileHeld = -1
+      let claimed: string[] = []
+
+      try {
+        /*
+         * Two observations, because one of them is weak on its own. Neither
+         * claimant has finished — but "it had time and did nothing" is also
+         * true of work that never started, so the database is asked directly
+         * how many backends are blocked on a lock.
+         */
+        const deadline = Date.now() + 5_000
+        while (Date.now() < deadline) {
+          waiting = await backendsWaitingOnLocks(db)
+          if (waiting >= 2) break
+          await settle()
+        }
+
+        finishedWhileHeld = finished
+      } finally {
+        /*
+         * Started, not awaited, before the claimants: the gate opens
+         * synchronously inside it, so both can proceed while this waits for
+         * the holding transaction to finish.
+         */
+        const releasing = release()
+        const [firstRows, secondRows] = await Promise.all([first, second])
+        claimed = [...firstRows, ...secondRows].map((claimedRow) => claimedRow.id)
+        await releasing
       }
 
-      const [first, second] = await Promise.all([
-        publishDueContent(db, NOW),
-        publishDueContent(db, NOW),
-      ])
+      expect(waiting).toBeGreaterThanOrEqual(2)
+      expect(finishedWhileHeld).toBe(0)
 
-      const claimed = [...first, ...second].map((row) => row.id).filter((id) => ids.has(id))
+      // Exactly one of the two got it, and it appears exactly once.
+      expect(claimed.filter((id) => id === row.id)).toEqual([row.id])
 
-      expect(new Set(claimed).size).toBe(claimed.length)
-      expect(new Set(claimed)).toEqual(ids)
+      const after = await findContentById(db, row.id)
+      expect(after?.status).toBe('published')
+      // Twice-claimed would be 3. Never claimed would be 1.
+      expect(after?.version).toBe(2)
+
+      const revisions = await listRevisions(db, row.id)
+      expect(revisions).toHaveLength(1)
+      expect(revisions[0]).toMatchObject({ status: 'scheduled', version: 1 })
+
+      // And nothing is left for a third caller to find.
+      expect(await publishDueContent(db, NOW)).toEqual([])
+    })
+
+    /*
+     * A publication is an ordinary write, so its revision is an ordinary
+     * revision: it takes a place among the fifty rather than being exempt
+     * from the cap, and what falls off the end is the oldest — not the one
+     * just written.
+     */
+    it('spends one of the fifty revisions, and keeps the newest', async () => {
+      const row = await scheduled('much-edited-then-published', at('2026-08-20T10:00:00.000Z'))
+
+      for (let index = 0; index < REVISION_LIMIT; index += 1) {
+        await updateContent(
+          db,
+          testType,
+          row.id,
+          { title: `Draft ${index}` },
+          { expectedVersion: index + 1 },
+        )
+      }
+
+      expect(await listRevisions(db, row.id, REVISION_LIMIT)).toHaveLength(REVISION_LIMIT)
+
+      const [published] = await publishDueContent(db, NOW)
+      expect(published?.version).toBe(REVISION_LIMIT + 2)
+
+      const kept = await listRevisions(db, row.id, REVISION_LIMIT)
+      expect(kept).toHaveLength(REVISION_LIMIT)
+
+      // The publication's own revision survived; the oldest draft did not.
+      expect(kept[0]).toMatchObject({
+        status: 'scheduled',
+        version: REVISION_LIMIT + 1,
+        title: `Draft ${REVISION_LIMIT - 1}`,
+      })
+      // What fell off the end is the state it was created in.
+      expect(kept.map((revision) => revision.title)).not.toContain('First')
+    })
+
+    /*
+     * Atomic in both directions. A revision recording a supersession that
+     * never happened is as wrong as a publication with no record of what it
+     * replaced, and the only way to assert either is to break one half on
+     * purpose — a trigger that refuses, scoped to one row and dropped again.
+     */
+    describe('when half of it fails', () => {
+      /** Every message in the chain, because the driver wraps the store's. */
+      async function refusalFrom(work: Promise<unknown>): Promise<string> {
+        try {
+          await work
+          return 'it did not fail at all'
+        } catch (error) {
+          const messages: string[] = []
+          let current: unknown = error
+          while (current) {
+            messages.push(String((current as { message?: unknown }).message ?? current))
+            current = (current as { cause?: unknown }).cause
+          }
+          return messages.join(' | ')
+        }
+      }
+
+      async function refusing(
+        table: string,
+        column: string,
+        id: string,
+      ): Promise<() => Promise<void>> {
+        await db.execute(sql`
+          create or replace function presslabz_refuse() returns trigger
+          language plpgsql as $$ begin raise exception 'refused, on purpose'; end $$
+        `)
+        await db.execute(
+          sql.raw(`
+            create trigger presslabz_refuse_trigger before insert or update on ${table}
+            for each row when (new.${column} = '${id}') execute function presslabz_refuse()
+          `),
+        )
+
+        return async () => {
+          await db.execute(sql.raw(`drop trigger if exists presslabz_refuse_trigger on ${table}`))
+          await db.execute(sql`drop function if exists presslabz_refuse()`)
+        }
+      }
+
+      it('writes no revision when the publication itself cannot be written', async () => {
+        const row = await scheduled('update-refused', at('2026-08-20T10:00:00.000Z'))
+        const drop = await refusing('contents', 'id', row.id)
+
+        try {
+          expect(await refusalFrom(publishDueContent(db, NOW))).toMatch(/refused, on purpose/)
+        } finally {
+          await drop()
+        }
+
+        const after = await findContentById(db, row.id)
+        expect(after?.status).toBe('scheduled')
+        expect(after?.version).toBe(1)
+        expect(await listRevisions(db, row.id)).toEqual([])
+      })
+
+      it('publishes nothing when the revision cannot be written', async () => {
+        const row = await scheduled('revision-refused', at('2026-08-20T10:00:00.000Z'))
+        const drop = await refusing('content_revisions', 'content_id', row.id)
+
+        try {
+          expect(await refusalFrom(publishDueContent(db, NOW))).toMatch(/refused, on purpose/)
+        } finally {
+          await drop()
+        }
+
+        const after = await findContentById(db, row.id)
+        expect(after?.status).toBe('scheduled')
+        expect(after?.version).toBe(1)
+        expect(await listRevisions(db, row.id)).toEqual([])
+      })
     })
 
     it('finds nothing to do twice in a row', async () => {
