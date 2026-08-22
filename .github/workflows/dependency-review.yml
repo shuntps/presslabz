@@ -1,0 +1,36 @@
+# What a pull request is about to add to the dependency tree, reviewed before
+# it lands. Reads the diff between base and head through GitHub's dependency
+# graph — no install, no build — and fails the PR when a newly introduced
+# dependency carries a known high or critical advisory. Complementary to
+# Dependabot, which watches what is already here; this watches what is
+# arriving.
+#
+# Not yet a required check in the main ruleset: a context must exist and pass
+# once before it is demanded, so it becomes required after its first green run
+# on a real pull request.
+name: Dependency review
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a full commit like every action here: a tag is a name its
+      # owner can move.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # High and critical block the PR; development dependencies included,
+          # because in this repository they run with full workspace access in
+          # CI and on every contributor's machine.
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+          # Off deliberately, not forgotten: failing on licenses means having
+          # a license policy, and this project has not decided one yet. The
+          # day it does, this flag is where the policy starts being enforced.
+          license-check: false
