@@ -78,6 +78,16 @@ function scratchName(label: string): string {
   return name.slice(0, 63)
 }
 
+/**
+ * Whether this is a name the scratch machinery would itself produce and
+ * accept. The single guard shared by the creation helper, the sweeper and the
+ * test-side safety net, so no destructive path can accept a name another
+ * would have refused.
+ */
+export function isScratchDatabaseName(name: string): boolean {
+  return new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(name)
+}
+
 /** How long a scratch database may sit before it is treated as abandoned. */
 export const SCRATCH_MAX_AGE_MS = 60 * 60 * 1000
 
@@ -102,7 +112,7 @@ async function sweepAbandonedScratchDatabases(admin: Sql): Promise<void> {
       if (Number(row.age) < SCRATCH_MAX_AGE_MS) continue
       // The name came from pg_database and matched the prefix; still checked,
       // because an identifier cannot be parameterised.
-      if (!new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(row.datname)) continue
+      if (!isScratchDatabaseName(row.datname)) continue
       await admin.unsafe(`drop database if exists ${row.datname} with (force)`)
     }
   } catch {
@@ -111,7 +121,60 @@ async function sweepAbandonedScratchDatabases(admin: Sql): Promise<void> {
   }
 }
 
-export async function createScratchDatabase(label = 'db'): Promise<{
+/** One failure keeps its identity; several are all kept, none masking another. */
+function rethrowAdminFailures(failures: unknown[], summary: string): void {
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, summary)
+}
+
+/**
+ * Opens a short-lived connection to the maintenance database, runs one piece
+ * of work, and closes it — keeping **both** failures when the work and the
+ * close both fail. A plain try/finally here would let a failing `end()`
+ * replace the query's own error, which for a failed DROP is the diagnosis an
+ * operator needed.
+ */
+async function withAdminConnection<T>(adminUrl: URL, work: (admin: Sql) => Promise<T>): Promise<T> {
+  const { default: postgres } = await import('postgres')
+  const admin = postgres(adminUrl.toString(), { max: 1 })
+
+  const failures: unknown[] = []
+  let result: T | undefined
+
+  try {
+    result = await work(admin)
+  } catch (error) {
+    failures.push(error)
+  }
+  try {
+    await admin.end({ timeout: 5 })
+  } catch (error) {
+    failures.push(error)
+  }
+
+  rethrowAdminFailures(failures, 'the work failed, and closing the admin connection failed too')
+  return result as T
+}
+
+/**
+ * Drops the named scratch database over a connection of its own, so a client
+ * that broke earlier in a teardown cannot stop the drop from being tried.
+ */
+function dropScratchDatabase(adminUrl: URL, name: string): Promise<void> {
+  return withAdminConnection(adminUrl, async (admin) => {
+    await admin.unsafe(`drop database if exists ${name} with (force)`)
+  })
+}
+
+export async function createScratchDatabase(
+  label = 'db',
+  /*
+   * The override exists for exactly one caller: the test that proves a
+   * failing migration does not leave the database it was migrating behind.
+   * Nothing else should ever point a scratch database at other migrations.
+   */
+  options: { migrationsFolder?: string } = {},
+): Promise<{
   url: string
   name: string
   drop: () => Promise<void>
@@ -129,42 +192,108 @@ export async function createScratchDatabase(label = 'db'): Promise<{
   adminUrl.pathname = '/postgres'
 
   // Identifiers cannot be parameterised, so the name is restricted instead.
-  if (!new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(name)) {
+  if (!isScratchDatabaseName(name)) {
     throw new Error(`Refusing to create "${name}": not a scratch database name`)
   }
 
   const admin = postgres(adminUrl.toString(), { max: 1 })
+  // Best effort by design; it never throws.
+  await sweepAbandonedScratchDatabases(admin)
+
   try {
-    await sweepAbandonedScratchDatabases(admin)
     await admin.unsafe(`create database ${name}`)
-  } finally {
-    await admin.end({ timeout: 5 })
+  } catch (creationFailure) {
+    /*
+     * Ambiguous, not absent: a network or protocol failure can arrive after
+     * the server already executed the statement, so a rejected CREATE may
+     * still have created the database. The name is unique to this call and
+     * came from nowhere else, so dropping it by exact name is safe in either
+     * outcome — `if exists` makes the never-created case a no-op. The
+     * creation failure stays first; a close or cleanup that also fails is
+     * kept beside it, never in front of it.
+     */
+    const failures: unknown[] = [creationFailure]
+    try {
+      await admin.end({ timeout: 5 })
+    } catch (error) {
+      failures.push(error)
+    }
+    try {
+      await dropScratchDatabase(adminUrl, name)
+    } catch (error) {
+      failures.push(error)
+    }
+
+    if (failures.length === 1) throw creationFailure
+    throw new AggregateError(
+      failures,
+      `Creating scratch database ${name} failed, and cleaning up after it failed too`,
+    )
   }
 
+  /*
+   * From here until the handle is returned, the database exists and the
+   * caller has no way to drop it — the handle carrying `drop` is the last
+   * thing this function does. Any failure inside this window is therefore
+   * this function's to clean up: close whatever client is open, drop the
+   * database, and rethrow with the primary failure first. Migration is the
+   * likely failure — a refusing migration like 0010 refuses on scratch
+   * databases holding bad fixtures too — but the window covers every step,
+   * including a client that will not close.
+   */
   const scratchUrl = new URL(source)
   scratchUrl.pathname = `/${name}`
   const url = scratchUrl.toString()
 
-  const client = postgres(url, { max: 1 })
+  let client: ReturnType<typeof postgres> | null = null
+  let adminEnded = false
+  let clientEnded = false
+
   try {
+    await admin.end({ timeout: 5 })
+    adminEnded = true
+
+    client = postgres(url, { max: 1 })
     await migrate(drizzle(client), {
-      migrationsFolder: resolve(import.meta.dirname, '../drizzle'),
+      migrationsFolder: options.migrationsFolder ?? resolve(import.meta.dirname, '../drizzle'),
     })
-  } finally {
+
     await client.end({ timeout: 5 })
+    clientEnded = true
+  } catch (primary) {
+    const failures: unknown[] = [primary]
+
+    // Every step is attempted; every failure is kept beside the primary,
+    // never in front of it.
+    if (!adminEnded) {
+      await admin.end({ timeout: 5 }).then(
+        () => {},
+        (error: unknown) => failures.push(error),
+      )
+    }
+    if (client && !clientEnded) {
+      await client.end({ timeout: 5 }).then(
+        () => {},
+        (error: unknown) => failures.push(error),
+      )
+    }
+    try {
+      await dropScratchDatabase(adminUrl, name)
+    } catch (dropFailure) {
+      failures.push(dropFailure)
+    }
+
+    if (failures.length === 1) throw primary
+    throw new AggregateError(
+      failures,
+      `Setting up scratch database ${name} failed after it was created, and cleaning it up failed too`,
+    )
   }
 
   return {
     url,
     name,
-    drop: async () => {
-      const cleanup = postgres(adminUrl.toString(), { max: 1 })
-      try {
-        await cleanup.unsafe(`drop database if exists ${name} with (force)`)
-      } finally {
-        await cleanup.end({ timeout: 5 })
-      }
-    },
+    drop: () => dropScratchDatabase(adminUrl, name),
   }
 }
 
@@ -378,4 +507,40 @@ export async function withUserFromBeforeTheConstraints<T>(
       )
     }
   }
+}
+
+/**
+ * How many backends are attached to the named database, asked from the
+ * maintenance database — for a suite that wants to prove its own scratch
+ * database has no connection left before it drops it. By exact name, never by
+ * prefix: other packages create and drop their own scratch databases
+ * concurrently, and a prefix would count theirs.
+ */
+export function backendsOn(name: string): Promise<number> {
+  const source = process.env.DATABASE_URL
+  if (!source) throw new Error('DATABASE_URL is required to count backends')
+
+  const adminUrl = new URL(source)
+  adminUrl.pathname = '/postgres'
+
+  return withAdminConnection(adminUrl, async (admin) => {
+    const rows = await admin`
+      select count(*)::int as open from pg_stat_activity where datname = ${name}
+    `
+    return Number(rows[0]?.open ?? 0)
+  })
+}
+
+/** Whether a database of exactly this name exists. Same scoping rule as above. */
+export function databaseExists(name: string): Promise<boolean> {
+  const source = process.env.DATABASE_URL
+  if (!source) throw new Error('DATABASE_URL is required to look for a database')
+
+  const adminUrl = new URL(source)
+  adminUrl.pathname = '/postgres'
+
+  return withAdminConnection(adminUrl, async (admin) => {
+    const rows = await admin`select 1 as found from pg_database where datname = ${name}`
+    return rows.length > 0
+  })
 }
