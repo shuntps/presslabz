@@ -29,8 +29,12 @@ const MAX_TIMEOUT_MS = 2_147_483_647
 export const DEFAULT_MAX_ACTIVE = 2
 /** Sixteen waiting, none of them holding a full upload buffer. */
 export const DEFAULT_MAX_WAITING = 16
-/** The queue's own deadline. See the note on requestTimeout below. */
-export const DEFAULT_WAIT_MS = 30_000
+/*
+ * The queue's own deadline; see the note on requestTimeout below. Private,
+ * unlike its two siblings: they are read by the admission tests, while nothing
+ * outside this file has ever needed this one.
+ */
+const DEFAULT_WAIT_MS = 30_000
 /** What a saturated server asks a client to wait, in seconds. */
 export const RETRY_AFTER_SECONDS = 5
 
