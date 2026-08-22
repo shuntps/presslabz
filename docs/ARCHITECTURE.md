@@ -715,6 +715,8 @@ It is plain ESM run by `node --test`: no dependency, no workspace of its own, no
 
 **Coverage is reported, never gated.** `pnpm test:coverage` exists to be read. There is no percentage to satisfy, because a floor is satisfied most cheaply by testing what is easy rather than what is risky, and this project has already been bitten by tests that ran without asserting anything — a number would have counted those as coverage.
 
+It covers eleven of the twelve test-bearing workspaces. The exception is deliberate and named: `apps/web` tests the **built** server by spawning it as its own process and asking it questions over a socket, and V8 coverage instruments the Vitest process — so a report there would describe the test harness and present the server as untouched, which is worse than no number at all. Its behaviour is asserted by its 73 tests; its lines are not counted.
+
 **The test task is not cached.** Half of these suites read a real Postgres, a real Valkey and a real object store, and none of that state is in any hash Turbo computes: a cache hit could report green about services that were absent, empty or broken. The suite is well under a minute, which is cheaper than a green that means nothing. Read the counts rather than the tick, too — a suite that quietly shrinks is worse than one that fails, and this repository has watched forty-five tests vanish from a passing build.
 
 **A suite leaves nothing behind.** Scratch databases are dropped by the suite that made them and swept on the next run when a process died before its teardown — an hour old is abandoned, which no live run can be. The browser suite writes to a bucket of its own, emptied before each run: its database is dropped at the end, so anything it had written into the shared development bucket would be a file no row anywhere references. Media suites delete the objects they uploaded *and* the orphan records that deletion creates.
@@ -753,7 +755,7 @@ pnpm dev              # API on :3000, admin on :5173, public site on :4321
 | `pnpm lint` / `pnpm lint:fix` | Biome, linter and formatter in one pass |
 | `pnpm test` | Vitest across all workspaces |
 | `pnpm e2e` | Playwright, in a real browser, against its own database and its own pair of servers. Not part of `pnpm test`: it needs the service containers running |
-| `pnpm test:coverage` | The same suites with a coverage report. Read, never gated — see "What the tests are for" |
+| `pnpm test:coverage` | The suites with a coverage report — every test-bearing workspace except `apps/web`, whose server runs as a separate process V8 cannot see. Read, never gated — see "What the tests are for" |
 | `pnpm lint:unused` | Files, exports and dependencies nothing imports. Runs in CI, and worth running before adding anything; it is how the last sweep found ten dead translations and two functions nobody called |
 | `pnpm lint:manifests` | The invariants every `package.json` and the catalogue have to keep: a package declared once, a version pointed at rather than written, no catalogue entry nobody asks for, a workspace that states what it is. Runs in CI, needs nothing started |
 | `pnpm --filter @presslabz/api check:native` | Load the server's module graph under Node's own TypeScript runtime |

@@ -12,7 +12,8 @@
   "//": "Tag-based invalidation is core, not a plugin. The site collects tags while it renders and the API purges them when content changes; both halves are defined here so neither can invent a tag the other does not recognise.",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "iovalkey": "catalog:"
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@presslabz/db": "workspace:*",
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
