@@ -618,26 +618,7 @@ export async function updateContent(
         })
       }
 
-      /*
-       * The revision records what the document was, not what it becomes, so
-       * restoring one means restoring a state that actually existed. Written
-       * in the same transaction as the change it supersedes, or a crash
-       * between the two loses the only copy of the previous text.
-       */
-      await tx.insert(contentRevisions).values({
-        contentId: current.id,
-        slug: current.slug,
-        title: current.title,
-        excerpt: current.excerpt,
-        status: current.status,
-        blocks: current.blocks,
-        meta: current.meta,
-        authorId: current.authorId,
-        parentId: current.parentId,
-        publishedAt: current.publishedAt,
-        version: current.version,
-      })
-
+      await insertContentRevision(tx, current)
       await pruneRevisions(tx, current.id)
 
       const rows = await tx
@@ -758,13 +739,40 @@ export async function deleteContent(
 /**
  * Publishes everything whose moment has come, and returns what it published.
  *
- * One statement, deliberately. `UPDATE … WHERE status = 'scheduled' AND
- * published_at <= now RETURNING *` takes a row lock per row it touches, so two
- * API instances running this at the same second cannot both claim a document:
- * the loser re-evaluates its condition after the winner commits, finds the row
- * already published, and returns fewer rows. Reading the due set and then
- * updating it would have that race, and it would announce the same publication
- * twice — once per instance — to every hook handler.
+ * **A scheduled publication is a content write, and is written like one.** It
+ * used to be a single `UPDATE` that set `status` and `updated_at` and nothing
+ * else — no version, no revision — which left a published document sitting at
+ * the version an editor had open. That editor's next save carried
+ * `expectedVersion: N`, passed the staleness check because the row really was
+ * still N, and applied a form that still said `scheduled`: a publication
+ * undone by somebody who never asked to undo it, with no record that either
+ * thing had happened. So this now does what `updateContent` does — lock,
+ * record the state being superseded, write — and for the same reasons.
+ *
+ * **Two instances still publish a document once, and the guarantee is no
+ * longer "it is one statement".** It is the row lock, the predicate, and the
+ * transaction, in that order: the `SELECT … FOR UPDATE` blocks the second
+ * instance on rows the first has claimed, and when the first commits, READ
+ * COMMITTED makes the second re-evaluate its condition against the row as it
+ * now is. `status` is no longer `scheduled`, so the row falls out of its
+ * result — not skipped, gone — and it publishes, versions and announces
+ * nothing. The re-check after the lock is asserted below rather than assumed,
+ * because it is the whole property.
+ *
+ * `SKIP LOCKED` would be the other way to write this and is deliberately not
+ * used — not because it would lose a row, which it would not: a skipped row is
+ * excluded from that pass only, and either the transaction holding it publishes
+ * it or a later pass picks it up after a rollback. It is not used because
+ * waiting is the simpler thing to reason about. The second claimant waits,
+ * then observes the row as published and moves on, so there is no window in
+ * which a row is neither claimed nor waited for — and nothing here has to grow
+ * a retry or batching policy to make sure somebody comes back for it. That is
+ * a trade worth revisiting the day a pass is long enough for waiting to cost
+ * something; today it is one small update per document.
+ *
+ * The order is `published_at`, then `id`. Two transactions that lock rows in
+ * different orders can each hold what the other needs; a total order they both
+ * follow means the second simply waits.
  *
  * Anything overdue is published, however overdue. A schedule is a promise
  * about a moment, and an installation that was down for an hour owes the
@@ -775,17 +783,55 @@ export async function publishDueContent(
   db: Database,
   now: Date = new Date(),
 ): Promise<ContentRow[]> {
-  return db
-    .update(contents)
-    .set({ status: 'published', updatedAt: new Date() })
-    .where(
-      and(
-        eq(contents.status, 'scheduled'),
-        isNotNull(contents.publishedAt),
-        lte(contents.publishedAt, now),
-      ),
+  return db.transaction(async (tx) => {
+    const due = and(
+      eq(contents.status, 'scheduled'),
+      isNotNull(contents.publishedAt),
+      lte(contents.publishedAt, now),
     )
-    .returning()
+
+    const claimed = await tx
+      .select()
+      .from(contents)
+      .where(due)
+      .orderBy(contents.publishedAt, contents.id)
+      .for('update')
+
+    const published: ContentRow[] = []
+
+    for (const current of claimed) {
+      /*
+       * The predicate again, on the row this transaction now holds. Postgres
+       * re-checks it while acquiring the lock, so a row another instance
+       * published while we waited is already absent from `claimed` — this is
+       * the belt to that braces, and it costs nothing.
+       */
+      if (current.status !== 'scheduled') continue
+      if (!current.publishedAt || current.publishedAt > now) continue
+
+      await insertContentRevision(tx, current)
+      await pruneRevisions(tx, current.id)
+
+      const rows = await tx
+        .update(contents)
+        .set({ status: 'published', updatedAt: new Date(), version: current.version + 1 })
+        .where(eq(contents.id, current.id))
+        .returning()
+
+      /*
+       * Not `?? continue`. A row locked in this transaction that does not come
+       * back from its own update is not a case with a sensible fallback, and
+       * carrying on would leave a revision recording a supersession that never
+       * happened. The whole transaction goes.
+       */
+      const row = rows[0]
+      if (!row) throw new Error(`scheduled publication lost row ${current.id} mid-transaction`)
+
+      published.push(row)
+    }
+
+    return published
+  })
 }
 
 /**
@@ -800,6 +846,35 @@ export async function publishDueContent(
  * write and a sweep that might never run.
  */
 export const REVISION_LIMIT = 50
+
+/**
+ * Records what a document was, immediately before it becomes something else.
+ *
+ * The revision holds the *previous* state rather than the new one, so
+ * restoring it restores something that actually existed. Written in the same
+ * transaction as the change it supersedes — a crash between the two would lose
+ * the only copy of the previous text.
+ *
+ * One definition, because there are two write paths now. An editor's save and
+ * a scheduled publication both supersede a state, and a scheduled publication
+ * that recorded a *different* set of fields would be a hole in the history
+ * that only appears for documents nobody was editing at the time.
+ */
+async function insertContentRevision(tx: Transaction, current: ContentRow): Promise<void> {
+  await tx.insert(contentRevisions).values({
+    contentId: current.id,
+    slug: current.slug,
+    title: current.title,
+    excerpt: current.excerpt,
+    status: current.status,
+    blocks: current.blocks,
+    meta: current.meta,
+    authorId: current.authorId,
+    parentId: current.parentId,
+    publishedAt: current.publishedAt,
+    version: current.version,
+  })
+}
 
 async function pruneRevisions(tx: Transaction, contentId: string): Promise<void> {
   await tx.execute(sql`

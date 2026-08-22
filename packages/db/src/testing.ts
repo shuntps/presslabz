@@ -1,5 +1,8 @@
 import { resolve } from 'node:path'
+import { eq, sql } from 'drizzle-orm'
 import type { Sql } from 'postgres'
+import type { Database } from './client.ts'
+import { contents } from './schema/contents.ts'
 
 /**
  * Whether the integration environment is present, and a refusal to pretend it
@@ -211,4 +214,63 @@ export const settle = (): Promise<unknown> => new Promise((resolve) => setTimeou
 export function held<T>(promise: Promise<T>): Promise<T> {
   promise.catch(() => {})
   return promise
+}
+
+/**
+ * Takes a row lock on one document and keeps it until the caller lets go.
+ *
+ * For the suites that have to prove something *waited*. `Promise.all` on two
+ * callers proves nothing on its own — the first can finish before the second
+ * starts, and the test passes without anything having overlapped. Holding the
+ * row first makes the overlap a fact rather than a hope.
+ *
+ * It lives here rather than in the suites because taking a lock means reaching
+ * for drizzle and the schema, and the API's tests have neither: this package
+ * is where both already are.
+ *
+ * The returned function releases the lock and waits for the holding
+ * transaction to finish, so a test can be sure the row is free before it
+ * asserts on what happened next. Call it in a `finally` — a failed expectation
+ * must never leave a lock nobody drops.
+ */
+export async function holdContentRow(db: Database, id: string): Promise<() => Promise<void>> {
+  const holding = gate()
+  const release = gate()
+
+  const holder = held(
+    db.transaction(async (tx) => {
+      await tx.select().from(contents).where(eq(contents.id, id)).limit(1).for('update')
+      holding.open()
+      await release.opened
+    }),
+  )
+
+  await holding.opened
+
+  return async () => {
+    release.open()
+    await holder
+  }
+}
+
+/**
+ * How many backends on this database are currently blocked on a lock.
+ *
+ * The direct evidence that something is *waiting*, rather than the indirect
+ * kind — "it had time and did nothing" — which is also true of work that never
+ * started. It matters wherever the thing under test is fire-and-forget and the
+ * suite cannot await it: a scheduler's pass at boot, for one.
+ *
+ * Scoped to the current database, which in these suites is a scratch one
+ * nothing else connects to.
+ */
+export async function backendsWaitingOnLocks(db: Database): Promise<number> {
+  const rows = await db.execute(sql`
+    select count(*)::int as waiting
+      from pg_stat_activity
+     where datname = current_database()
+       and wait_event_type = 'Lock'
+  `)
+
+  return Number((rows as unknown as { waiting: number }[])[0]?.waiting ?? 0)
 }
