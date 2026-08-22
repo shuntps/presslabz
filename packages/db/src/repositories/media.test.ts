@@ -4,7 +4,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
 import { media } from '../schema/media.ts'
 import { users } from '../schema/users.ts'
-import { createScratchDatabase, gate, hasIntegrationEnv, held, settle } from '../testing.ts'
+import {
+  createScratchDatabase,
+  gate,
+  hasIntegrationEnv,
+  held,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+  settle,
+} from '../testing.ts'
 import {
   createMedia,
   findMediaById,
@@ -72,7 +79,7 @@ describe.skipIf(!ready)('media metadata', () => {
   afterAll(async () => {
     await handle.close()
     await scratch.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   describe('the authorizer decides, and it decides inside the transaction', () => {
     it('writes when it says yes', async () => {

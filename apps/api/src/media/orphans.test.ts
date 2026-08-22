@@ -7,7 +7,11 @@ import {
   listOrphans,
   type MediaRow,
 } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '@presslabz/db/testing'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -58,7 +62,7 @@ describe.skipIf(!ready)('objects with no row', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /*
    * Each of these asserts on what the whole list contains, so a leftover from
@@ -184,7 +188,7 @@ describe.skipIf(!ready)('objects with no row yet', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /*
    * An upload writes its objects before the row that names them, so a failed

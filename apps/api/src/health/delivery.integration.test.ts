@@ -3,6 +3,7 @@ import {
   createScratchDatabase,
   databaseExists,
   hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
 } from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -161,7 +162,7 @@ describe.skipIf(!ready)('media delivery in the health verdict', () => {
     }
 
     rethrow(failures)
-  }, 60_000)
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /*
    * The exact false green. An external base that does not serve the check

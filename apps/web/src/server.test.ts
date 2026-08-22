@@ -12,7 +12,11 @@ import {
   createDb,
   type Database,
 } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '@presslabz/db/testing'
 import { Valkey } from 'iovalkey'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -139,7 +143,7 @@ describe.skipIf(!ready)('the public site', () => {
     await valkey?.quit()
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   async function seedFixtures(db: Database): Promise<void> {
     const english = await createContent(db, {

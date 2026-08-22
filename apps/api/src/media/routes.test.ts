@@ -23,7 +23,11 @@ import {
   type MediaRow,
   storageKeysOf,
 } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '@presslabz/db/testing'
 import type { FastifyInstance } from 'fastify'
 import sharp from 'sharp'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -173,7 +177,7 @@ describe.skipIf(!ready)('media routes', () => {
     await scratch.drop()
     // The scratch database goes with a DROP; Valkey keys do not.
     await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   async function upload(body: Buffer, filename: string, type: string, role = 'administrator') {
     const { payload, contentType } = await multipart(body, filename, type)

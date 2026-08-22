@@ -88,6 +88,26 @@ export function isScratchDatabaseName(name: string): boolean {
   return new RegExp(`^${SCRATCH_PREFIX}[a-z0-9_]{1,40}$`).test(name)
 }
 
+/**
+ * The explicit timeout for every afterAll that drops a scratch database —
+ * 24 teardowns sharing one finite policy.
+ *
+ * Twenty-two of them were living on Vitest's implicit 10-second default
+ * while their setups declared 60 seconds or more — most 60, pagination 120,
+ * web 180; the other two already carried a literal 60 of their own.
+ * Measured under the full-repository run, concurrent drops wait on the
+ * PostgreSQL checkpointer (`IPC/CheckpointStart` → `CheckpointDone` in
+ * pg_stat_activity) — a normal wait under contention, not a stuck lock —
+ * and the queue crosses ten seconds exactly when everything runs at once.
+ *
+ * The longer budget does not turn `DROP … WITH (FORCE)` into proof of a
+ * clean shutdown. Every suite remains responsible for closing its own
+ * resources before the drop, and a forgotten connection stays a distinct
+ * defect to diagnose — only the delivery suite asserts zero backends
+ * explicitly — never something this timeout is allowed to hide.
+ */
+export const SCRATCH_TEARDOWN_TIMEOUT_MS = 60_000
+
 /** How long a scratch database may sit before it is treated as abandoned. */
 export const SCRATCH_MAX_AGE_MS = 60 * 60 * 1000
 

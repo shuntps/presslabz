@@ -12,6 +12,7 @@ import {
   createScratchDatabase,
   hasIntegrationEnv,
   holdContentRow,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
   settle,
 } from '@presslabz/db/testing'
 import type { Module } from '@presslabz/modules'
@@ -133,7 +134,7 @@ describe.skipIf(!ready)('a scheduled document on a running API', () => {
     await valkey?.quit()
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   it('publishes what was already due, without waiting for an interval', async () => {
     expect((await findContentById(db, dueId))?.status).toBe('published')
@@ -315,7 +316,7 @@ describe.skipIf(!ready)('two API instances sharing one database', () => {
     await valkey?.quit()
     await handle?.close()
     await scratch?.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /*
    * The overlap itself, asserted rather than hoped for. If either instance had

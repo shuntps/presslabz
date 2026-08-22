@@ -6,7 +6,11 @@ import { THEME_PREFERENCES } from '@presslabz/tokens/preferences'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../client.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../testing.ts'
 import {
   countUsers,
   createInitialAdministrator,
@@ -58,7 +62,7 @@ describe.skipIf(!ready)('the user vocabularies', () => {
   afterAll(async () => {
     await handle.close()
     await scratch.drop()
-  })
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   let seed = 0
   function uniqueEmail() {

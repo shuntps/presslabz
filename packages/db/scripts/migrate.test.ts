@@ -4,7 +4,11 @@ import { promisify } from 'node:util'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createDb, type Database } from '../src/client.ts'
-import { createScratchDatabase, hasIntegrationEnv } from '../src/testing.ts'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  SCRATCH_TEARDOWN_TIMEOUT_MS,
+} from '../src/testing.ts'
 
 /*
  * What an operator sees when a migration refuses.
@@ -49,7 +53,7 @@ describe.skipIf(!ready)('running the migrations', () => {
   afterAll(async () => {
     await handle?.close()
     await scratch?.drop()
-  }, 60_000)
+  }, SCRATCH_TEARDOWN_TIMEOUT_MS)
 
   /** The script, as a process, with nothing but the database in its way. */
   async function migrate(databaseUrl: string) {
