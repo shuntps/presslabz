@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/shuntps/presslabz/security/advisories/new
+    about: Never in a public issue. This opens GitHub's private vulnerability report, read only by the maintainer.
