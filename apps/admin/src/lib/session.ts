@@ -1,18 +1,15 @@
-import type { Capability, Role } from '@presslabz/core'
-import type { Locale } from '@presslabz/i18n'
-import type { ThemePreference } from '@presslabz/tokens'
+import { type SessionUser, sessionResponseSchema } from '@presslabz/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiFetch } from './api.ts'
 
-export interface SessionUser {
-  id: string
-  email: string
-  displayName: string
-  role: Role
-  locale: Locale
-  themePreference: ThemePreference
-  capabilities: Capability[]
-}
+/*
+ * Inferred, not restated. The interface that used to live here declared the
+ * same six fields with the same types and was checked by nobody: it described
+ * what the API was expected to send, and `apiFetch<{ user: SessionUser }>`
+ * asserted that it had. Two declarations of one shape, and only one of them
+ * ever looked at a response.
+ */
+export type { SessionUser }
 
 const SESSION_QUERY_KEY = ['session'] as const
 
@@ -26,7 +23,7 @@ export function useSession() {
     queryKey: SESSION_QUERY_KEY,
     queryFn: async (): Promise<SessionUser | null> => {
       try {
-        const body = await apiFetch<{ user: SessionUser }>('/auth/me')
+        const body = await apiFetch('/auth/me', { schema: sessionResponseSchema })
         return body.user
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) return null
@@ -43,9 +40,10 @@ export function useSignIn() {
 
   return useMutation({
     mutationFn: async (credentials: { email: string; password: string }) => {
-      const body = await apiFetch<{ user: SessionUser }>('/auth/login', {
+      const body = await apiFetch('/auth/login', {
         method: 'POST',
         body: JSON.stringify(credentials),
+        schema: sessionResponseSchema,
       })
       return body.user
     },
@@ -85,7 +83,10 @@ export function useSavePreferences() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (preferences: { locale?: Locale; themePreference?: ThemePreference }) =>
+    mutationFn: (preferences: {
+      locale?: SessionUser['locale']
+      themePreference?: SessionUser['themePreference']
+    }) =>
       apiFetch<unknown>('/auth/preferences', {
         method: 'PATCH',
         body: JSON.stringify(preferences),

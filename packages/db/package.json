@@ -11,7 +11,7 @@
   "//": "Repositories are the only place drizzle query building happens; callers never import drizzle-orm.",
   "scripts": {
     "generate": "drizzle-kit generate",
-    "migrate": "drizzle-kit migrate",
+    "migrate": "node --env-file-if-exists=../../.env scripts/migrate.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -20,6 +20,8 @@
   "dependencies": {
     "@presslabz/blocks": "workspace:*",
     "@presslabz/core": "workspace:*",
+    "@presslabz/i18n": "workspace:*",
+    "@presslabz/tokens": "workspace:*",
     "drizzle-orm": "catalog:",
     "postgres": "catalog:"
   },

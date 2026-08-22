@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE, sessionResponseSchema } from '@presslabz/core'
 import {
   createDb,
   createSession,
@@ -6,7 +7,12 @@ import {
   findUserByEmail,
   findValidSession,
 } from '@presslabz/db'
-import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
+import {
+  createScratchDatabase,
+  hasIntegrationEnv,
+  withUserFromBeforeTheConstraints,
+} from '@presslabz/db/testing'
+import { DEFAULT_LOCALE } from '@presslabz/i18n'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { dropRateLimitKeys, testRateLimitNamespace } from '../testing.ts'
@@ -362,6 +368,167 @@ describe.skipIf(!ready)('authentication', () => {
       })
 
       expect(response.statusCode).toBe(401)
+    })
+  })
+
+  /*
+   * Both routes that answer with a session answer the same shape, and the
+   * shape is the one in `@presslabz/core` that the admin parses real responses
+   * with. Asserting it here is what keeps the two ends from drifting: a field
+   * renamed on this side fails in this suite rather than in a browser.
+   */
+  describe('the session contract', () => {
+    it('answers /auth/login with a body the shared contract accepts', async () => {
+      const response = await login({ email: 'someone@presslabz.test', password: PASSWORD })
+
+      expect(response.statusCode).toBe(200)
+      const parsed = sessionResponseSchema.parse(response.json())
+      expect(parsed.user.email).toBe('someone@presslabz.test')
+    })
+
+    it('answers /auth/me with a body the shared contract accepts', async () => {
+      const response = await app.inject({ url: '/auth/me', cookies: await sessionFor() })
+
+      expect(response.statusCode).toBe(200)
+      expect(() => sessionResponseSchema.parse(response.json())).not.toThrow()
+    })
+
+    it('keeps answering the contract after a preference change', async () => {
+      await app.inject({
+        method: 'PATCH',
+        url: '/auth/preferences',
+        cookies: await sessionFor(),
+        payload: { locale: 'fr', themePreference: 'dark' },
+      })
+
+      const me = await app.inject({ url: '/auth/me', cookies: await sessionFor() })
+      const parsed = sessionResponseSchema.parse(me.json())
+      expect(parsed.user).toMatchObject({ locale: 'fr', themePreference: 'dark' })
+
+      await app.inject({
+        method: 'PATCH',
+        url: '/auth/preferences',
+        cookies: await sessionFor(),
+        payload: { locale: 'en', themePreference: 'system' },
+      })
+    })
+  })
+
+  /*
+   * A row the current schema would refuse — a restore from before `0010`, or a
+   * hand-edit that predates it. The constraints stop new ones; these tests are
+   * about the one that is already there.
+   *
+   * The person must still be able to sign in. Their session is valid; what is
+   * wrong is a column, and locking them out of the interface is locking them
+   * out of the place the column gets fixed.
+   */
+  describe('a stored value this build does not declare', () => {
+    async function meAs(userId: string) {
+      const token = generateSessionToken()
+      await createSession(db, hashSessionToken(token), userId, sessionExpiry())
+      return app.inject({ url: '/auth/me', cookies: { [SESSION_COOKIE]: token } })
+    }
+
+    it('falls back to the least privilege for an unknown role', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        { email: 'legacy-role@presslabz.test', displayName: 'Legacy', role: 'superuser' },
+        async (userId) => {
+          const response = await meAs(userId)
+
+          expect(response.statusCode).toBe(200)
+          const parsed = sessionResponseSchema.parse(response.json())
+          expect(parsed.user.role).toBe(DEFAULT_ROLE)
+          /*
+           * And the capabilities follow the corrected role, not the stored
+           * one. A build that normalised the label and kept the privileges
+           * would be worse than one that did nothing.
+           */
+          expect(parsed.user.capabilities).not.toContain('users:read')
+        },
+      )
+    })
+
+    it('does not repair the row it corrected', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        { email: 'legacy-untouched@presslabz.test', displayName: 'Legacy', role: 'superuser' },
+        async (userId) => {
+          await meAs(userId)
+
+          // Silently rewriting it is how a wrong value becomes permanent and
+          // unexplained. The operator decides.
+          const stored = await findUserByEmail(db, 'legacy-untouched@presslabz.test')
+          expect(stored?.role).toBe('superuser')
+        },
+      )
+    })
+
+    it('falls back to the product default for an unknown language', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        { email: 'legacy-locale@presslabz.test', displayName: 'Legacy', locale: 'de' },
+        async (userId) => {
+          const parsed = sessionResponseSchema.parse((await meAs(userId)).json())
+          expect(parsed.user.locale).toBe(DEFAULT_LOCALE)
+        },
+      )
+    })
+
+    it('falls back to following the system for an unknown theme', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        { email: 'legacy-theme@presslabz.test', displayName: 'Legacy', themePreference: 'neon' },
+        async (userId) => {
+          const parsed = sessionResponseSchema.parse((await meAs(userId)).json())
+          expect(parsed.user.themePreference).toBe('system')
+        },
+      )
+    })
+
+    it('answers rather than failing when all three are wrong at once', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        {
+          email: 'legacy-everything@presslabz.test',
+          displayName: 'Legacy',
+          role: 'wizard',
+          locale: 'de',
+          themePreference: 'neon',
+        },
+        async (userId) => {
+          const response = await meAs(userId)
+
+          expect(response.statusCode).toBe(200)
+          expect(sessionResponseSchema.parse(response.json()).user).toMatchObject({
+            role: DEFAULT_ROLE,
+            locale: DEFAULT_LOCALE,
+            themePreference: 'system',
+          })
+        },
+      )
+    })
+
+    it('lets the person sign in, which is where the row gets fixed', async () => {
+      await withUserFromBeforeTheConstraints(
+        db,
+        {
+          email: 'legacy-login@presslabz.test',
+          displayName: 'Legacy',
+          role: 'superuser',
+          passwordHash: await hashPassword(PASSWORD),
+        },
+        async () => {
+          const response = await login({
+            email: 'legacy-login@presslabz.test',
+            password: PASSWORD,
+          })
+
+          expect(response.statusCode).toBe(200)
+          expect(sessionResponseSchema.parse(response.json()).user.role).toBe(DEFAULT_ROLE)
+        },
+      )
     })
   })
 

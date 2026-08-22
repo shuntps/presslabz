@@ -1,5 +1,5 @@
 import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
-import { type ContentPage, contentPageSchema } from '@presslabz/core'
+import { type ContentPage, contentPageSchema, type Role } from '@presslabz/core'
 import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import { createScratchDatabase, hasIntegrationEnv } from '@presslabz/db/testing'
@@ -49,7 +49,7 @@ describe.skipIf(!ready)('content routes', () => {
   let cookieName: string
 
   /** The database starts empty, so these are simply created. */
-  async function signIn(role: string, email: string) {
+  async function signIn(role: Role, email: string) {
     const user = await createUser(db, { email, displayName: role, role, passwordHash: null })
     const token = generateSessionToken()
     await createSession(db, hashSessionToken(token), user.id, new Date(Date.now() + 3_600_000))

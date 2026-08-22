@@ -400,6 +400,9 @@ importers:
       '@presslabz/i18n':
         specifier: workspace:*
         version: link:../i18n
+      '@presslabz/tokens':
+        specifier: workspace:*
+        version: link:../tokens
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -425,6 +428,12 @@ importers:
       '@presslabz/core':
         specifier: workspace:*
         version: link:../core
+      '@presslabz/i18n':
+        specifier: workspace:*
+        version: link:../i18n
+      '@presslabz/tokens':
+        specifier: workspace:*
+        version: link:../tokens
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(postgres@3.4.9)

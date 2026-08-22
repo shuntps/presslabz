@@ -1,7 +1,21 @@
 /**
- * Adding a locale is adding an entry here plus a message catalogue. No schema
- * change is involved: `locale` is a text column, not an enum, precisely so
- * that a new language never requires a migration.
+ * The product's whole catalogue of interface languages — what the software can
+ * speak, not what an installation has turned on. `SUPPORTED_LOCALES` is that
+ * second, narrower thing, and it is configuration.
+ *
+ * Adding a language is three edits, not one: an entry here, a message
+ * catalogue, and a migration widening `users_locale_known`. An earlier comment
+ * here claimed a new language never requires a migration; the CHECK constraint
+ * on `users.locale` makes that untrue, and deliberately so. The catalogue
+ * already has to ship as code, so the database and the code that reads it are
+ * deployed together anyway — what the migration adds is the guarantee that
+ * they cannot drift apart, in exchange for one file in a change that already
+ * touches several.
+ *
+ * The constraint follows this list and never `SUPPORTED_LOCALES`: an operator
+ * who turns French off in an environment variable has not made the French rows
+ * in `users` invalid, and a database whose accepted values move with an
+ * environment variable is not a constraint.
  */
 export const LOCALES = ['en', 'fr'] as const
 export type Locale = (typeof LOCALES)[number]

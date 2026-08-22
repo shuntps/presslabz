@@ -308,3 +308,74 @@ export async function openBackends(db: Database): Promise<number> {
 
   return Number((rows as unknown as { open: number }[])[0]?.open ?? 0)
 }
+
+/**
+ * Runs something against a user row the current schema would refuse.
+ *
+ * A restore from a database older than `0010`, or a value somebody wrote in
+ * psql before the constraints existed. The API normalises such a row rather
+ * than failing on it, and that defence cannot be tested against a table that
+ * makes the row impossible.
+ *
+ * The three constraints are dropped, the row is inserted, and both are undone
+ * afterwards — the constraints from `pg_get_constraintdef`, which is the
+ * database describing itself, so this helper holds no second copy of the
+ * vocabularies. The row goes first, because a constraint cannot come back over
+ * a row that violates it.
+ *
+ * Here rather than in the API's suite for the reason `holdContentRow` is: this
+ * needs drizzle and the schema, and nothing outside this package has either.
+ */
+export async function withUserFromBeforeTheConstraints<T>(
+  db: Database,
+  values: {
+    email: string
+    displayName: string
+    role?: string
+    locale?: string
+    themePreference?: string
+    /** For the case that has to be able to sign in, not only to be read. */
+    passwordHash?: string
+  },
+  run: (userId: string) => Promise<T>,
+): Promise<T> {
+  const constraints = (await db.execute(sql`
+    select conname, pg_get_constraintdef(oid) as definition
+      from pg_constraint
+     where conrelid = 'users'::regclass
+       and contype = 'c'
+       and conname in ('users_role_known', 'users_locale_known', 'users_theme_preference_known')
+  `)) as unknown as { conname: string; definition: string }[]
+
+  for (const constraint of constraints) {
+    await db.execute(sql.raw(`alter table users drop constraint "${constraint.conname}"`))
+  }
+
+  const inserted = (await db.execute(sql`
+    insert into users (email, display_name, role, locale, theme_preference, password_hash)
+    values (
+      ${values.email},
+      ${values.displayName},
+      ${values.role ?? 'subscriber'},
+      ${values.locale ?? 'en'},
+      ${values.themePreference ?? 'system'},
+      ${values.passwordHash ?? null}
+    )
+    returning id
+  `)) as unknown as { id: string }[]
+
+  const userId = String(inserted[0]?.id)
+
+  try {
+    return await run(userId)
+  } finally {
+    await db.execute(sql`delete from users where id = ${userId}`)
+    for (const constraint of constraints) {
+      await db.execute(
+        sql.raw(
+          `alter table users add constraint "${constraint.conname}" ${constraint.definition}`,
+        ),
+      )
+    }
+  }
+}
