@@ -159,7 +159,7 @@ const namespace = z
  *
  * Zod's own `z.httpUrl()` is the obvious answer and cannot be used here:
  * measured against 4.4.3, it refuses `http://localhost:9000`,
- * `http://127.0.0.1:9000` and `http://minio:9000` — every hostname without a
+ * `http://127.0.0.1:9000` and `http://storage:9000` — every hostname without a
  * public dotted suffix. That is development, Docker Compose, and any
  * installation whose bucket is a service name on an internal network. So the
  * scheme is checked and the hostname is left alone.
