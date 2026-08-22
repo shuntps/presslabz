@@ -52,8 +52,23 @@ export function messageForError(error: unknown): MessageKey {
       return 'error.notFound'
     case 409:
       return conflictMessage(error.reason)
+    /*
+     * Code-sensitive, not status-only: these two are what the media upload
+     * route answers, and another route's 413 or 415 must not be presented as
+     * a media problem. Anything else falls through to the generic path.
+     */
+    case 413:
+      return error.code === 'file_too_large' ? 'media.tooLarge' : 'error.unexpected'
+    case 415:
+      return error.code === 'unsupported_media_type' ? 'media.rejected' : 'error.unexpected'
+    /*
+     * Neutral, because every route sits behind the global limiter and this
+     * table serves every screen. "Too many attempts" belongs to the one
+     * screen where the attempts are the person's own — the sign-in form keeps
+     * it through explicit contextual handling there, not through this table.
+     */
     case 429:
-      return 'auth.tooManyAttempts'
+      return 'error.tooManyRequests'
     case 503:
       /*
        * The one 5xx somebody can do something about: wait. The server says so
