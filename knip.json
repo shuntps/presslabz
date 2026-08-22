@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
+    "apps/api": {
+      "entry": ["scripts/**/*.ts"]
+    },
     "e2e": {
       "entry": ["specs/*.setup.ts"]
     }
