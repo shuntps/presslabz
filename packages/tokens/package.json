@@ -15,10 +15,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "fonts:build": "node scripts/build-fonts.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "subset-font": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
