@@ -197,9 +197,74 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
   const cleared = <TSchema extends z.ZodType>(schema: TSchema) =>
     schema.transform((value) => value ?? undefined)
 
-  const stateShape = {
+  /**
+   * A metadata schema must not answer for itself when the key is absent.
+   *
+   * A patch that says nothing about `meta` is asking for the stored value to
+   * be left alone, so a root `.default()` or `.prefault()` on the type's own
+   * schema would reintroduce exactly the defect this rule exists to prevent:
+   * an ordinary save would replace metadata nobody mentioned.
+   *
+   * Decided by behaviour rather than by shape. Measured against the pinned
+   * Zod: a root `default` and a root `prefault` fill themselves in under an
+   * optional, while `catch`, `optional`, `nullish`, a transform — and even a
+   * `default` followed by a transform, which is a pipe — do not. A rule that
+   * reasoned about wrappers would refuse that last one for no reason. Asking
+   * the schema what it does measures the semantics that matter here directly
+   * and stays right whatever Zod represents internally; what it assumes is
+   * that the schema answers the same way twice, which a schema whose parse
+   * depends on something outside its input would break.
+   *
+   * The fallback belongs on the fields inside the schema, where it applies to
+   * a metadata object somebody actually sent.
+   */
+  const withAbsentMeta = z.object({ meta: meta.optional() }).safeParse({})
+  if (!withAbsentMeta.success || 'meta' in withAbsentMeta.data) {
+    throw new Error(
+      `Content type "${options.name}" declares metadata that fills itself in when the key is absent. ` +
+        'A patch that omits meta must leave the stored value alone, so the fallback belongs on the ' +
+        'fields inside the schema rather than at its root.',
+    )
+  }
+
+  /**
+   * The fields, written once, as validators alone.
+   *
+   * Creation and the whole-state check need fallbacks; a patch must not have
+   * them, because an absent key there means "leave the stored value alone"
+   * and a fallback turns that into "replace it with this". Both shapes are
+   * derived from this one list rather than written twice, so a field cannot
+   * exist in one and be forgotten in the other — and the fallbacks appear
+   * exactly where they are wanted, spelled out.
+   *
+   * The clearable fields are here too, in their raw form — which is the
+   * patch's form, because a patch has to keep a `null` as the way of saying
+   * "clear this". The state replaces those three with the version that
+   * normalises a null into the absence the column stores.
+   */
+  const fields = {
     slug: slugSchema,
     title: z.string().min(1).max(300),
+    status: z.enum(CONTENT_STATUSES),
+    blocks: blocksSchema,
+    meta,
+    /*
+     * The clearable fields in their raw form, which is the patch's form: a
+     * null has to reach the merge instead of being normalised away before
+     * anything can tell it apart from an omission. The state replaces them
+     * with the normalising version below.
+     */
+    ...clearable,
+  }
+
+  /*
+   * The whole state: the same fields, with the two things only a whole state
+   * wants — the normalising transform on what a patch may null out, and the
+   * fallbacks creation needs. Spread first and overridden by name, so a field
+   * added to `fields` is in both shapes the moment it exists.
+   */
+  const stateShape = {
+    ...fields,
     /*
      * Null clears, absent leaves alone.
      *
@@ -210,8 +275,8 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
      * normalises to the absence the column stores.
      */
     excerpt: cleared(clearable.excerpt),
-    status: z.enum(CONTENT_STATUSES).default('draft'),
-    blocks: blocksSchema.default([]),
+    status: fields.status.default('draft'),
+    blocks: fields.blocks.default([]),
     /*
      * prefault rather than default. `.default({})` short-circuits validation
      * and hands the value straight back, so a type whose metadata has a
@@ -224,7 +289,7 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
      * proven to satisfy an unknown shape; prefault is exactly what checks it
      * at runtime.
      */
-    meta: meta.prefault({} as z.input<TMeta>),
+    meta: fields.meta.prefault({} as z.input<TMeta>),
     /**
      * A schedule is a promise about a moment, so it needs one. Accepting
      * `scheduled` without a date is how a document ends up in a state that
@@ -272,10 +337,24 @@ export function defineContentType<TMeta extends z.ZodType = typeof metaDefault>(
    * operation, and only one of those two messages says so.
    */
   const updateSchema = z.strictObject({
-    ...z.object(stateShape).partial().shape,
-    // After the partial, so a null reaches the merge instead of being
-    // normalised away before anything can tell it apart from an omission.
-    ...clearable,
+    /*
+     * Every field, made optional — derived from the raw source rather than
+     * listed again, so a field cannot be added there and forgotten here.
+     *
+     * The operation is the same one it always was; what changed is what it is
+     * applied to. It used to be `z.object(stateShape).partial()`, and a
+     * partial wraps each entry in an optional *around* its fallback rather
+     * than removing it — so the fallback still applied and a patch carrying
+     * only a title parsed to a title plus `status: 'draft'`, `blocks: []` and
+     * `meta: {}`. Every save from the admin, which sends no `meta`, replaced
+     * the stored metadata with an empty object; a patch composed by hand also
+     * unpublished the document and emptied it, and the write was authorized
+     * as though that had been asked for. An absent key means "leave the
+     * stored value alone", and only a shape with nothing to fall back on can
+     * say it — which is why the partial is taken over `fields`, where no
+     * fallback lives, and never over the state.
+     */
+    ...z.object(fields).partial().shape,
     locale: z
       .never({ error: 'A document cannot change language; create the translation instead' })
       .optional(),

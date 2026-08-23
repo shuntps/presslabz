@@ -1310,9 +1310,7 @@ describe.skipIf(!ready)('content routes', () => {
     it('is closed to a reader the published document itself is open to', async () => {
       const created = await post('author', { ...draft('closed-history'), status: 'published' })
       const id = created.json().content.id as string
-      // Status restated: updateSchema materialises the absent fields'
-      // defaults, so a status-less patch would silently unpublish this.
-      await patch('author', id, { title: 'Renamed once', status: 'published' })
+      await patch('author', id, { title: 'Renamed once' })
 
       const document = await app.inject({ url: `/content/post/${id}`, cookies: as('subscriber') })
       expect(document.statusCode).toBe(200)
@@ -1545,6 +1543,141 @@ describe.skipIf(!ready)('content routes', () => {
       })
 
       expect(response.statusCode).toBe(403)
+    })
+  })
+
+  /*
+   * A patch says what changes; everything it does not mention is meant to
+   * stay. The update schema used to fill the absent fields in with their
+   * creation fallbacks, so a rename arrived at the merge carrying
+   * `status: 'draft'`, `blocks: []` and `meta: {}` — it unpublished the
+   * document, emptied it and replaced its metadata, and was authorized as
+   * though that had been asked for. These drive the real route, because the
+   * schema and the merge are two halves of the same promise.
+   */
+  describe('a patch that mentions one field', () => {
+    it('leaves the status, the blocks, the metadata, the date and the parent alone', async () => {
+      const parent = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: { locale: 'en', slug: uniqueSlug('sparse-parent'), title: 'Parent' },
+      })
+      const parentId = parent.json().content.id as string
+      created.push(parentId)
+
+      const blocks = [
+        {
+          id: '00000000-0000-4000-8000-0000000000f1',
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Written once' }],
+        },
+      ]
+      const child = await app.inject({
+        method: 'POST',
+        url: '/content/page',
+        cookies: as('editor'),
+        payload: {
+          locale: 'en',
+          slug: uniqueSlug('sparse-child'),
+          title: 'Before the rename',
+          status: 'published',
+          publishedAt: '2026-03-05T09:00:00.000Z',
+          parentId,
+          blocks,
+          meta: { seo: { title: 'Kept' } },
+        },
+      })
+      expect(child.statusCode).toBe(201)
+      const id = child.json().content.id as string
+      created.push(id)
+
+      const renamed = await app.inject({
+        method: 'PATCH',
+        url: `/content/page/${id}`,
+        cookies: as('editor'),
+        payload: { title: 'After the rename', expectedVersion: child.json().content.version },
+      })
+
+      expect(renamed.statusCode).toBe(200)
+      const document = renamed.json().content
+      expect(document.title).toBe('After the rename')
+      expect(document.status).toBe('published')
+      expect(document.blocks).toEqual(blocks)
+      expect(document.meta).toEqual({ seo: { title: 'Kept' } })
+      expect(document.publishedAt).toBe('2026-03-05T09:00:00.000Z')
+      expect(document.parentId).toBe(parentId)
+    })
+
+    it('keeps the metadata through a save composed the way the admin composes one', async () => {
+      // The admin sends slug, title, status, blocks, excerpt and publishedAt
+      // — never meta. That save used to replace the stored metadata with {}.
+      const created_ = await post('editor', {
+        ...draft('admin-shaped'),
+        status: 'published',
+        meta: { seo: { description: 'Written by hand' } },
+      })
+      const id = created_.json().content.id as string
+
+      const saved = await app.inject({
+        method: 'PATCH',
+        url: `/content/post/${id}`,
+        cookies: as('editor'),
+        payload: {
+          slug: created_.json().content.slug,
+          title: 'Edited in the admin',
+          status: 'published',
+          blocks: [],
+          excerpt: null,
+          publishedAt: created_.json().content.publishedAt,
+          expectedVersion: created_.json().content.version,
+        },
+      })
+
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json().content.meta).toEqual({ seo: { description: 'Written by hand' } })
+    })
+
+    it('keeps metadata a restore brought back when the next save does not mention it', async () => {
+      const created_ = await post('editor', {
+        ...draft('restored-meta'),
+        meta: { seo: { title: 'The original' } },
+      })
+      const id = created_.json().content.id as string
+
+      // Replaced, so the original state becomes a revision.
+      await patch('editor', id, { meta: { seo: { title: 'The replacement' } } })
+
+      const revision = (
+        await app.inject({ url: `/content/post/${id}/revisions`, cookies: as('editor') })
+      ).json().revisions[0]
+      const restored = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${revision.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: await versionOf('editor', id) },
+      })
+      expect(restored.json().content.meta).toEqual({ seo: { title: 'The original' } })
+
+      // And an ordinary save that says nothing about meta leaves it there.
+      const saved = await patch('editor', id, { title: 'Renamed after the restore' })
+
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json().content.meta).toEqual({ seo: { title: 'The original' } })
+    })
+
+    it('still clears a field that was explicitly emptied, and still judges the merged state', async () => {
+      const created_ = await post('editor', { ...draft('sparse-clear'), excerpt: 'Written' })
+      const id = created_.json().content.id as string
+
+      expect((await patch('editor', id, { excerpt: null })).json().content.excerpt).toBeNull()
+
+      // Scheduling is a fact about the whole document, so it is judged after
+      // the merge — a patch naming a status the stored row cannot satisfy is
+      // still refused.
+      const scheduled = await patch('editor', id, { status: 'scheduled' })
+      expect(scheduled.statusCode).toBe(400)
+      expect(scheduled.json().error).toBe('invalid_state')
     })
   })
 
