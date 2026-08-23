@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 /**
- * A capability to view one unpublished document, for a short while.
+ * A capability to view one document, for a short while — whatever its
+ * status, including states the public site would not otherwise serve.
  *
  * Deliberately not the session cookie. The API's cookie is host-only and
  * `SameSite=Lax`, so a public site on another host cannot read it — and the
@@ -14,6 +15,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
  * logs, in referrers, in a screenshot in a chat. That is why the lifetime is
  * short, why it names a single document rather than an actor, and why the page
  * it opens sends no referrer and refuses to be cached or indexed.
+ *
+ * It names a document and an expiry, not a version: the site loads the row as
+ * it stands each time the link is opened, so a save after the link was shared
+ * changes what it shows. A link is an opening, never a snapshot.
  *
  * Not re-exported from the package index on purpose. It imports node:crypto,
  * and the index is bundled into the admin's browser build; a subpath keeps it

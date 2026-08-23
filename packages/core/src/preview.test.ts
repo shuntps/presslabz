@@ -48,7 +48,7 @@ describe('preview tokens', () => {
 
   /*
    * A secret short enough to guess is worse than no preview: it would hand
-   * over every unpublished document on the installation.
+   * over every document on the installation.
    */
   it('refuses to sign with a secret that is too short', () => {
     expect(() => signPreviewToken(claims, 'short')).toThrow(/at least 32/)

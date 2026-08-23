@@ -447,7 +447,8 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
   )
 
   /**
-   * A link that opens an unpublished document on the public site.
+   * A link that opens a document on the public site — whatever its status,
+   * including states the site would not otherwise serve.
    *
    * Authorized exactly as reading it is — the same function, the same answer —
    * because a preview link *is* a read, delegated to another process for a few

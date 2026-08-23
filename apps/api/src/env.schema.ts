@@ -6,6 +6,7 @@
  * useless for a test: every refusal declared here has to be shown to
  * actually refuse, against inputs a real environment would never hold.
  */
+import { webUrl } from '@presslabz/core'
 import {
   isLocale,
   isLocaleList,
@@ -271,8 +272,8 @@ const parsedEnv = z
     /*
      * Preview links. Without a secret the API refuses to issue one and the
      * site refuses to open one — an installation with no preview is a coherent
-     * installation, and a weak secret would hand over every unpublished
-     * document on it.
+     * installation, and a weak secret would hand over every document on it,
+     * whatever its status.
      */
     /*
      * How often the API looks for documents whose publication time has come.
@@ -284,8 +285,17 @@ const parsedEnv = z
 
     PREVIEW_SECRET: z.string().min(32).max(512).optional(),
     PREVIEW_TTL_SECONDS: z.coerce.number().int().min(30).max(86_400).default(600),
-    /** Where the public site answers, for building a preview link. */
-    SITE_URL: z.url().optional(),
+    /**
+     * Where the public site answers, for building a preview link.
+     *
+     * Constrained to HTTP and HTTPS by the same definition the response
+     * contract uses. `z.url()` accepts `ftp:`, which booted happily and then
+     * produced a 200 the admin's shared contract refused — and `javascript:`
+     * or `mailto:`, which boot too and then make building the link throw.
+     * A configuration this accepts can always produce a link the contract
+     * accepts.
+     */
+    SITE_URL: webUrl.optional(),
 
     PAGE_CACHE_NAMESPACE: z.string().min(1).max(120).optional(),
     PAGE_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(86_400).optional(),

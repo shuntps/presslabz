@@ -188,6 +188,26 @@ export const fr: Messages = {
   'history.image': 'Image',
   'history.mediaMissingBlock': 'Le bloc {n} ({type}) référence une image qui n’existe plus.',
   'history.mediaMissingMeta': 'Le champ « {key} » référence une image qui n’existe plus.',
+  'preview.title': 'Aperçu',
+  'preview.request': 'Lien d’aperçu',
+  'preview.renew': 'Renouveler le lien',
+  'preview.requesting': 'Demande…',
+  'preview.ready': 'Lien d’aperçu prêt.',
+  'preview.linkLabel': 'Lien d’aperçu',
+  'preview.open': 'Ouvrir',
+  'preview.copy': 'Copier',
+  'preview.copied': 'Copié.',
+  'preview.copyByHand':
+    'Ce navigateur n’a pas autorisé la copie. Sélectionnez le lien ci-dessus et copiez-le vous-même.',
+  'preview.expires': 'Valable jusqu’au',
+  'preview.bearer':
+    'Toute personne disposant de ce lien peut ouvrir ce document jusque-là, sans compte. Il affiche la dernière version enregistrée à chaque ouverture : une sauvegarde ultérieure change donc ce que montrera un lien déjà partagé.',
+  'preview.unsaved':
+    'Un aperçu montre la dernière version enregistrée, pas les modifications non sauvegardées.',
+  'preview.copyByHandAlways':
+    'Ce navigateur n’offre aucun moyen de copier à votre place. Sélectionnez le lien ci-dessus et copiez-le vous-même.',
+  'error.previewUnavailable':
+    'Les liens d’aperçu ne sont pas disponibles sur cette installation. Demandez à un administrateur de les configurer.',
   'history.publishedAtLabel': 'Date de publication',
   'history.parentLabel': 'Parent',
   'history.metaLabel': 'Métadonnées (technique)',

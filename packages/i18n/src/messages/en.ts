@@ -181,6 +181,25 @@ export const en = {
   'history.image': 'Image',
   'history.mediaMissingBlock': 'Block {n} ({type}) names an image that no longer exists.',
   'history.mediaMissingMeta': 'The "{key}" field names an image that no longer exists.',
+  'preview.title': 'Preview',
+  'preview.request': 'Preview link',
+  'preview.renew': 'Renew link',
+  'preview.requesting': 'Asking…',
+  'preview.ready': 'Preview link ready.',
+  'preview.linkLabel': 'Preview link',
+  'preview.open': 'Open',
+  'preview.copy': 'Copy',
+  'preview.copied': 'Copied.',
+  'preview.copyByHand':
+    'This browser did not allow copying. Select the link above and copy it yourself.',
+  'preview.expires': 'Works until',
+  'preview.bearer':
+    'Anyone with this link can open this document until then, without an account. It shows the last saved version each time it is opened, so later saves change what a link already shared will show.',
+  'preview.unsaved': 'A preview shows the last saved version, not the changes you have not saved.',
+  'preview.copyByHandAlways':
+    'This browser offers no way to copy for you. Select the link above and copy it yourself.',
+  'error.previewUnavailable':
+    'Preview links are not available on this installation. Ask an administrator to configure them.',
   'history.publishedAtLabel': 'Publication date',
   'history.parentLabel': 'Parent',
   'history.metaLabel': 'Metadata (technical)',

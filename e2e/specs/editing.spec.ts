@@ -269,3 +269,51 @@ test.describe('a restore that has not answered yet', () => {
     if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'the cleanup failed')
   })
 })
+
+/*
+ * Copying, in a browser that actually decides.
+ *
+ * jsdom has no Clipboard API at all, so the suites there can only assert what
+ * the interface does with an API somebody handed it. Whether a real engine
+ * lets a page write to the clipboard is the engine's decision — measured
+ * here: Chromium refuses with NotAllowedError even on a genuine click until
+ * the permission is granted. That is a setting of this harness, granted as
+ * narrowly as the API allows, and not a claim about other browsers:
+ * Playwright documents that recognised permissions vary by browser and
+ * version.
+ */
+test.describe('copying a preview link', () => {
+  test('hands the browser the link, and reads back what was copied', async ({ page, context }) => {
+    await page.goto('/content/post/new')
+    // Granted after the first navigation, so the origin is the real one this
+    // page is on rather than `about:blank` — and narrowed to it, rather than
+    // to every origin this context may ever visit.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(page.url()).origin,
+    })
+
+    await page.getByLabel(/document title/i).fill('Copied preview')
+    await page.getByRole('button', { name: /^save$/i }).click()
+    await expect(page).toHaveURL(/\/content\/post\/[0-9a-f-]{36}$/)
+
+    await page.getByRole('button', { name: /^preview link$/i }).click()
+
+    const field = page.getByLabel(/preview link/i)
+    await expect(field).toBeVisible()
+    const link = await field.inputValue()
+    expect(link).toMatch(/^https?:\/\/.+\/preview\/.+/)
+
+    await page.getByRole('button', { name: /^copy$/i }).click()
+    await expect(page.getByText(/^copied\.$/i)).toBeVisible()
+
+    // Read back, which needs the read permission granted above — the copy is
+    // asserted by its effect rather than by the interface's own claim.
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clipboard).toBe(link)
+
+    // The action now offers to replace it, and the expiry is a real instant.
+    await expect(page.getByRole('button', { name: /^renew link$/i })).toBeVisible()
+    const iso = await page.locator('time').first().getAttribute('datetime')
+    expect(Number.isNaN(Date.parse(iso ?? ''))).toBe(false)
+  })
+})

@@ -45,6 +45,16 @@ const serverEnv = {
   S3_BUCKET: E2E_BUCKET,
   MEDIA_BASE_URL: `${process.env.S3_ENDPOINT ?? 'http://localhost:9000'}/${E2E_BUCKET}`,
   PAGE_CACHE_NAMESPACE: 'presslabz:page:e2e:',
+  /*
+   * Enough configuration to mint a preview link, which is otherwise refused
+   * with a 503 and leaves the editor's preview surface untestable end to end.
+   * The secret is this suite's own and stands for nothing: it signs tokens
+   * this run creates and nothing else reads. The address is where a public
+   * site would answer — this stack does not start one, and these tests never
+   * follow the link, they check that the admin was handed it.
+   */
+  PREVIEW_SECRET: 'e2e-preview-secret-that-is-long-enough-000',
+  SITE_URL: 'http://localhost:4321',
 }
 
 export default defineConfig({

@@ -7,6 +7,7 @@ import {
   contentPageSchema,
   contentTypesSchema,
   mediaMissingDetailsSchema,
+  previewLinkSchema,
   revisionDetailSchema,
   revisionListSchema,
   type TranslationGroupSummary,
@@ -211,6 +212,26 @@ export function useRestoreRevision(type: string, id: string) {
       queryClient.setQueryData(['content', type, 'one', content.id], content)
       queryClient.invalidateQueries({ queryKey: ['content', type] })
     },
+  })
+}
+
+/**
+ * Asks the server for a link that opens this document on the public site.
+ *
+ * A mutation rather than a query, and deliberately so: a link is minted, not
+ * read, it is a bearer token with a short life, and nothing about it should
+ * be cached, refetched in the background or handed back from a store later.
+ * It lives in the component that asked for it and goes when that goes.
+ */
+export function usePreviewLink(type: string, id: string) {
+  return useMutation({
+    mutationFn: async () =>
+      (
+        await apiFetch(`/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/preview`, {
+          method: 'POST',
+          schema: previewLinkSchema,
+        })
+      ).preview,
   })
 }
 
