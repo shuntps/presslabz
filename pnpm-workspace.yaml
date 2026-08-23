@@ -47,7 +47,7 @@ catalog:
   '@types/node': 26.2.0
 
   # API
-  fastify: 5.12.0
+  fastify: 5.12.1
   fastify-plugin: 6.0.0
   '@fastify/cors': 11.3.0
   '@fastify/cookie': 11.1.2
