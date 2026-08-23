@@ -11,6 +11,8 @@ import {
   type MediaSummary,
   mediaDocumentSchema,
   mediaPageSchema,
+  revisionDetailSchema,
+  revisionListSchema,
   sessionResponseSchema,
   translationSetSchema,
 } from '@presslabz/core'
@@ -112,9 +114,34 @@ export function fakeDocument(overrides: Record<string, unknown> = {}) {
   }
 }
 
+/**
+ * One revision, in the shape the detail route answers — the list is the same
+ * record cut down to its summary. `compatible: false` entries carry no blocks,
+ * exactly as the server never sends what the vocabulary cannot parse.
+ */
+export function fakeRevision(overrides: Record<string, unknown> = {}) {
+  return {
+    compatible: true,
+    id: 'rev-1',
+    version: 1,
+    slug: 'a-document',
+    title: 'A document',
+    excerpt: null,
+    status: 'draft',
+    publishedAt: null,
+    archivedAt: '2026-01-02T00:00:00.000Z',
+    blocks: [],
+    meta: {},
+    parentId: null,
+    ...overrides,
+  }
+}
+
 export interface FakeApiOptions {
   /** Documents that already exist, each carrying what this actor may do with it. */
   documents?: Record<string, unknown>[]
+  /** The history the revisions routes serve, newest first. */
+  revisions?: Record<string, unknown>[]
   /** What the server says about creating one of this type. */
   creationPermissions?: CreationPermissions
   /** What it says about a document this session creates. */
@@ -163,6 +190,7 @@ export function fakeApi(options: FakeApiOptions = {}) {
    * test's edit is the next test's starting state.
    */
   const documents: Record<string, unknown>[] = structuredClone(options.documents ?? [])
+  const revisions: Record<string, unknown>[] = structuredClone(options.revisions ?? [])
   const media: FakeMedia[] = structuredClone(options.media ?? [])
   const creationPermissions = options.creationPermissions ?? FULL_CREATION_PERMISSIONS
   const documentPermissions = options.documentPermissions ?? FULL_DOCUMENT_PERMISSIONS
@@ -300,6 +328,80 @@ export function fakeApi(options: FakeApiOptions = {}) {
       return json({ content: found }, 200, contentDocumentSchema)
     }
 
+    if (method === 'GET' && /\/revisions\/[^/]+$/.test(url.pathname)) {
+      const revisionId = url.pathname.split('/').pop()
+      const found = revisions.find((revision) => revision.id === revisionId)
+      return found
+        ? json({ revision: found }, 200, revisionDetailSchema)
+        : json({ error: 'not_found', reason: 'revision-not-found' }, 404)
+    }
+    if (method === 'GET' && url.pathname.endsWith('/revisions')) {
+      /* The list's projection: no blocks cross the wire, and no author at all. */
+      return json(
+        {
+          revisions: revisions.map((revision) => ({
+            id: revision.id,
+            version: revision.version,
+            slug: revision.slug,
+            title: revision.title,
+            excerpt: revision.excerpt,
+            status: revision.status,
+            publishedAt: revision.publishedAt,
+            archivedAt: revision.archivedAt,
+          })),
+        },
+        200,
+        revisionListSchema,
+      )
+    }
+    if (method === 'POST' && url.pathname.endsWith('/restore')) {
+      const revisionId = url.pathname.split('/').at(-2)
+      const documentId = url.pathname.split('/').at(-4)
+      const revision = revisions.find((entry) => entry.id === revisionId)
+      const found = documents.find((document) => document.id === documentId)
+      if (!revision || !found) {
+        return json({ error: 'not_found', reason: 'revision-not-found' }, 404)
+      }
+
+      const { expectedVersion } = (body ?? {}) as { expectedVersion?: number }
+      if (typeof expectedVersion === 'number' && expectedVersion !== found.version) {
+        return json({ error: 'conflict', reason: 'stale-version' }, 409)
+      }
+
+      /*
+       * What the document holds is archived before it changes — the order the
+       * real transaction keeps, and what "the restore's own revision now sits
+       * on top" assertions watch.
+       */
+      revisions.unshift(
+        fakeRevision({
+          id: `rev-of-v${found.version}`,
+          version: found.version,
+          slug: found.slug,
+          title: found.title,
+          excerpt: found.excerpt,
+          status: found.status,
+          publishedAt: found.publishedAt,
+          blocks: found.blocks,
+          meta: found.meta,
+          parentId: found.parentId,
+          archivedAt: '2026-01-03T00:00:00.000Z',
+        }),
+      )
+      Object.assign(found, {
+        slug: revision.slug,
+        title: revision.title,
+        excerpt: revision.excerpt,
+        status: revision.status,
+        publishedAt: revision.publishedAt,
+        blocks: revision.blocks ?? [],
+        meta: revision.meta ?? {},
+        parentId: revision.parentId ?? null,
+        version: (found.version as number) + 1,
+        updatedAt: '2026-01-03T00:00:00.000Z',
+      })
+      return json({ content: found }, 200, contentDocumentSchema)
+    }
     if (method === 'GET' && url.pathname.endsWith('/translations')) {
       // The whole group, the way the real endpoint answers it: the document
       // asked about is in the list, and so are its other languages.
@@ -388,7 +490,7 @@ export function fakeApi(options: FakeApiOptions = {}) {
     return json({}, 404)
   })
 
-  return { state, requests, documents, media, fetchMock }
+  return { state, requests, documents, revisions, media, fetchMock }
 }
 
 /**

@@ -6,6 +6,9 @@ import {
   contentDocumentSchema,
   contentPageSchema,
   contentTypesSchema,
+  mediaMissingDetailsSchema,
+  revisionDetailSchema,
+  revisionListSchema,
   type TranslationGroupSummary,
   translationSetSchema,
 } from '@presslabz/core'
@@ -113,6 +116,10 @@ export function useSaveContent(type: string, id: string | null) {
           method: 'POST',
           body: JSON.stringify(draft),
           schema: contentDocumentSchema,
+          // A save and a restore go through the same write path and can be
+          // refused with the same 422 — the validated details ride along here
+          // for the same reason they do there.
+          errorDetails: mediaMissingDetailsSchema,
         })
         return body.content
       }
@@ -122,7 +129,12 @@ export function useSaveContent(type: string, id: string | null) {
       const { locale: _locale, translationGroupId: _group, ...patch } = draft
       const body = await apiFetch(
         `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
-        { method: 'PATCH', body: JSON.stringify(patch), schema: contentDocumentSchema },
+        {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+          schema: contentDocumentSchema,
+          errorDetails: mediaMissingDetailsSchema,
+        },
       )
       return body.content
     },
@@ -130,6 +142,73 @@ export function useSaveContent(type: string, id: string | null) {
       queryClient.setQueryData(['content', type, 'one', content.id], content)
       // The listings are one language each and this document is in one of
       // them, but a status change moves it between filters, so both go.
+      queryClient.invalidateQueries({ queryKey: ['content', type] })
+    },
+  })
+}
+
+/**
+ * The document's history, fetched only while somebody is looking at it.
+ *
+ * `enabled` is the panel being open: the list is edit-scoped on the server
+ * and useless in the background, so nothing is asked for until the surface
+ * that shows it exists.
+ */
+export function useRevisions(type: string, id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['content', type, 'revisions', id],
+    queryFn: async () =>
+      (
+        await apiFetch(`/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/revisions`, {
+          schema: revisionListSchema,
+        })
+      ).revisions,
+    enabled: enabled && id !== '',
+  })
+}
+
+/** One revision in full — or its summary alone, when the server says the snapshot no longer parses. */
+export function useRevisionDetail(type: string, id: string, revisionId: string | null) {
+  return useQuery({
+    queryKey: ['content', type, 'revisions', id, revisionId],
+    queryFn: async () =>
+      (
+        await apiFetch(
+          `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId ?? '')}`,
+          { schema: revisionDetailSchema },
+        )
+      ).revision,
+    enabled: revisionId !== null,
+  })
+}
+
+/**
+ * Restoring is an ordinary write, so this ends exactly the way a save does:
+ * the document cache takes the answer, and the type-wide invalidation sweeps
+ * the listings, the translations and the history — whose newest entry is now
+ * the state this restore superseded, which is what keeps it undoable.
+ *
+ * The one addition is the error contract: a 422 naming missing media arrives
+ * validated on `error.details`, or not at all.
+ */
+export function useRestoreRevision(type: string, id: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (input: { revisionId: string; expectedVersion: number }) => {
+      const body = await apiFetch(
+        `/content/${encodeURIComponent(type)}/${encodeURIComponent(id)}/revisions/${encodeURIComponent(input.revisionId)}/restore`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ expectedVersion: input.expectedVersion }),
+          schema: contentDocumentSchema,
+          errorDetails: mediaMissingDetailsSchema,
+        },
+      )
+      return body.content
+    },
+    onSuccess: (content) => {
+      queryClient.setQueryData(['content', type, 'one', content.id], content)
       queryClient.invalidateQueries({ queryKey: ['content', type] })
     },
   })

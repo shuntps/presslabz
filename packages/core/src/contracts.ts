@@ -153,6 +153,59 @@ export const contentTypesSchema = z.object({ types: z.array(contentTypeSummarySc
 export const contentDocumentSchema = z.object({ content: contentSummarySchema })
 
 /**
+ * A revision as the list serves it: enough to choose one, nothing to inspect.
+ *
+ * `archivedAt` is the instant the state was superseded — deliberately not the
+ * column's own name: nothing about a revision says when its text was
+ * originally written, and a client-facing field named "created" would be read
+ * exactly that way. There is no author field at all: the stored `authorId` is
+ * the document's author copied at capture, never the actor of the write, and
+ * it restores nothing.
+ */
+const revisionSummaryShape = {
+  id,
+  version: z.number().int(),
+  slug: z.string(),
+  title: z.string(),
+  excerpt: z.string().nullable(),
+  status: contentStatus,
+  publishedAt: instant.nullable(),
+  archivedAt: instant,
+}
+
+export const revisionSummarySchema = z.object(revisionSummaryShape)
+
+export type RevisionSummary = z.infer<typeof revisionSummarySchema>
+
+/** Ordered by `version`, descending — the domain's own order. */
+export const revisionListSchema = z.object({ revisions: z.array(revisionSummarySchema) })
+
+/**
+ * One revision, inspectable — a discriminated union on `compatible`, decided
+ * by the server against the currently registered type. A snapshot the current
+ * state rules accept arrives with its blocks, built from the parsed value; one
+ * they refuse arrives as the readable summary alone, because blocks the
+ * vocabulary no longer parses must never reach a renderer that assumes it.
+ *
+ * `blocks` follows `contentSummarySchema`'s stance: the vocabulary without the
+ * uniqueness rule, which decides on the way into the database, not here.
+ */
+export const revisionDetailSchema = z.object({
+  revision: z.discriminatedUnion('compatible', [
+    z.object({
+      compatible: z.literal(true),
+      ...revisionSummaryShape,
+      blocks: z.array(blockSchema),
+      meta: z.record(z.string(), z.unknown()),
+      parentId: id.nullable(),
+    }),
+    z.object({ compatible: z.literal(false), ...revisionSummaryShape }),
+  ]),
+})
+
+export type RevisionDetail = z.infer<typeof revisionDetailSchema>['revision']
+
+/**
  * A document's whole group, as the editor asks for it. A flat list rather than
  * a map by language: the endpoint drops siblings this actor may not read, and
  * a map would invite the interface to treat a missing key as "no translation
@@ -261,3 +314,33 @@ export const sessionUserSchema = z.object({
 export type SessionUser = z.infer<typeof sessionUserSchema>
 
 export const sessionResponseSchema = z.object({ user: sessionUserSchema })
+
+/**
+ * The one structured error body the admin reads, validated on the boundary
+ * before anything reaches React — an error response that does not parse
+ * attaches nothing, and the interface falls back to the named message alone.
+ *
+ * References are deduplicated by the server on `(mediaId, source)`: one entry
+ * names one place a missing asset is used, never every occurrence. For a
+ * `block` reference, `at` is the block's id; for a `meta` reference, the
+ * metadata key that names the asset.
+ */
+export const mediaMissingDetailsSchema = z.object({
+  error: z.literal('unprocessable'),
+  reason: z.literal('media-missing'),
+  references: z.array(
+    z.discriminatedUnion('source', [
+      z.object({ source: z.literal('block'), mediaId: id, at: z.uuid() }),
+      z.object({ source: z.literal('meta'), mediaId: id, at: z.string().min(1).max(200) }),
+    ]),
+  ),
+})
+
+export type MediaMissingDetails = z.infer<typeof mediaMissingDetailsSchema>
+
+/**
+ * Every structured detail the HTTP boundary may attach to an `ApiError`. A
+ * union so it stays closed: a new structured error is a new contract here and
+ * a new member, never an unknown body carried along.
+ */
+export type ApiErrorDetails = MediaMissingDetails

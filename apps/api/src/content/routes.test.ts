@@ -1,10 +1,18 @@
 import { contentTag, createPageCache, type PageCache } from '@presslabz/cache'
-import { type ContentPage, contentPageSchema, type Role } from '@presslabz/core'
+import {
+  type ContentPage,
+  contentDocumentSchema,
+  contentPageSchema,
+  type Role,
+  revisionDetailSchema,
+  revisionListSchema,
+} from '@presslabz/core'
 import { verifyPreviewToken } from '@presslabz/core/preview'
 import { createDb, createSession, createUser, type Database, deleteContent } from '@presslabz/db'
 import {
   createScratchDatabase,
   hasIntegrationEnv,
+  plantRevision,
   SCRATCH_TEARDOWN_TIMEOUT_MS,
 } from '@presslabz/db/testing'
 import type { Module } from '@presslabz/modules'
@@ -136,6 +144,14 @@ describe.skipIf(!ready)('content routes', () => {
 
   afterEach(async () => {
     for (const id of created.splice(0)) await deleteContent(db, id)
+    /*
+     * The limiter allows 300 requests a minute and this file grew past that
+     * with the #53 history tests: the budget ran out mid-suite and tests
+     * three describes later answered 429 about requests they never made.
+     * Nothing here asserts the limiter — the auth suite does — so each test
+     * starts with a fresh window instead of inheriting its neighbours' spend.
+     */
+    await dropRateLimitKeys(process.env.VALKEY_URL as string, namespace)
   })
 
   afterAll(async () => {
@@ -1250,7 +1266,9 @@ describe.skipIf(!ready)('content routes', () => {
 
       expect(restored.statusCode).toBe(200)
 
-      const document = restored.json().content
+      // The restore answers the document contract — the same serialization
+      // every other content route uses, so no restore contract exists.
+      const document = contentDocumentSchema.parse(restored.json()).content
       expect(document.title).toBe(original.title)
       expect(document.slug).toBe(original.slug)
       expect(document.excerpt).toBe('The first summary')
@@ -1283,15 +1301,178 @@ describe.skipIf(!ready)('content routes', () => {
     })
 
     /*
-     * Reading history is reading earlier versions of the same text. Anything
-     * looser would be a way to read a document through its past.
+     * History is edit-scoped, not read-scoped — the rule #53 put in place of
+     * the old "costs what reading costs". A published document is readable by
+     * anybody with content:read, and its past holds drafts, titles and slugs
+     * that were never public; seeing those costs the ability to modify the
+     * document as it stands, the same conclusion permissions.update serves.
      */
-    it('costs exactly what reading the document costs', async () => {
-      const created = await post('contributor', draft('private-history'))
+    it('is closed to a reader the published document itself is open to', async () => {
+      const created = await post('author', { ...draft('closed-history'), status: 'published' })
       const id = created.json().content.id as string
+      // Status restated: updateSchema materialises the absent fields'
+      // defaults, so a status-less patch would silently unpublish this.
+      await patch('author', id, { title: 'Renamed once', status: 'published' })
+
+      const document = await app.inject({ url: `/content/post/${id}`, cookies: as('subscriber') })
+      expect(document.statusCode).toBe(200)
 
       expect((await historyOf('subscriber', id)).statusCode).toBe(403)
-      expect((await historyOf('contributor', id)).statusCode).toBe(200)
+
+      const revision = (await historyOf('author', id)).json().revisions[0]
+      const detail = await app.inject({
+        url: `/content/post/${id}/revisions/${revision.id}`,
+        cookies: as('subscriber'),
+      })
+      expect(detail.statusCode).toBe(403)
+    })
+
+    it('opens to the document author and to an editor, list and detail alike', async () => {
+      const created = await post('author', draft('open-history'))
+      const id = created.json().content.id as string
+      await patch('author', id, { title: 'Renamed' })
+
+      const own = await historyOf('author', id)
+      expect(own.statusCode).toBe(200)
+      const revision = own.json().revisions[0]
+
+      for (const role of ['author', 'editor']) {
+        expect((await historyOf(role, id)).statusCode).toBe(200)
+        const detail = await app.inject({
+          url: `/content/post/${id}/revisions/${revision.id}`,
+          cookies: as(role),
+        })
+        expect(detail.statusCode, `detail for ${role}`).toBe(200)
+      }
+    })
+
+    it('refuses a restore before it would reveal whether a revision exists', async () => {
+      const created = await post('author', { ...draft('probe'), status: 'published' })
+      const id = created.json().content.id as string
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/00000000-0000-4000-8000-000000000000/restore`,
+        cookies: as('subscriber'),
+        payload: { expectedVersion: 1 },
+      })
+
+      // 403, not the revision's finer 404: the pre-transaction gate answers
+      // before the lookup, so probing ids proves nothing to a reader.
+      expect(response.statusCode).toBe(403)
+      expect(response.json().reason).toBeUndefined()
+    })
+
+    it('serves the list in version order, through the shared contract', async () => {
+      const created = await post('editor', draft('ordered'))
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Second' })
+      await patch('editor', id, { title: 'Third' })
+
+      const response = await historyOf('editor', id)
+      expect(response.statusCode).toBe(200)
+
+      // The raw body first: the contract strips what it does not model, and
+      // what must be asserted is what crosses the wire. The capture instant
+      // is archivedAt to a client; authorId does not cross at all.
+      const raw = response.json().revisions[0]
+      expect(raw).not.toHaveProperty('authorId')
+      expect(raw).not.toHaveProperty('createdAt')
+      expect(raw).toHaveProperty('archivedAt')
+
+      const { revisions } = revisionListSchema.parse(response.json())
+      expect(revisions.map((revision) => revision.version)).toEqual([2, 1])
+    })
+
+    it('serves an inspectable revision from the parsed state, through the shared contract', async () => {
+      const paragraph = {
+        id: '00000000-0000-4000-8000-0000000000aa',
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'The first wording' }],
+      }
+      const created = await post('editor', {
+        ...draft('inspectable'),
+        excerpt: 'First words',
+        blocks: [paragraph],
+      })
+      const id = created.json().content.id as string
+      await patch('editor', id, { title: 'Renamed' })
+
+      const revision = (await historyOf('editor', id)).json().revisions[0]
+      const response = await app.inject({
+        url: `/content/post/${id}/revisions/${revision.id}`,
+        cookies: as('editor'),
+      })
+      expect(response.statusCode).toBe(200)
+
+      const { revision: detail } = revisionDetailSchema.parse(response.json())
+      expect(detail.compatible).toBe(true)
+      if (!detail.compatible) throw new Error('unreachable: asserted compatible above')
+      expect(detail.blocks).toEqual([paragraph])
+      expect(detail.excerpt).toBe('First words')
+      expect(detail.parentId).toBeNull()
+    })
+
+    it('answers a snapshot the current rules refuse as readable but not restorable', async () => {
+      const created = await post('editor', draft('drifted'))
+      const id = created.json().content.id as string
+
+      // Written under rules that no longer exist: no write path can produce
+      // this, which is exactly why the routes have to answer it.
+      const planted = await plantRevision(db, {
+        contentId: id,
+        slug: uniqueSlug('drifted-old'),
+        title: 'From another vocabulary',
+        excerpt: null,
+        status: 'draft',
+        blocks: [{ id: '00000000-0000-4000-8000-0000000000bb', type: 'marquee' }] as never,
+        meta: {},
+        authorId: null,
+        parentId: null,
+        publishedAt: null,
+        version: 90,
+      })
+
+      const detail = await app.inject({
+        url: `/content/post/${id}/revisions/${planted.id}`,
+        cookies: as('editor'),
+      })
+      expect(detail.statusCode).toBe(200)
+
+      const parsed = revisionDetailSchema.parse(detail.json())
+      expect(parsed.revision.compatible).toBe(false)
+      // Blocks the current vocabulary cannot parse are never sent at all.
+      expect(detail.json().revision).not.toHaveProperty('blocks')
+
+      const restore = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${planted.id}/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: await versionOf('editor', id) },
+      })
+      expect(restore.statusCode).toBe(400)
+      expect(restore.json().error).toBe('invalid_state')
+    })
+
+    it('tells a missing revision apart from a missing document, once access is authorized', async () => {
+      const created = await post('editor', draft('gone-revision'))
+      const id = created.json().content.id as string
+
+      const detail = await app.inject({
+        url: `/content/post/${id}/revisions/00000000-0000-4000-8000-000000000000`,
+        cookies: as('editor'),
+      })
+      expect(detail.statusCode).toBe(404)
+      expect(detail.json().reason).toBe('revision-not-found')
+
+      const restore = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/00000000-0000-4000-8000-000000000000/restore`,
+        cookies: as('editor'),
+        payload: { expectedVersion: 1 },
+      })
+      expect(restore.statusCode).toBe(404)
+      expect(restore.json().reason).toBe('revision-not-found')
     })
 
     it('refuses a revision id that belongs to another document', async () => {
@@ -1312,6 +1493,7 @@ describe.skipIf(!ready)('content routes', () => {
       })
 
       expect(response.statusCode).toBe(404)
+      expect(response.json().reason).toBe('revision-not-found')
     })
 
     /*
@@ -1335,7 +1517,33 @@ describe.skipIf(!ready)('content routes', () => {
       })
 
       // Taking a published document back to a draft costs content:publish,
-      // which a contributor does not have.
+      // which a contributor does not have. Since #53 the pre-transaction gate
+      // already refuses them — editing a published document as it stands
+      // costs the same capability — so this now proves the gate.
+      expect(response.statusCode).toBe(403)
+    })
+
+    /*
+     * The gate is not the authorization. A contributor may edit their own
+     * draft as it stands — the gate passes — and restoring a published state
+     * of it is still publishing, which only the transaction can refuse.
+     */
+    it('still authorizes the transition itself inside the transaction', async () => {
+      const own = await post('contributor', draft('transition'))
+      const id = own.json().content.id as string
+      await patch('editor', id, { status: 'published' })
+      await patch('editor', id, { status: 'draft' })
+
+      const publishedRevision = (await historyOf('editor', id)).json().revisions[0]
+      expect(publishedRevision.status).toBe('published')
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/content/post/${id}/revisions/${publishedRevision.id}/restore`,
+        cookies: as('contributor'),
+        payload: { expectedVersion: await versionOf('contributor', id) },
+      })
+
       expect(response.statusCode).toBe(403)
     })
   })

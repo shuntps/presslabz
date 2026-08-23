@@ -600,7 +600,8 @@ export interface UpdateContentOptions {
    * wins silently and the earlier author's work is gone.
    *
    * `'any'` is for writes that are not somebody's edit of a document they were
-   * looking at — a restore of a revision, a migration, a scheduler.
+   * looking at — a migration, a scheduler. A restore is somebody's edit: it
+   * states the version the editor had open, like any other save.
    */
   readonly expectedVersion: number | 'any'
 }
@@ -1051,7 +1052,14 @@ async function pruneRevisions(tx: Transaction, contentId: string): Promise<void>
 
 export type ContentRevisionRow = typeof contentRevisions.$inferSelect
 
-/** A document's history, newest first. */
+/**
+ * A document's history, newest first.
+ *
+ * Ordered by `version` alone: it is strictly increasing per document — every
+ * write is `current.version + 1` under the row lock, restores included — so it
+ * is the domain's own order and needs no tiebreaker. `createdAt` says when a
+ * state was superseded, which is display data, not the sequence.
+ */
 export async function listRevisions(
   db: Database,
   contentId: string,
@@ -1061,7 +1069,7 @@ export async function listRevisions(
     .select()
     .from(contentRevisions)
     .where(eq(contentRevisions.contentId, contentId))
-    .orderBy(desc(contentRevisions.createdAt), desc(contentRevisions.version))
+    .orderBy(desc(contentRevisions.version))
     .limit(Math.min(REVISION_LIMIT, Math.max(1, Math.trunc(limit))))
 }
 

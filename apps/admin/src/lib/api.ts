@@ -11,6 +11,8 @@
  * the browser's address bar; see vite-env.d.ts and .env.example for why the
  * two cannot be mixed.
  */
+import type { ApiErrorDetails } from '@presslabz/core'
+
 export const API_URL = import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3000'
 
 /**
@@ -47,6 +49,14 @@ export class ApiError extends Error {
    * guess, or to say "conflict" and let the author work out what kind.
    */
   readonly reason: string | undefined
+  /**
+   * A structured error body, present only when the caller supplied a contract
+   * and the body satisfied it. Typed by the closed union in `@presslabz/core`
+   * rather than `unknown`, so this never becomes a carrier of raw bodies: a
+   * response that does not parse attaches nothing, and the screen falls back
+   * to the named message alone.
+   */
+  readonly details: ApiErrorDetails | undefined
 
   /**
    * Assigned in the body rather than declared as constructor parameter
@@ -54,18 +64,32 @@ export class ApiError extends Error {
    * one rule: they are the syntax Node refuses to strip, and code that moves
    * into a shared package should not have to be rewritten to make the move.
    */
-  constructor(status: number, code: string, reason?: string) {
+  constructor(status: number, code: string, reason?: string, details?: ApiErrorDetails) {
     super(code)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.reason = reason
+    this.details = details
   }
 }
 
 export interface ApiFetchInit extends RequestInit {
   /** Overridden for uploads, which are legitimately slow. */
   timeoutMs?: number
+  /**
+   * A contract for one structured error body this caller can act on, from
+   * `@presslabz/core` like `schema` below. When the response fails and the
+   * body satisfies it, the validated value rides on `ApiError.details`;
+   * anything else attaches nothing. `safeParse` rather than `parse`: a body
+   * that does not match is not itself an error — the response already failed.
+   */
+  errorDetails?: ErrorDetailsParser
+}
+
+/** Structural like `Parser`, so this file still does not know Zod. */
+interface ErrorDetailsParser {
+  safeParse: (value: unknown) => { success: true; data: ApiErrorDetails } | { success: false }
 }
 
 /**
@@ -92,7 +116,7 @@ export async function apiFetch<T>(
   path: string,
   init: ApiFetchInit & { schema?: Parser<T> } = {},
 ): Promise<T> {
-  const { timeoutMs = REQUEST_TIMEOUT_MS, signal, schema, ...rest } = init
+  const { timeoutMs = REQUEST_TIMEOUT_MS, signal, schema, errorDetails, ...rest } = init
 
   /*
    * The caller's own signal still cancels — a component that unmounts should
@@ -142,7 +166,11 @@ export async function apiFetch<T>(
   if (!response.ok) {
     const code = typeof body?.error === 'string' ? body.error : 'unexpected'
     const reason = typeof body?.reason === 'string' ? body.reason : undefined
-    throw new ApiError(response.status, code, reason)
+    // This is the only place the raw error body exists, which is why the
+    // contract is applied here and never downstream: past this line, either
+    // the validated details travel on the error or nothing does.
+    const details = errorDetails?.safeParse(body)
+    throw new ApiError(response.status, code, reason, details?.success ? details.data : undefined)
   }
 
   if (!schema) return body as T
