@@ -38,7 +38,7 @@ catalog:
   # Language and tooling
   typescript: 7.0.2
   turbo: 2.10.10
-  '@biomejs/biome': 2.5.8
+  '@biomejs/biome': 2.5.10
   'subset-font': 2.5.0
   vitest: 4.1.11
   knip: 6.32.2
