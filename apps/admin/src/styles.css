@@ -1617,6 +1617,47 @@ button.tiny {
   overflow-wrap: anywhere;
 }
 
+/* A sibling of the editor fieldset, not a control inside it: asking for a
+   preview is a read, and the disabled fieldset must not close it. Above the
+   editor, which is the one position that is the same on a narrow screen and
+   a wide one — below, a full-height editor would push it out of reach. */
+.preview {
+  display: grid;
+  gap: var(--pl-space-2);
+  padding: var(--pl-space-3) var(--pl-gutter);
+  border-bottom: var(--pl-border-width) solid var(--pl-color-border);
+  background: var(--pl-color-bg-subtle);
+  font-size: var(--pl-text-sm);
+}
+
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-3);
+  align-items: center;
+}
+
+.preview-link {
+  display: grid;
+  gap: var(--pl-space-2);
+  max-width: var(--pl-measure);
+}
+
+.preview-link input {
+  font-size: var(--pl-text-xs);
+}
+
+.preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pl-space-3);
+  align-items: center;
+}
+
+.preview p {
+  margin: 0;
+}
+
 .history-meta {
   margin: 0;
   padding: var(--pl-space-3);

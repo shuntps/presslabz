@@ -1,3 +1,5 @@
+import { previewLinkSchema } from '@presslabz/core'
+import { previewPath } from '@presslabz/core/preview'
 import { describe, expect, it } from 'vitest'
 import { envSchema } from './env.schema.ts'
 
@@ -238,5 +240,58 @@ describe('the admin origins', () => {
   it('names the entry that is wrong rather than the list', () => {
     const result = parse({ ADMIN_ORIGIN: 'https://admin.example, nonsense' })
     expect(messagesOf(result).join('\n')).toContain('"nonsense"')
+  })
+})
+
+/*
+ * The configuration and the response contract describe one address, so a
+ * configuration this accepts must never produce a link the contract refuses.
+ * It used to: `z.url()` took `ftp://…`, the route answered 200 with an FTP
+ * URL, and the admin's shared contract refused the body it had just been
+ * sent. `javascript:` and `mailto:` were accepted too, and made building the
+ * link throw instead.
+ */
+describe('the public site address', () => {
+  it.for([
+    'http://localhost:4321',
+    'http://127.0.0.1:4321',
+    'https://exemple.com',
+    'http://site.internal',
+  ])('accepts the HTTP or HTTPS address %s', (SITE_URL) => {
+    const result = parse({ SITE_URL })
+    expect(result.success).toBe(true)
+    expect(result.success && result.data.SITE_URL).toBe(SITE_URL)
+  })
+
+  it.for(['ftp://host/site', 'javascript:alert(1)', 'mailto:someone@example.com', 'nonsense'])(
+    'refuses %s at startup rather than at the first preview',
+    (SITE_URL) => {
+      expect(parse({ SITE_URL }).success).toBe(false)
+    },
+  )
+
+  it('builds links the shared contract accepts, for representative addresses', () => {
+    /*
+     * A sample, not a proof over every accepted address. What makes the
+     * guarantee structural is that this schema and the response contract are
+     * the *same* protocol schema — `webUrl` in packages/core — rather than two
+     * definitions that happen to agree today. These three stand for the shapes
+     * that differ in kind: a loopback name, a public host, a private address.
+     */
+    for (const SITE_URL of [
+      'http://localhost:4321',
+      'https://exemple.com',
+      'http://10.0.0.5:8080',
+    ]) {
+      const parsed = parse({ SITE_URL })
+      expect(parsed.success).toBe(true)
+
+      const built = new URL(previewPath('en', 'a-token'), SITE_URL).toString()
+      expect(
+        previewLinkSchema.safeParse({
+          preview: { url: built, expiresAt: '2026-01-01T00:00:00.000Z' },
+        }).success,
+      ).toBe(true)
+    }
   })
 })

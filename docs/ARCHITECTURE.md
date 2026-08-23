@@ -4,7 +4,7 @@ The decisions the implementation follows, written down before the code exists so
 
 ## Status
 
-**Phases 0 to 4 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. An unpublished document opens through a signed, short-lived link. The extension API is exposed and validated: the cache invalidation the site depends on is itself a module registered on it, with no privileged path into the core.
+**Phases 0 to 4 landed.** You can sign in, write a document out of typed blocks, upload an image into it, publish it, and write its translation — in either language, in either theme — and then read it on the public site, through a theme, at a prefixed locale URL. The site announces its translations reciprocally, publishes a sitemap and a feed per section, caches every page in Valkey and drops exactly the affected ones the moment the API says a document changed. A document opens through a signed, short-lived link, whatever its status. The extension API is exposed and validated: the cache invalidation the site depends on is itself a module registered on it, with no privileged path into the core.
 
 All of it is verified end to end against a real database, a real Valkey and a real object store, including the public site: the suite starts what production starts and asks it questions over a socket.
 
@@ -582,7 +582,7 @@ Four responses are never kept, each for a reason somebody else's cache has learn
 
 ### Preview
 
-An unpublished document opens through a **signed token in the URL**, not through the session cookie. The cookie is host-only and `SameSite=Lax`, so a public site on another host cannot read it, and the fix people reach for — widening it to `Domain=.example.com` — hands the session to every subdomain that exists now or later. A token names one document, expires in minutes, and works whether the two apps share a host or not.
+A document opens through a **signed token in the URL**, not through the session cookie — whatever its status, including states the site would not otherwise serve. The cookie is host-only and `SameSite=Lax`, so a public site on another host cannot read it, and the fix people reach for — widening it to `Domain=.example.com` — hands the session to every subdomain that exists now or later. A token names one document, expires in minutes, and works whether the two apps share a host or not.
 
 It is a bearer token in a URL, which is the honest cost: URLs reach logs, referrers and screenshots. So the lifetime is short, it names a document rather than an actor, and the page it opens sends `no-store`, `noindex` and `no-referrer` — that last one because a link clicked from a preview would otherwise hand the token to wherever it points.
 

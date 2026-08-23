@@ -2,7 +2,7 @@ import { LOCALES } from '@presslabz/i18n'
 import { THEME_PREFERENCES } from '@presslabz/tokens/preferences'
 import { describe, expect, it } from 'vitest'
 import { CAPABILITIES, type Capability, capabilitiesFor, ROLES } from './capabilities.ts'
-import { sessionResponseSchema, sessionUserSchema } from './contracts.ts'
+import { previewLinkSchema, sessionResponseSchema, sessionUserSchema } from './contracts.ts'
 
 /*
  * The session response is the one body the admin used to take on trust, so
@@ -150,5 +150,48 @@ describe('the session response contract', () => {
     expect(sessionResponseSchema.safeParse({ user: { ...valid, role: 'root' } }).success).toBe(
       false,
     )
+  })
+})
+
+/*
+ * The preview link is rendered as something somebody clicks, so its protocol
+ * is part of the contract rather than a detail. `z.url()` alone accepts
+ * `javascript:` and `data:`; `z.httpUrl()` refuses `localhost` and loopback
+ * addresses, which every development installation uses and some private
+ * deployments do too. These pin both halves of that.
+ */
+describe('the preview link contract', () => {
+  const link = (url: string) => ({
+    preview: { url, expiresAt: '2026-01-01T00:10:00.000Z' },
+  })
+
+  it.for([
+    'https://exemple.com/en/preview/abc.def',
+    'http://localhost:4321/en/preview/abc.def',
+    'http://127.0.0.1:4321/en/preview/abc.def',
+    'http://site.internal/en/preview/abc.def',
+  ])('accepts the HTTP or HTTPS address %s', (url) => {
+    expect(previewLinkSchema.parse(link(url)).preview.url).toBe(url)
+  })
+
+  it.for(['javascript:alert(1)', 'data:text/html,<script>', 'ftp://host/file', 'not-a-url'])(
+    'refuses %s',
+    (url) => {
+      expect(previewLinkSchema.safeParse(link(url)).success).toBe(false)
+    },
+  )
+
+  it('refuses an expiry that is not an ISO instant', () => {
+    const url = 'https://exemple.com/en/preview/abc.def'
+
+    expect(previewLinkSchema.safeParse({ preview: { url, expiresAt: 'soon' } }).success).toBe(false)
+    expect(
+      previewLinkSchema.safeParse({ preview: { url, expiresAt: 1_767_225_000_000 } }).success,
+    ).toBe(false)
+  })
+
+  it('refuses a body that is missing either half', () => {
+    expect(previewLinkSchema.safeParse({ preview: {} }).success).toBe(false)
+    expect(previewLinkSchema.safeParse({}).success).toBe(false)
   })
 })

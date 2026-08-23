@@ -71,12 +71,21 @@ export function messageForError(error: unknown): MessageKey {
       return 'error.tooManyRequests'
     case 503:
       /*
-       * The one 5xx somebody can do something about: wait. The server says so
-       * with a closed reason rather than a message, so this is the only 503
-       * that reads differently — any other one is still "broken over there",
-       * because it is.
+       * The two 5xx answers that are not "broken over there".
+       *
+       * Both are recognised by their exact answer rather than by the status:
+       * an upload refused for capacity is temporary and worth retrying, and a
+       * preview refused for configuration is an installation that was never
+       * set up — neither is a fault of the person reading the message, and
+       * neither is a server that fell over. Matching the code *and* the
+       * reason is what keeps a future `preview_unavailable` for some other
+       * reason from being mistold as missing configuration.
        */
-      return error.reason === 'upload-capacity' ? 'error.busy' : 'error.server'
+      if (error.reason === 'upload-capacity') return 'error.busy'
+      if (error.code === 'preview_unavailable' && error.reason === 'no-preview-configuration') {
+        return 'error.previewUnavailable'
+      }
+      return 'error.server'
     default:
       return error.status >= 500 ? 'error.server' : 'error.unexpected'
   }

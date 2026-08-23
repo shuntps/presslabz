@@ -11,6 +11,7 @@ import {
   type MediaSummary,
   mediaDocumentSchema,
   mediaPageSchema,
+  previewLinkSchema,
   revisionDetailSchema,
   revisionListSchema,
   sessionResponseSchema,
@@ -191,6 +192,8 @@ export function fakeApi(options: FakeApiOptions = {}) {
    */
   const documents: Record<string, unknown>[] = structuredClone(options.documents ?? [])
   const revisions: Record<string, unknown>[] = structuredClone(options.revisions ?? [])
+  /** How many preview links this fake has minted, so each one is distinguishable. */
+  let previews = 0
   const media: FakeMedia[] = structuredClone(options.media ?? [])
   const creationPermissions = options.creationPermissions ?? FULL_CREATION_PERMISSIONS
   const documentPermissions = options.documentPermissions ?? FULL_DOCUMENT_PERMISSIONS
@@ -328,6 +331,28 @@ export function fakeApi(options: FakeApiOptions = {}) {
       return json({ content: found }, 200, contentDocumentSchema)
     }
 
+    if (method === 'POST' && url.pathname.endsWith('/preview')) {
+      const documentId = url.pathname.split('/').at(-2)
+      const found = documents.find((document) => document.id === documentId)
+      if (!found) return json({ error: 'not_found' }, 404)
+
+      /*
+       * A different token each time, so a test can tell a renewed link from
+       * the one it replaced. The shape is the real one — the API signs it,
+       * this only has to be something the contract accepts.
+       */
+      previews += 1
+      return json(
+        {
+          preview: {
+            url: `http://localhost:4321/${found.locale}/preview/token-${previews}`,
+            expiresAt: '2026-01-01T00:10:00.000Z',
+          },
+        },
+        200,
+        previewLinkSchema,
+      )
+    }
     if (method === 'GET' && /\/revisions\/[^/]+$/.test(url.pathname)) {
       const revisionId = url.pathname.split('/').pop()
       const found = revisions.find((revision) => revision.id === revisionId)

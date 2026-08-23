@@ -3,6 +3,7 @@ import {
   type ContentPage,
   contentDocumentSchema,
   contentPageSchema,
+  previewLinkSchema,
   type Role,
   revisionDetailSchema,
   revisionListSchema,
@@ -1024,7 +1025,9 @@ describe.skipIf(!ready)('content routes', () => {
 
       expect(response.statusCode).toBe(200)
 
-      const { url, expiresAt } = response.json().preview
+      // Parsed with the contract the admin faces, so the route cannot start
+      // sending a shape the interface refuses without this failing first.
+      const { url, expiresAt } = previewLinkSchema.parse(response.json()).preview
       const locale = created.json().content.locale as string
 
       // The link opens the document in its own language, whatever the actor's.

@@ -79,6 +79,22 @@ test.describe('every screen, scanned', () => {
    * this test's own — editing a shared fixture would rewrite what the other
    * specs assert about it.
    */
+  /*
+   * The preview surface once it holds a link, which is when it has anything
+   * to scan: a labelled read-only field, an outbound link and a copy button.
+   */
+  test('the preview surface, holding a link', async ({ page }) => {
+    await page.goto('/content/post/new')
+    await page.getByLabel(/document title/i).fill('Scanned preview')
+    await page.getByRole('button', { name: /^save$/i }).click()
+    await expect(page).toHaveURL(/\/content\/post\/[0-9a-f-]{36}$/)
+
+    await page.getByRole('button', { name: /^preview link$/i }).click()
+    await expect(page.getByLabel(/preview link/i)).toBeVisible()
+
+    expect(await audit(page)).toEqual([])
+  })
+
   test('the revision history, list and inspection open', async ({ page }) => {
     await page.goto('/content/post/new')
     await page.getByLabel(/document title/i).fill('Scanned history')

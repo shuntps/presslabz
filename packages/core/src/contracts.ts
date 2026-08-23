@@ -253,6 +253,37 @@ export type MediaPage = z.infer<typeof mediaPageSchema>
 export const mediaDocumentSchema = z.object({ media: mediaSummarySchema })
 
 /**
+ * An address a browser may be sent to over the web.
+ *
+ * `z.url()` is deliberately permissive and accepts `javascript:`, `data:`,
+ * `ftp:` and `mailto:`; `z.httpUrl()` constrains the protocol but also refuses
+ * `localhost`, loopback addresses and single-label private hosts, which every
+ * development installation uses and some private deployments do too. This
+ * accepts HTTP and HTTPS on any host, those included, and refuses the rest.
+ *
+ * Declared once because both ends need the same answer: the response contract
+ * below, and the `SITE_URL` an installation is configured with. A
+ * configuration looser than the contract is a configuration that boots, is
+ * accepted, and then produces a body the interface refuses — or a URL that
+ * cannot be built at all.
+ */
+export const webUrl = z.url({ protocol: /^https?$/ })
+
+/**
+ * A signed link that opens one document on the public site — whatever its
+ * status, including states the site would not otherwise serve.
+ */
+export const previewLinkSchema = z.object({
+  preview: z.object({
+    url: webUrl,
+    /** When the link stops working. The lifetime is the installation's to set. */
+    expiresAt: instant,
+  }),
+})
+
+export type PreviewLink = z.infer<typeof previewLinkSchema>['preview']
+
+/**
  * How many rows a page holds when the client does not say.
  *
  * Small enough that the first screen arrives quickly, large enough that most

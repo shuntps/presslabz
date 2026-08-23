@@ -8,7 +8,8 @@ import { documentView, siteContext } from '../../../lib/view.ts'
 import { theme } from '../../../theme.ts'
 
 /**
- * An unpublished document, opened by whoever holds a live token.
+ * A document, opened by whoever holds a live token — whatever its status,
+ * including states this site would not otherwise serve.
  *
  * The token is the whole authorization. It is signed by the API with a secret
  * this site also holds, it names one document, and it expires in minutes —

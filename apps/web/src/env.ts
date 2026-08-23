@@ -1,4 +1,4 @@
-import { resolveMediaBase } from '@presslabz/core'
+import { resolveMediaBase, webUrl } from '@presslabz/core'
 import { type LocaleConfig, resolveLocaleConfig } from '@presslabz/i18n'
 import { z } from 'zod'
 
@@ -27,7 +27,8 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.url(),
   /** Absolute URLs — canonical tags, hreflang, the sitemap — are built on it. */
-  SITE_URL: z.url().default('http://localhost:4321'),
+  /* HTTP or HTTPS only, like the API's: the two describe one address. */
+  SITE_URL: webUrl.default('http://localhost:4321'),
   /*
    * The name a reader sees. An environment variable until settings are
    * exposed: it belongs in the settings table, and putting it there now would

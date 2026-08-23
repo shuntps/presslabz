@@ -21,7 +21,7 @@ A running installation does all of this now, end to end:
 - Write the translation: each translation is its own document with its own slug and status, linked through a translation group. A French draft can sit behind a published English original.
 - Read it on the public site, rendered through a theme, in English or French, in light or dark mode, with a language switcher, reciprocal `hreflang`, a sitemap, feeds, and a robots file.
 - Pages are cached in Valkey by tag and purged the moment the content behind them changes.
-- Share an unpublished draft through a short-lived signed preview link.
+- Share a document that is not on the site yet through a short-lived signed preview link.
 - Restore any of a document's last fifty revisions.
 
 ## What is incomplete or future

@@ -69,6 +69,57 @@ function serverSays(options: FakeApiOptions) {
   vi.stubGlobal('fetch', api.fetchMock)
 }
 
+const jsonResponse = (body: unknown, status: number) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+
+/** Overrides chosen routes; everything else still reaches the fake API. */
+function routesAnswering(
+  match: (method: string, path: string) => Response | Promise<Response> | null,
+) {
+  const inner = api.fetchMock
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input))
+      const overridden = match(init.method ?? 'GET', url.pathname)
+      return overridden ? Promise.resolve(overridden) : inner(input, init)
+    }),
+  )
+}
+
+/**
+ * Suspends chosen routes until released; everything else reaches the fake.
+ * With an `answer`, the released route resolves to it instead of the fake —
+ * a request that hangs and then fails, deterministically.
+ */
+function gatedRoutes(match: (method: string, path: string) => boolean, answer?: () => Response) {
+  const inner = api.fetchMock
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input))
+      if (match(init.method ?? 'GET', url.pathname)) {
+        return gate.then(() => (answer ? answer() : inner(input, init)))
+      }
+      return inner(input, init)
+    }),
+  )
+  return release
+}
+
+const editorFieldset = () => {
+  const fieldset = document.querySelector('fieldset.editor')
+  if (!(fieldset instanceof HTMLFieldSetElement)) throw new Error('no editor fieldset')
+  return fieldset
+}
+
 async function open(path: string) {
   renderApp()
   await signIn()
@@ -748,27 +799,6 @@ describe('revision history', () => {
     return screen.findByRole('dialog')
   }
 
-  const jsonResponse = (body: unknown, status: number) =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { 'content-type': 'application/json' },
-    })
-
-  /** Overrides chosen routes; everything else still reaches the fake API. */
-  function routesAnswering(
-    match: (method: string, path: string) => Response | Promise<Response> | null,
-  ) {
-    const inner = api.fetchMock
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
-        const url = new URL(String(input))
-        const overridden = match(init.method ?? 'GET', url.pathname)
-        return overridden ? Promise.resolve(overridden) : inner(input, init)
-      }),
-    )
-  }
-
   it('withholds the control when the server says the document is not editable', async () => {
     serverSays({ documents: [liveDocument({ update: false, delete: false, statuses: [] })] })
     await open('/content/post/doc-1')
@@ -1261,36 +1291,6 @@ describe('revision history', () => {
     expect(dialog.textContent).not.toContain('raw-id-9')
   })
 
-  /**
-   * Suspends chosen routes until released; everything else reaches the fake.
-   * With an `answer`, the released route resolves to it instead of the fake —
-   * a request that hangs and then fails, deterministically.
-   */
-  function gatedRoutes(match: (method: string, path: string) => boolean, answer?: () => Response) {
-    const inner = api.fetchMock
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
-        const url = new URL(String(input))
-        if (match(init.method ?? 'GET', url.pathname)) {
-          return gate.then(() => (answer ? answer() : inner(input, init)))
-        }
-        return inner(input, init)
-      }),
-    )
-    return release
-  }
-
-  const editorFieldset = () => {
-    const fieldset = document.querySelector('fieldset.editor')
-    if (!(fieldset instanceof HTMLFieldSetElement)) throw new Error('no editor fieldset')
-    return fieldset
-  }
-
   it('cannot be dismissed while a restore is in flight', async () => {
     await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
     routesAnswering((method, path) =>
@@ -1495,5 +1495,356 @@ describe('revision history', () => {
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /^history$/i }))
+  })
+})
+
+describe('preview links', () => {
+  const permitted = (statuses: readonly string[] = ['draft', 'published']) => ({
+    update: true,
+    delete: true,
+    statuses,
+  })
+
+  /** jsdom ships no Clipboard API at all, so every test decides what exists. */
+  function clipboardAnswering(answer: 'ok' | 'refused' | 'absent') {
+    if (answer === 'absent') {
+      Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+      return { written: [] as string[] }
+    }
+    const written: string[] = []
+    const writeText = vi.fn((value: string) => {
+      if (answer === 'refused') return Promise.reject(new DOMException('no', 'NotAllowedError'))
+      written.push(value)
+      return Promise.resolve()
+    })
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    return { written }
+  }
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+  })
+
+  async function openLive(options: FakeApiOptions = {}) {
+    serverSays({ documents: [liveDocument(permitted())], ...options })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+  }
+
+  const ask = () => screen.getByRole('button', { name: /^preview link$/i })
+
+  it('is not offered for a document that does not exist yet', async () => {
+    await openNewDocument()
+
+    expect(screen.queryByRole('button', { name: /preview link/i })).toBeNull()
+  })
+
+  it('hands over a link, its absolute expiry, and what holding it means', async () => {
+    clipboardAnswering('ok')
+    await openLive()
+
+    await userEvent.click(ask())
+
+    const field = (await screen.findByLabelText(/preview link/i)) as HTMLInputElement
+    expect(field.readOnly).toBe(true)
+    expect(field.value).toBe('http://localhost:4321/en/preview/token-1')
+
+    // The instant the server sent, on the element, formatted for the reader.
+    const when = document.querySelector('time')
+    expect(when?.getAttribute('datetime')).toBe('2026-01-01T00:10:00.000Z')
+    expect(when?.textContent).toMatch(/2026/)
+
+    // Said plainly, because the link is a bearer token.
+    expect(screen.getByText(/anyone with this link/i)).toBeDefined()
+
+    // Opened safely: the contract allows http and https only, and the token
+    // is in the URL, so nothing may carry it onward as a referrer.
+    const opener = screen.getByRole('link', { name: /^open$/i })
+    expect(opener.getAttribute('target')).toBe('_blank')
+    expect(opener.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  it('leaves the focus on the button that was pressed, and announces the link', async () => {
+    clipboardAnswering('ok')
+    await openLive()
+    const button = ask()
+
+    await userEvent.click(button)
+    await screen.findByLabelText(/preview link/i)
+
+    // An inline update, not a dialog: taking the keyboard away from the
+    // control somebody just used would be the dialog's behaviour, not this.
+    expect(document.activeElement).toBe(button)
+    expect(screen.getByRole('status').textContent).toMatch(/preview link ready/i)
+  })
+
+  it('warns that a preview shows the last saved version, without saving anything', async () => {
+    clipboardAnswering('ok')
+    await openLive()
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+
+    expect(screen.getByText(/last saved version/i)).toBeDefined()
+    // Warned, not acted upon: nothing was written to the server.
+    expect(api.requests.some((request) => request.route.startsWith('PATCH'))).toBe(false)
+  })
+
+  it('copies when the browser allows it', async () => {
+    const clipboard = clipboardAnswering('ok')
+    await openLive()
+    await userEvent.click(ask())
+    await screen.findByLabelText(/preview link/i)
+
+    await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+    expect(clipboard.written).toEqual(['http://localhost:4321/en/preview/token-1'])
+    expect(await screen.findByText(/^copied\.$/i)).toBeDefined()
+  })
+
+  it('says how to copy by hand when the browser refuses', async () => {
+    clipboardAnswering('refused')
+    await openLive()
+    await userEvent.click(ask())
+    await screen.findByLabelText(/preview link/i)
+
+    await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+    // A refusal is the browser's decision, not a failure of the server or of
+    // the person: calm instruction, and never an alert.
+    expect(await screen.findByText(/did not allow copying/i)).toBeDefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+    // The link is still there to select by hand, which is the whole fallback.
+    expect((screen.getByLabelText(/preview link/i) as HTMLInputElement).value).toContain(
+      '/preview/',
+    )
+  })
+
+  it('offers no copy button at all where the API does not exist', async () => {
+    clipboardAnswering('absent')
+    await openLive()
+
+    await userEvent.click(ask())
+    await screen.findByLabelText(/preview link/i)
+
+    expect(screen.queryByRole('button', { name: /^copy$/i })).toBeNull()
+    // Absent, and said so: a missing affordance with no explanation reads as
+    // a broken one. The field stays selectable, which is the whole fallback.
+    expect(screen.getByText(/no way to copy for you/i)).toBeDefined()
+    expect((screen.getByLabelText(/preview link/i) as HTMLInputElement).readOnly).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('renews the link, replacing the one before it', async () => {
+    clipboardAnswering('ok')
+    await openLive()
+    await userEvent.click(ask())
+    await screen.findByLabelText(/preview link/i)
+
+    // The action says what it now does.
+    const renew = screen.getByRole('button', { name: /^renew link$/i })
+    await userEvent.click(renew)
+
+    await waitFor(() => {
+      expect((screen.getByLabelText(/preview link/i) as HTMLInputElement).value).toBe(
+        'http://localhost:4321/en/preview/token-2',
+      )
+    })
+    expect(api.requests.filter((request) => request.route.endsWith('/preview'))).toHaveLength(2)
+  })
+
+  it('reports an installation with no preview configuration as configuration', async () => {
+    await openLive()
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/preview')
+        ? jsonResponse({ error: 'preview_unavailable', reason: 'no-preview-configuration' }, 503)
+        : null,
+    )
+
+    await userEvent.click(ask())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/not available on this installation/i)
+    expect(alert.textContent).toMatch(/administrator/i)
+    // Never the secret, and never a server-fell-over message.
+    expect(alert.textContent).not.toMatch(/secret|ran into a problem/i)
+  })
+
+  it('does not mistell another 503 as missing configuration', async () => {
+    await openLive()
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/preview')
+        ? jsonResponse({ error: 'preview_unavailable', reason: 'some-other-reason' }, 503)
+        : null,
+    )
+
+    await userEvent.click(ask())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).not.toMatch(/not available on this installation/i)
+    expect(alert.textContent).toMatch(/ran into a problem/i)
+  })
+
+  it('shows a refusal through the shared table', async () => {
+    await openLive()
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/preview')
+        ? jsonResponse({ error: 'forbidden' }, 403)
+        : null,
+    )
+
+    await userEvent.click(ask())
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/do not have permission/i)
+  })
+
+  it('shows a request that never got an answer through the shared table', async () => {
+    await openLive()
+    const inner = api.fetchMock
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        // What a dead API actually does to fetch: no response, no status.
+        if ((init.method ?? 'GET') === 'POST' && String(input).endsWith('/preview')) {
+          return Promise.reject(new TypeError('Failed to fetch'))
+        }
+        return inner(input, init)
+      }),
+    )
+
+    await userEvent.click(ask())
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/did not answer/i)
+  })
+
+  /*
+   * The reason this surface is a sibling of the editor's fieldset rather than
+   * a control inside it. A disabled fieldset disables everything it contains,
+   * and nothing nested re-enables it — while the API lets somebody who may
+   * read a published document mint its link without being able to edit it.
+   */
+  it('works on a document this actor may read but not edit', async () => {
+    clipboardAnswering('ok')
+    serverSays({
+      documents: [liveDocument({ update: false, delete: false, statuses: [] })],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+
+    /*
+     * Asked of the platform rather than of the property: `element.disabled`
+     * reflects a control's own attribute, and these carry none — they are
+     * disabled because an ancestor fieldset is, which is exactly the
+     * inheritance this surface had to escape. `:disabled` is what the
+     * platform actually computes.
+     */
+    expect(screen.getByPlaceholderText(/^title$/i).matches(':disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: /^save$/i }).matches(':disabled')).toBe(true)
+
+    // …and the preview action is not, and reaches the server.
+    const button = ask()
+    expect(button.matches(':disabled')).toBe(false)
+    await userEvent.click(button)
+
+    expect(await screen.findByLabelText(/preview link/i)).toBeDefined()
+    expect(api.requests.some((request) => request.route.endsWith('/preview'))).toBe(true)
+  })
+
+  it('is closed while a save is in flight, since it no longer inherits the freeze', async () => {
+    await openLive()
+    const release = gatedRoutes(
+      (method, path) => method === 'PATCH' && path.startsWith('/content/'),
+    )
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    // A link minted mid-write would show a stored state about to be replaced.
+    await waitFor(() => expect(ask()).toHaveProperty('disabled', true))
+    release()
+    await waitFor(() => expect(ask()).toHaveProperty('disabled', false))
+  })
+
+  it('is closed while a restore is in flight', async () => {
+    await openLive({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore') ? new Promise<Response>(() => {}) : null,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: /^history$/i }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+    await within(dialog).findByRole('button', { name: /restoring/i })
+
+    expect(ask()).toHaveProperty('disabled', true)
+  })
+
+  /*
+   * A copy of the first link can settle after somebody renewed it. Saying
+   * "Copied." under the link now on screen would then be false: the clipboard
+   * holds the one before it.
+   */
+  it.for(['resolved', 'refused'] as const)(
+    'never claims the visible link was copied when an older copy %s late',
+    async (outcome) => {
+      let settle!: () => void
+      const held = new Promise<void>((resolve) => {
+        settle = resolve
+      })
+      // The parameter is declared so the recorded call can be read back: an
+      // untyped mock records a zero-length tuple.
+      const writeText = vi.fn((_url: string) =>
+        held.then(() => (outcome === 'refused' ? Promise.reject(new Error('no')) : undefined)),
+      )
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      await openLive()
+      await userEvent.click(ask())
+      await screen.findByLabelText(/preview link/i)
+
+      // Copying the first link, and the promise stays open.
+      await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+      await userEvent.click(screen.getByRole('button', { name: /^renew link$/i }))
+      await waitFor(() => {
+        expect((screen.getByLabelText(/preview link/i) as HTMLInputElement).value).toBe(
+          'http://localhost:4321/en/preview/token-2',
+        )
+      })
+
+      // Only now does the copy of token-1 finish.
+      settle()
+      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+
+      // Whatever it answered, it was about a link no longer on screen.
+      expect(screen.queryByText(/^copied\.$/i)).toBeNull()
+      expect(screen.queryByText(/did not allow copying/i)).toBeNull()
+      expect(writeText.mock.calls[0]?.[0]).toBe('http://localhost:4321/en/preview/token-1')
+    },
+  )
+
+  it('forgets the link when another document is opened', async () => {
+    clipboardAnswering('ok')
+    serverSays({
+      documents: [
+        liveDocument(permitted()),
+        { ...liveDocument(permitted()), id: 'doc-2', slug: 'another', title: 'Another document' },
+      ],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    await userEvent.click(ask())
+    await screen.findByLabelText(/preview link/i)
+
+    window.history.pushState({}, '', '/content/post/doc-2')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await screen.findByDisplayValue('Another document')
+
+    // A bearer token belongs to the document it was minted for, and to the
+    // visit that asked: the editor is keyed by id, so this surface goes with
+    // it rather than carrying a link across.
+    expect(screen.queryByLabelText(/preview link/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /^preview link$/i })).toBeDefined()
   })
 })
