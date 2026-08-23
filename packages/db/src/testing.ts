@@ -3,7 +3,7 @@ import { eq, sql } from 'drizzle-orm'
 import type { Sql } from 'postgres'
 import type { Database } from './client.ts'
 import { mediaReferenceSync } from './schema/content-media.ts'
-import { contents } from './schema/contents.ts'
+import { contentRevisions, contents } from './schema/contents.ts'
 
 /**
  * Whether the integration environment is present, and a refusal to pretend it
@@ -364,6 +364,29 @@ export const settle = (): Promise<unknown> => new Promise((resolve) => setTimeou
 export function held<T>(promise: Promise<T>): Promise<T> {
   promise.catch(() => {})
   return promise
+}
+
+/**
+ * Plants a revision row exactly as given, bypassing every write rule.
+ *
+ * For the one situation the write path cannot produce on purpose: a snapshot
+ * written under rules that no longer exist. Every real write validates the
+ * state before recording what it supersedes, so the only way a suite can hold
+ * an incompatible revision — an old block vocabulary, a shape the current
+ * type refuses — is to plant one. The revision-detail and restore routes have
+ * to answer such rows, because time produces them even though code cannot.
+ *
+ * It lives here rather than in the suites because inserting means reaching
+ * for drizzle and the schema, and the API's tests deliberately have neither.
+ */
+export async function plantRevision(
+  db: Database,
+  values: typeof contentRevisions.$inferInsert,
+): Promise<typeof contentRevisions.$inferSelect> {
+  const rows = await db.insert(contentRevisions).values(values).returning()
+  const row = rows[0]
+  if (!row) throw new Error('planting a revision returned no row')
+  return row
 }
 
 /**

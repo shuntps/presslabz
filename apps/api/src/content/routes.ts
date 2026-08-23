@@ -25,6 +25,7 @@ import {
   ContentConflictError,
   type ContentConflictReason,
   ContentForbiddenError,
+  type ContentRevisionRow,
   type ContentRow,
   type ContentState,
   countContents,
@@ -226,6 +227,35 @@ function resolveType(
 
 function actorOf(user: AuthenticatedUser) {
   return { capabilities: user.capabilities, id: user.id }
+}
+
+/**
+ * Whether this actor may modify the document as it currently stands — the
+ * conclusion `permissions.update` serves the interface, asked again on the
+ * server. It gates everything history-shaped: the list, the detail, and the
+ * restore route before it even looks the revision up, so a revision id's
+ * existence is never confirmed to an actor who may not see the history it
+ * came from. The restore's own transition is authorized again inside the
+ * write transaction, under the row lock; this gate never replaces that.
+ */
+function mayEditCurrent(type: AnyContentType, actor: Actor, row: ContentRow): boolean {
+  return canWrite(type, { currentStatus: row.status, nextStatus: row.status }, actor, {
+    authorId: row.authorId,
+  })
+}
+
+/** The list's projection of one revision — no `authorId`, and the capture instant as `archivedAt`. */
+function summarizeRevision(revision: ContentRevisionRow) {
+  return {
+    id: revision.id,
+    version: revision.version,
+    slug: revision.slug,
+    title: revision.title,
+    excerpt: revision.excerpt,
+    status: revision.status,
+    publishedAt: revision.publishedAt,
+    archivedAt: revision.createdAt,
+  }
 }
 
 export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
@@ -438,9 +468,17 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
    * the slug, the excerpt, the status, the parent and the date were not in the
    * snapshot, so restoring was impossible even by hand.
    *
-   * Reading history costs exactly what reading the document costs. It contains
-   * earlier versions of the same text, so anything looser would be a way to
-   * read a document through its past.
+   * History is edit-scoped, not read-scoped. It holds drafts and titles that
+   * were never public, so "may read the current document" is not enough: a
+   * published page is readable by anybody with `content:read`, and its past is
+   * not theirs. The gate is the ability to modify the document as it stands —
+   * the same conclusion `permissions.update` already serves the interface.
+   *
+   * The summary deliberately omits two columns. `authorId` is the document's
+   * author copied at capture, never the actor of the write, and showing it
+   * invites exactly that misreading. `createdAt` goes out as `archivedAt`,
+   * because it is the instant the state was superseded — nothing about a
+   * revision says when its text was originally written.
    */
   app.get(
     '/content/:type/:id/revisions',
@@ -457,22 +495,76 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
 
       const actor = actorOf(request.user)
-      if (!canReadDocument(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+      if (!mayEditCurrent(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
 
       const revisions = await listRevisions(db, row.id)
 
       return reply.send({
-        revisions: revisions.map((revision) => ({
-          id: revision.id,
-          version: revision.version,
-          slug: revision.slug,
-          title: revision.title,
-          excerpt: revision.excerpt,
-          status: revision.status,
-          authorId: revision.authorId,
-          publishedAt: revision.publishedAt,
-          createdAt: revision.createdAt,
-        })),
+        revisions: revisions.map((revision) => summarizeRevision(revision)),
+      })
+    },
+  )
+
+  /**
+   * One revision, inspectable before anything is replaced.
+   *
+   * The answer is a union on `compatible`, decided here with the currently
+   * registered type: the same `stateSchema` judgement the restore would make,
+   * over the same full editorial state. A snapshot it accepts is answered from
+   * the **parsed** value — never the raw row — with its blocks; one it refuses
+   * is answered as the summary alone, because blocks the current vocabulary
+   * cannot parse must never reach a renderer that assumes it.
+   */
+  app.get(
+    '/content/:type/:id/revisions/:revisionId',
+    { onRequest: [app.requireAuth] },
+    async (request, reply) => {
+      if (!request.user) return
+      const type = resolveType(registry, request, reply)
+      if (!type) return
+
+      const params = z.object({ id: z.uuid(), revisionId: z.uuid() }).safeParse(request.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_request' })
+
+      const row = await findContentById(db, params.data.id)
+      if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
+
+      const actor = actorOf(request.user)
+      if (!mayEditCurrent(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
+      const revision = await findRevision(db, params.data.revisionId)
+      if (!revision || revision.contentId !== row.id) {
+        // Access to the document was authorized above, so naming the finer
+        // absence is safe — and a pruned revision is a different situation
+        // from a vanished document: the history moved on, the list is stale.
+        return reply.code(404).send({ error: 'not_found', reason: 'revision-not-found' })
+      }
+
+      const summary = summarizeRevision(revision)
+      const check = type.stateSchema.safeParse(stateOfRevision(revision))
+      if (!check.success) {
+        return reply.send({ revision: { compatible: false, ...summary } })
+      }
+
+      // The shape is the one stateOfRevision produces, which stateSchema is
+      // built from — same cast updateContent makes for the same reason.
+      const state = check.data as ContentState
+
+      return reply.send({
+        revision: {
+          compatible: true,
+          id: summary.id,
+          version: summary.version,
+          archivedAt: summary.archivedAt,
+          slug: state.slug,
+          title: state.title,
+          excerpt: state.excerpt ?? null,
+          status: state.status,
+          publishedAt: state.publishedAt ?? null,
+          blocks: state.blocks,
+          meta: state.meta,
+          parentId: state.parentId ?? null,
+        },
       })
     },
   )
@@ -509,15 +601,23 @@ export const contentRoutes: FastifyPluginAsync<ContentRoutesOptions> = async (
       const row = await findContentById(db, params.data.id)
       if (!row || row.type !== type.name) return reply.code(404).send({ error: 'not_found' })
 
+      // Pre-transaction authorization gate: one restores from a history one
+      // may see, and refusing before the revision lookup keeps its finer 404
+      // from confirming anything to an actor the history is closed to. The
+      // transition itself is authorized again below, inside the transaction.
+      const actor = actorOf(request.user)
+      if (!mayEditCurrent(type, actor, row)) return reply.code(403).send({ error: 'forbidden' })
+
       const revision = await findRevision(db, params.data.revisionId)
       // Belonging to this document is part of the identity, not a detail: a
       // revision id from another document would otherwise overwrite this one
-      // with somebody else's text.
+      // with somebody else's text. Pruned, foreign and never-existed are one
+      // answer, and its reason tells a stale history apart from a vanished
+      // document.
       if (!revision || revision.contentId !== row.id) {
-        return reply.code(404).send({ error: 'not_found' })
+        return reply.code(404).send({ error: 'not_found', reason: 'revision-not-found' })
       }
 
-      const actor = actorOf(request.user)
       let previousStatus: ContentStatus | undefined
 
       try {

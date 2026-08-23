@@ -1495,3 +1495,134 @@ button.tiny {
   border-style: dashed;
   color: var(--pl-color-text-muted);
 }
+
+/* The document history: the picker's dialog shell, with a list beside a
+   read-only inspection. Same tokens, same backdrop, same reasons. */
+.history {
+  width: min(56rem, 92vw);
+  max-height: 84dvh;
+  padding: var(--pl-space-4) var(--pl-space-6) var(--pl-space-6);
+  border: var(--pl-border-width) solid var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-md);
+  background: var(--pl-color-bg-raised);
+  color: var(--pl-color-text);
+  overflow: auto;
+}
+
+.history::backdrop {
+  background: var(--pl-color-scrim);
+}
+
+.history-body {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) 2fr;
+  gap: var(--pl-space-6);
+  align-items: start;
+}
+
+.history-body > button {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.history-entries {
+  display: grid;
+  gap: var(--pl-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-entry {
+  display: grid;
+  gap: var(--pl-space-1);
+  width: 100%;
+  text-align: left;
+}
+
+.history-entry[aria-current] {
+  border-color: var(--pl-color-accent);
+}
+
+.history-entry-title {
+  font-weight: 600;
+}
+
+.history-detail {
+  display: grid;
+  gap: var(--pl-space-3);
+  align-content: start;
+}
+
+.history-content {
+  display: grid;
+  gap: var(--pl-space-3);
+  padding: var(--pl-space-4);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+}
+
+/* The stand-in for an image this panel deliberately does not fetch. */
+.history-image-frame {
+  height: 6rem;
+  border: var(--pl-border-width) dashed var(--pl-color-border-strong);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+}
+
+.history-confirm {
+  display: grid;
+  gap: var(--pl-space-3);
+  max-width: 34rem;
+}
+
+.history-actions {
+  display: flex;
+  gap: var(--pl-space-3);
+  justify-content: flex-end;
+}
+
+/* Shared by the editor's save alert and the history panel: the same 422
+   arrives through the same write path in both places. */
+.missing-references {
+  margin: 0;
+  padding-left: var(--pl-space-6);
+  color: var(--pl-color-danger);
+  font-size: var(--pl-text-sm);
+}
+
+.history-fields {
+  display: grid;
+  gap: var(--pl-space-1) var(--pl-space-4);
+  margin: 0;
+  font-size: var(--pl-text-sm);
+}
+
+.history-fields div {
+  display: flex;
+  gap: var(--pl-space-2);
+  align-items: baseline;
+}
+
+.history-fields dt {
+  font-family: var(--pl-font-data);
+  font-size: var(--pl-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pl-color-text-faint);
+}
+
+.history-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-meta {
+  margin: 0;
+  padding: var(--pl-space-3);
+  border: var(--pl-border-width) solid var(--pl-color-border);
+  border-radius: var(--pl-radius-sm);
+  background: var(--pl-color-bg);
+  font-size: var(--pl-text-xs);
+  overflow-x: auto;
+}

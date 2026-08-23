@@ -103,6 +103,43 @@ function conflictMessage(reason: string | undefined): MessageKey {
 }
 
 /**
+ * The refusals a write can name, each with its own sentence. The server
+ * already decided what went wrong and said so in a code; repeating the
+ * decision here would let the two drift, so this only chooses the words.
+ * It lived in the editor while the editor was the only writer; the revision
+ * history writes too, and two copies of a table drift by accident.
+ */
+const REASON_MESSAGES: Record<string, MessageKey> = {
+  'slug-taken': 'error.slugTaken',
+  'translation-exists': 'error.translationExists',
+  'group-not-found': 'error.groupNotFound',
+  'group-type-mismatch': 'error.groupTypeMismatch',
+  'group-forbidden': 'error.groupForbidden',
+  'stale-version': 'error.staleVersion',
+  expected_version_required: 'error.staleVersion',
+  'parent-not-found': 'error.parentNotFound',
+  'parent-mismatch': 'error.parentMismatch',
+  'parent-cycle': 'error.parentCycle',
+  'parent-too-deep': 'error.parentTooDeep',
+  'media-missing': 'error.mediaMissing',
+  'revision-not-found': 'error.revisionNotFound',
+}
+
+/**
+ * What to tell somebody about a write that did not land. The reason first —
+ * the server names exactly what went wrong, and the status alone cannot tell
+ * a refused publication from a refused translation group; both are 403 —
+ * then the shared table above for everything a write shares with any request.
+ */
+export function messageForWrite(error: unknown): MessageKey {
+  const named =
+    error instanceof ApiError && error.reason !== undefined
+      ? REASON_MESSAGES[error.reason]
+      : undefined
+  return named ?? messageForError(error)
+}
+
+/**
  * Whether trying the same thing again could plausibly work.
  *
  * A refusal will be refused again — offering "try again" for a 403 is offering

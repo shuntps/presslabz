@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { postType } from '@presslabz/core'
+import { mediaMissingDetailsSchema, postType } from '@presslabz/core'
 import {
   createContent,
   createDb,
@@ -184,6 +184,7 @@ describe.skipIf(!ready)('a document that names an asset', () => {
    */
   it('answers 422 for a restore whose asset has since been deleted', async () => {
     const picture = await asset()
+    const block = imageBlock(picture)
     const created = await createContent(db, {
       type: postType,
       locale: 'en',
@@ -192,7 +193,7 @@ describe.skipIf(!ready)('a document that names an asset', () => {
         slug: `restore-${randomUUID()}`,
         title: 'Illustrated once',
         status: 'draft',
-        blocks: [imageBlock(picture)] as never,
+        blocks: [block] as never,
         meta: {},
       },
     })
@@ -226,6 +227,14 @@ describe.skipIf(!ready)('a document that names an asset', () => {
       reason: 'media-missing',
       references: [{ mediaId: picture, source: 'block' }],
     })
+
+    // The same contract the admin validates this body with on its boundary:
+    // a shape drift fails here, not three components deep in the interface.
+    const details = mediaMissingDetailsSchema.parse(restored.json())
+    const reference = details.references[0]
+    expect(reference?.source).toBe('block')
+    if (reference?.source !== 'block') throw new Error('unreachable: asserted block above')
+    expect(reference.at).toBe(block.id)
   })
 })
 

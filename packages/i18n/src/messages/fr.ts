@@ -158,4 +158,38 @@ export const fr: Messages = {
   'error.apiUnreachableHint':
     'Elle n’est peut-être pas démarrée, ou une autre chose occupe cette adresse. Lancez pnpm dev, puis réessayez.',
   'common.retry': 'Réessayer',
+  'error.parentNotFound': 'La page parente visée par cette version n’existe plus',
+  'error.parentMismatch':
+    'Le parent visé par cette version est d’un autre type ou d’une autre langue',
+  'error.parentCycle': 'Une page ne peut pas être placée sous l’un de ses propres descendants',
+  'error.parentTooDeep':
+    'Ce placement imbriquerait les pages plus profondément que le site ne le permet',
+  'error.mediaMissing': 'Ce document référence une image qui n’existe plus',
+  'error.revisionNotFound': 'Cette version n’est plus dans l’historique',
+  'history.open': 'Historique',
+  'history.title': 'Historique du document',
+  'history.empty':
+    'Aucune version antérieure pour l’instant. L’historique enregistre chaque état remplacé par une sauvegarde.',
+  'history.entry': 'Version {n} — archivée le {date}',
+  'history.close': 'Fermer',
+  'history.restore': 'Restaurer',
+  'history.restoring': 'Restauration…',
+  'history.restoreNotPermitted':
+    'Restaurer cette version demande une permission que vous n’avez pas',
+  'history.incompatible':
+    'Cette version précède les règles actuelles du contenu et ne peut pas être restaurée.',
+  'history.confirmTitle': 'Restaurer la version {n} ?',
+  'history.confirmBody':
+    'Chaque champ éditorial — titre, slug, extrait, statut, date de publication, parent, blocs et métadonnées — prendra la valeur de cette version. L’état actuel du document est d’abord archivé, donc ce choix restera annulable.',
+  'history.confirmUnsaved':
+    'Vous avez des modifications non sauvegardées. Restaurer les abandonne.',
+  'history.confirmCancel': 'Garder l’état actuel',
+  'history.restored': 'Version {n} restaurée.',
+  'history.image': 'Image',
+  'history.mediaMissingBlock': 'Le bloc {n} ({type}) référence une image qui n’existe plus.',
+  'history.mediaMissingMeta': 'Le champ « {key} » référence une image qui n’existe plus.',
+  'history.publishedAtLabel': 'Date de publication',
+  'history.parentLabel': 'Parent',
+  'history.metaLabel': 'Métadonnées (technique)',
+  'history.none': 'néant',
 }

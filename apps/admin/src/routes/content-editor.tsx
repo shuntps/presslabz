@@ -1,10 +1,12 @@
 import { type Blocks, withUniqueIds } from '@presslabz/blocks'
 import { CONTENT_STATUSES, type ContentStatus, slugify } from '@presslabz/core'
-import { LOCALE_LABELS, type Locale, type MessageKey } from '@presslabz/i18n'
+import { LOCALE_LABELS, type Locale } from '@presslabz/i18n'
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BlockEditor } from '../components/block-editor.tsx'
 import { MediaPicker } from '../components/media-picker.tsx'
+import { MissingReferences } from '../components/missing-references.tsx'
+import { RevisionHistory } from '../components/revision-history.tsx'
 import { ApiError } from '../lib/api.ts'
 import { BLOCK_LABELS, CREATABLE_BLOCKS, emptyBlock, imageBlock } from '../lib/blocks.ts'
 import { servedLocales, useInstallationConfig } from '../lib/config.ts'
@@ -12,11 +14,12 @@ import {
   type ContentSummary,
   useContent,
   useContentTypes,
+  useRestoreRevision,
   useSaveContent,
   useTranslations,
 } from '../lib/content.ts'
 import { describeInstant, fromLocalInput, localZoneName, toLocalInput } from '../lib/datetime.ts'
-import { messageForError } from '../lib/errors.ts'
+import { messageForWrite } from '../lib/errors.ts'
 import { growWithContent } from '../lib/growing.ts'
 import { useLocale } from '../lib/i18n.tsx'
 import { STATUS_LABELS } from '../lib/labels.ts'
@@ -149,7 +152,31 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
    */
   const leaveAfterSaving = useRef<(() => void) | null>(null)
 
+  /**
+   * The latest draft, readable from a mutation callback. The closure a save
+   * captures goes stale the moment anything re-renders; this is how success
+   * compares "what the screen holds now" against "what was submitted".
+   */
+  const draftNow = useRef<Draft | null>(null)
+  useEffect(() => {
+    draftNow.current = draft
+  }, [draft])
+
+  /** The snapshot the running (or last) save carried — where a media-missing refusal is located. */
+  const lastSubmitted = useRef<Draft | null>(null)
+
   const save = useSaveContent(type, id)
+
+  /*
+   * One write in flight, in either direction: the mutation lives here rather
+   * than in the panel so the save button can see a restore happening — the
+   * panel is modal while open, but a restore keeps running if it is closed
+   * mid-flight, and a save composed against the version it is replacing
+   * would only be refused anyway.
+   */
+  const restore = useRestoreRevision(type, id ?? '')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyButton = useRef<HTMLButtonElement>(null)
 
   /*
    * Nothing leaves this screen quietly while it holds unsaved work — neither a
@@ -199,6 +226,15 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
 
   function onSave() {
     if (!draft) return
+    /*
+     * The exact state this submission carries. The fieldset freezes while the
+     * request runs, so nothing in the interface can change the draft under it
+     * — but the link is kept explicit anyway: success only marks *this*
+     * snapshot as saved, and a media-missing refusal is located in the blocks
+     * that were actually sent, never in a live draft.
+     */
+    const submitted = draft
+    lastSubmitted.current = submitted
     save.mutate(
       {
         locale: documentLocale,
@@ -234,8 +270,13 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
       },
       {
         onSuccess: (content) => {
-          // Told, so the guard below stops asking and the indicator can say
-          // something true.
+          /*
+           * Saved is a statement about the submitted snapshot, not about the
+           * screen. If anything replaced the draft after this request left,
+           * those edits are not on the server, the indicator must keep saying
+           * so, and a deferred leave must not carry them away.
+           */
+          if (draftNow.current !== submitted) return
           setDirty(false)
 
           if (id === null) {
@@ -259,7 +300,7 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
      * platform cannot be forgotten by the next component added here — which is
      * exactly what a per-control flag would eventually be.
      */
-    <fieldset className="editor" disabled={!writable}>
+    <fieldset className="editor" disabled={!writable || save.isPending || restore.isPending}>
       <div className="galley">
         <div className="measure">
           {/*
@@ -449,28 +490,42 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
           />
         )}
 
+        {/*
+          One announced region: the general message and the located references
+          arrive together or not at all — a list outside the alert is a list a
+          screen reader never mentions.
+        */}
         {save.isError && (
-          <p className="error" role="alert">
-            {messageFor(save.error, t)}
-            {/*
-              A conflict is the one error the author can act on, and the action
-              is always the same: look at what is there now. Offering it here
-              means they do not have to work out that reloading is what "this
-              document changed" is asking for — and nothing is lost, because
-              the save was refused rather than half applied.
-            */}
-            {isConflict(save.error) && (
-              <>
-                {' '}
-                <button type="button" className="link" onClick={() => window.location.reload()}>
-                  {t('editor.reload')}
-                </button>
-              </>
-            )}
-          </p>
+          <div className="error" role="alert">
+            <p>
+              {t(messageForWrite(save.error))}
+              {/*
+                A conflict is the one error the author can act on, and the
+                action is always the same: look at what is there now. Offering
+                it here means they do not have to work out that reloading is
+                what "this document changed" is asking for — and nothing is
+                lost, because the save was refused rather than half applied.
+              */}
+              {isConflict(save.error) && (
+                <>
+                  {' '}
+                  <button type="button" className="link" onClick={() => window.location.reload()}>
+                    {t('editor.reload')}
+                  </button>
+                </>
+              )}
+            </p>
+            {/* Located in the blocks the refused request actually carried — never a live draft. */}
+            <MissingReferences error={save.error} blocks={lastSubmitted.current?.blocks ?? []} />
+          </div>
         )}
 
-        <button type="button" className="primary" onClick={onSave} disabled={save.isPending}>
+        <button
+          type="button"
+          className="primary"
+          onClick={onSave}
+          disabled={save.isPending || restore.isPending}
+        >
           {save.isPending ? t('editor.saving') : t('editor.save')}
         </button>
 
@@ -484,7 +539,52 @@ export function ContentEditorPage({ mode }: { mode: 'new' | 'edit' }) {
           <p className="muted saved">{t('editor.saved')}</p>
         )}
         {dirty && !save.isPending && <p className="muted unsaved">{t('editor.unsaved')}</p>}
+
+        {/*
+          Offered, not disabled, and only when the served permissions.update
+          conclusion is true: history is edit-scoped on the server, and a
+          control for something the server would refuse is a lie with a
+          tooltip. Withheld entirely for a document that does not exist yet.
+        */}
+        {enabled && writable && (
+          <button
+            type="button"
+            className="quiet"
+            ref={historyButton}
+            disabled={save.isPending || restore.isPending}
+            onClick={() => setHistoryOpen(true)}
+          >
+            {t('history.open')}
+          </button>
+        )}
       </aside>
+
+      {enabled && existing.data && (
+        <RevisionHistory
+          open={historyOpen}
+          onClose={() => {
+            setHistoryOpen(false)
+            // The explicit half of the focus contract: the dialog was opened
+            // from this control, and closing it hands the keyboard back.
+            historyButton.current?.focus()
+          }}
+          type={type}
+          contentId={existing.data.id}
+          documentVersion={existing.data.version}
+          allowedStatuses={existing.data.permissions.statuses}
+          dirty={dirty}
+          restore={restore}
+          onRestored={(content) => {
+            /*
+             * The draft is loaded once and then owned locally, so a restore
+             * has to re-seed it deliberately — setQueryData alone would leave
+             * the form showing the state the server just archived.
+             */
+            setDraft(draftFrom(content))
+            setDirty(false)
+          }}
+        />
+      )}
 
       <LeavingDialog
         blocked={blocker.status === 'blocked'}
@@ -643,42 +743,7 @@ function TranslationPanel({
   )
 }
 
-/**
- * The server already decided what went wrong and said so in a code. Repeating
- * the decision here would let the two drift; this only chooses the sentence.
- */
-const REASON_MESSAGES: Record<string, MessageKey> = {
-  'slug-taken': 'error.slugTaken',
-  'translation-exists': 'error.translationExists',
-  'group-not-found': 'error.groupNotFound',
-  'group-type-mismatch': 'error.groupTypeMismatch',
-  'group-forbidden': 'error.groupForbidden',
-  'stale-version': 'error.staleVersion',
-  expected_version_required: 'error.staleVersion',
-}
-
 /** A save refused because the document moved under the author. */
 function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.reason === 'stale-version'
-}
-
-function messageFor(error: unknown, t: (key: MessageKey) => string): string {
-  // The reason first: the server names exactly what went wrong, and the status
-  // alone cannot tell a refused publication from a refused translation group —
-  // both are 403.
-  const named =
-    error instanceof ApiError && error.reason !== undefined
-      ? REASON_MESSAGES[error.reason]
-      : undefined
-  if (named) return t(named)
-
-  /*
-   * Everything else through the shared table, which knows the difference
-   * between a refusal, an absence, a rate limit, a server that broke and one
-   * that never answered. This used to answer "you do not have permission to
-   * publish" to every 403 — a guess that was wrong for a document somebody
-   * else owns — and "something went wrong" to all the rest, including a save
-   * that never left the browser.
-   */
-  return t(messageForError(error))
 }

@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -6,6 +6,7 @@ import {
   FULL_CREATION_PERMISSIONS,
   fakeApi,
   fakeDocument,
+  fakeRevision,
   forgetPreferences,
   getInput,
   renderApp,
@@ -708,5 +709,791 @@ describe('a document that did not exist a moment ago', () => {
     })
     // And nothing is asking whether to leave: the work is on the server.
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('revision history', () => {
+  const EVERY_STATUS = ['draft', 'scheduled', 'published', 'archived', 'trash'] as const
+
+  const permitted = (statuses: readonly string[] = EVERY_STATUS) => ({
+    update: true,
+    delete: true,
+    statuses,
+  })
+
+  const PARAGRAPH_ID = '00000000-0000-4000-8000-0000000000c1'
+  const IMAGE_BLOCK_ID = '00000000-0000-4000-8000-0000000000c2'
+  const MEDIA_ID = '00000000-0000-4000-8000-0000000000c9'
+
+  const oldParagraph = {
+    id: PARAGRAPH_ID,
+    type: 'paragraph',
+    content: [{ type: 'text', text: 'The old paragraph' }],
+  }
+  const oldImage = {
+    id: IMAGE_BLOCK_ID,
+    type: 'image',
+    mediaId: MEDIA_ID,
+    caption: [{ type: 'text', text: 'A caption from back then' }],
+  }
+
+  async function openDocument(options: FakeApiOptions = {}) {
+    serverSays({ documents: [liveDocument(permitted())], ...options })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+  }
+
+  async function openHistory() {
+    await userEvent.click(await screen.findByRole('button', { name: /^history$/i }))
+    return screen.findByRole('dialog')
+  }
+
+  const jsonResponse = (body: unknown, status: number) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })
+
+  /** Overrides chosen routes; everything else still reaches the fake API. */
+  function routesAnswering(
+    match: (method: string, path: string) => Response | Promise<Response> | null,
+  ) {
+    const inner = api.fetchMock
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        const url = new URL(String(input))
+        const overridden = match(init.method ?? 'GET', url.pathname)
+        return overridden ? Promise.resolve(overridden) : inner(input, init)
+      }),
+    )
+  }
+
+  it('withholds the control when the server says the document is not editable', async () => {
+    serverSays({ documents: [liveDocument({ update: false, delete: false, statuses: [] })] })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+
+    expect(screen.queryByRole('button', { name: /^history$/i })).toBeNull()
+  })
+
+  it('lists versions with honest archived-at labels, newest first', async () => {
+    await openDocument({
+      revisions: [
+        fakeRevision({
+          id: 'rev-2',
+          version: 2,
+          title: 'Second wording',
+          archivedAt: '2026-02-02T00:00:00.000Z',
+        }),
+        fakeRevision({ id: 'rev-1', version: 1, title: 'First wording' }),
+      ],
+    })
+    const dialog = await openHistory()
+
+    const entries = await within(dialog).findAllByRole('listitem')
+    expect(entries).toHaveLength(2)
+    expect(entries[0]?.textContent).toMatch(/second wording/i)
+    expect(entries[0]?.textContent).toMatch(/version 2 — archived/i)
+    expect(entries[1]?.textContent).toMatch(/version 1/i)
+    // Labels talk about the archiving instant, never about writing.
+    expect(dialog.textContent).not.toMatch(/written/i)
+  })
+
+  it('says a new document has no history yet', async () => {
+    await openDocument({ revisions: [] })
+    const dialog = await openHistory()
+
+    expect(await within(dialog).findByText(/no earlier versions yet/i)).toBeDefined()
+  })
+
+  it('reports a list that failed to load, and retries on request', async () => {
+    await openDocument({ revisions: [fakeRevision()] })
+    let failures = 0
+    routesAnswering((method, path) => {
+      if (method === 'GET' && path.endsWith('/revisions') && failures === 0) {
+        failures += 1
+        return jsonResponse({ error: 'server_error' }, 500)
+      }
+      return null
+    })
+    const dialog = await openHistory()
+
+    expect(await within(dialog).findByRole('alert')).toBeDefined()
+    await userEvent.click(within(dialog).getByRole('button', { name: /try again/i }))
+
+    expect(await within(dialog).findAllByRole('listitem')).toHaveLength(1)
+  })
+
+  it('inspects a revision as static reading matter, not as form controls', async () => {
+    await openDocument({
+      revisions: [fakeRevision({ id: 'rev-1', version: 1, blocks: [oldParagraph, oldImage] })],
+    })
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    const paragraph = await within(dialog).findByText('The old paragraph')
+    expect(paragraph.tagName).toBe('P')
+    // The image is a reference and a caption; there is no alt to show and no
+    // media request to make — a neutral placeholder stands in.
+    expect(within(dialog).getByRole('img', { name: /^image$/i })).toBeDefined()
+    expect(within(dialog).getByText('A caption from back then')).toBeDefined()
+    expect(dialog.querySelector('.history-content textarea, .history-content input')).toBeNull()
+  })
+
+  it('shows an incompatible revision as its summary, restore withheld', async () => {
+    const incompatible = fakeRevision({ compatible: false, id: 'rev-old', version: 1 })
+    delete (incompatible as Record<string, unknown>).blocks
+    delete (incompatible as Record<string, unknown>).meta
+    delete (incompatible as Record<string, unknown>).parentId
+
+    await openDocument({ revisions: [incompatible] })
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    expect(await within(dialog).findByText(/predates the current content rules/i)).toBeDefined()
+    expect(within(dialog).queryByRole('button', { name: /^restore$/i })).toBeNull()
+  })
+
+  it('withholds restore when the served statuses exclude the revision, and says why', async () => {
+    serverSays({
+      documents: [liveDocument(permitted(['draft', 'archived', 'trash']))],
+      revisions: [fakeRevision({ id: 'rev-1', version: 1, status: 'published' })],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    expect(await within(dialog).findByText(/needs a permission/i)).toBeDefined()
+    expect(within(dialog).queryByRole('button', { name: /^restore$/i })).toBeNull()
+  })
+
+  it('restores after an explicit confirmation, re-seeds the draft, and stays undoable', async () => {
+    serverSays({
+      documents: [liveDocument(permitted())],
+      revisions: [
+        fakeRevision({
+          id: 'rev-1',
+          version: 1,
+          title: 'The first wording',
+          slug: 'first-slug',
+          status: 'draft',
+          blocks: [oldParagraph],
+        }),
+      ],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+
+    // The confirmation names what will be replaced, and the safe answer holds
+    // the keyboard.
+    expect(await within(dialog).findByText(/restore version 1\?/i)).toBeDefined()
+    const cancel = within(dialog).getByRole('button', { name: /keep the current state/i })
+    expect(document.activeElement).toBe(cancel)
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    await within(dialog).findByText(/version 1 restored/i)
+    const restore = api.requests.find((request) => request.route.endsWith('/restore'))
+    expect(restore?.body).toEqual({ expectedVersion: 1 })
+
+    // The open draft took the restored state without a reload, and it is
+    // saved state: nothing warns about unsaved work.
+    expect(await screen.findByDisplayValue('The first wording')).toBeDefined()
+    expect(screen.queryByText(/not saved yet/i)).toBeNull()
+
+    // The history now starts with the state the restore superseded — which is
+    // what keeps the restore itself undoable.
+    const entries = await within(dialog).findAllByRole('listitem')
+    expect(entries[0]?.textContent).toMatch(/a live document/i)
+
+    // And the version chain continues: the next save is composed against the
+    // version the restore produced.
+    await userEvent.click(within(dialog).getByRole('button', { name: /^close$/i }))
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' again')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => {
+      expect(patchRequest().body).toMatchObject({ expectedVersion: 2 })
+    })
+  })
+
+  it('warns before discarding unsaved changes', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+    await screen.findByText(/not saved yet/i)
+
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+
+    expect(await within(dialog).findByText(/unsaved changes/i)).toBeDefined()
+  })
+
+  it('shows a stale restore with the reload affordance', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse({ error: 'conflict', reason: 'stale-version' }, 409)
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert.textContent).toMatch(/somebody else saved this document/i)
+    expect(within(dialog).getByRole('button', { name: /reload/i })).toBeDefined()
+  })
+
+  it('treats a vanished revision as a stale history and refetches the list', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse({ error: 'not_found', reason: 'revision-not-found' }, 404)
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    const listedBefore = api.requests.filter((request) =>
+      request.route.endsWith('GET /content/post/doc-1/revisions'),
+    ).length
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    expect(await within(dialog).findByText(/no longer in the history/i)).toBeDefined()
+    await waitFor(() => {
+      const listed = api.requests.filter((request) =>
+        request.route.endsWith('GET /content/post/doc-1/revisions'),
+      ).length
+      expect(listed).toBeGreaterThan(listedBefore)
+    })
+  })
+
+  it('explains a snapshot the current rules refuse, without Zod internals', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse(
+            { error: 'invalid_state', issues: [{ path: 'blocks.0', message: 'zod says no' }] },
+            400,
+          )
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    expect(await within(dialog).findByText(/predates the current content rules/i)).toBeDefined()
+    expect(dialog.textContent).not.toContain('zod says no')
+  })
+
+  it('locates each validated missing-media reference in words, never as identifiers', async () => {
+    await openDocument({
+      revisions: [fakeRevision({ id: 'rev-1', version: 1, blocks: [oldParagraph, oldImage] })],
+    })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [
+                { source: 'block', mediaId: MEDIA_ID, at: IMAGE_BLOCK_ID },
+                { source: 'meta', mediaId: MEDIA_ID, at: 'featuredMediaId' },
+              ],
+            },
+            422,
+          )
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    expect(
+      await within(dialog).findByText('Block 2 (Image) names an image that no longer exists.'),
+    ).toBeDefined()
+    expect(
+      within(dialog).getByText('The "featuredMediaId" field names an image that no longer exists.'),
+    ).toBeDefined()
+    // Neither the medium nor the block is ever named by identifier.
+    expect(within(dialog).getByRole('alert').textContent).not.toContain(MEDIA_ID)
+    expect(within(dialog).getByRole('alert').textContent).not.toContain(IMAGE_BLOCK_ID)
+  })
+
+  it('keeps one write in flight: a running restore closes the save button', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore') ? new Promise<Response>(() => {}) : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    // The second invocation is absorbed: the confirm button is now pending.
+    expect(await within(dialog).findByRole('button', { name: /restoring/i })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(screen.getByRole('button', { name: /^save$/i })).toHaveProperty('disabled', true)
+  })
+
+  it('shows every field the restore would replace, not just the text', async () => {
+    // Differs from the live document only where the old panel said nothing:
+    // metadata, parent and the publication instant.
+    await openDocument({
+      revisions: [
+        fakeRevision({
+          id: 'rev-1',
+          version: 1,
+          title: 'A live document',
+          slug: 'a-live-document',
+          status: 'published',
+          publishedAt: '2026-03-05T00:00:00.000Z',
+          parentId: '00000000-0000-4000-8000-0000000000dd',
+          meta: { kicker: 'From the old build' },
+        }),
+      ],
+    })
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    await within(dialog).findByRole('heading', { name: 'A live document' })
+    // The publication instant, formatted; the parent and the metadata as a
+    // labelled technical section — escaped text, never markup.
+    expect(within(dialog).getByText(/Mar 5, 2026/)).toBeDefined()
+    expect(within(dialog).getByText('00000000-0000-4000-8000-0000000000dd')).toBeDefined()
+    expect(within(dialog).getByText(/"kicker"/)).toBeDefined()
+    expect(within(dialog).getByText(/From the old build/)).toBeDefined()
+  })
+
+  it('scopes a restore outcome to the revision it was attempted on', async () => {
+    await openDocument({
+      revisions: [
+        fakeRevision({ id: 'rev-a', version: 2, title: 'With the image', blocks: [oldImage] }),
+        fakeRevision({ id: 'rev-b', version: 1, title: 'Plain words', blocks: [oldParagraph] }),
+      ],
+    })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [{ source: 'block', mediaId: MEDIA_ID, at: IMAGE_BLOCK_ID }],
+            },
+            422,
+          )
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 2/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+    await within(dialog).findByText(/block 1 \(image\)/i)
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await within(dialog).findByRole('heading', { name: 'Plain words' })
+
+    // The refusal belonged to the attempt on version 2; nothing about it —
+    // not the alert, not the located block — may appear under version 1.
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).queryByText(/block 1 \(image\)/i)).toBeNull()
+  })
+
+  it('clears a selection whose revision vanished, reloads the list, and says so', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'GET' && /\/revisions\/[^/]+$/.test(path)
+        ? jsonResponse({ error: 'not_found', reason: 'revision-not-found' }, 404)
+        : null,
+    )
+    const dialog = await openHistory()
+    const listedBefore = api.requests.filter(
+      (request) => request.route === 'GET /content/post/doc-1/revisions',
+    ).length
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    expect(await within(dialog).findByText(/no longer in the history/i)).toBeDefined()
+    // The stale selection is gone — no revision heading — and the list asked
+    // the server again for what the history holds now.
+    expect(within(dialog).queryByRole('heading', { level: 3 })).toBeNull()
+    await waitFor(() => {
+      const listed = api.requests.filter(
+        (request) => request.route === 'GET /content/post/doc-1/revisions',
+      ).length
+      expect(listed).toBeGreaterThan(listedBefore)
+    })
+  })
+
+  it('offers a retry when the detail fails temporarily', async () => {
+    await openDocument({
+      revisions: [fakeRevision({ id: 'rev-1', version: 1, title: 'Recovered detail' })],
+    })
+    let failures = 0
+    routesAnswering((method, path) => {
+      if (method === 'GET' && /\/revisions\/[^/]+$/.test(path) && failures === 0) {
+        failures += 1
+        return jsonResponse({ error: 'server_error' }, 500)
+      }
+      return null
+    })
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    const alert = await within(dialog).findByRole('alert')
+    await userEvent.click(within(alert).getByRole('button', { name: /try again/i }))
+
+    expect(await within(dialog).findByRole('heading', { name: 'Recovered detail' })).toBeDefined()
+  })
+
+  it('closes once, through the platform close event alone', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    const dialog = await openHistory()
+    const opener = screen.getByRole('button', { name: /^history$/i })
+
+    /*
+     * The focus return is the observable half of the close callback: were the
+     * Close button to run the cleanup itself and the close event to run it
+     * again, the opener would be focused twice. Restored in `finally`, like
+     * the console spy below: a red assertion — or a close that never comes —
+     * must not leave every button's `focus` patched behind it.
+     */
+    const focusSpy = vi.spyOn(HTMLButtonElement.prototype, 'focus')
+    try {
+      await userEvent.click(within(dialog).getByRole('button', { name: /^close$/i }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+      expect(focusSpy.mock.contexts.filter((element) => element === opener)).toHaveLength(1)
+    } finally {
+      focusSpy.mockRestore()
+    }
+  })
+
+  it('nests marks exactly as the reference renderer does', async () => {
+    await openDocument({
+      revisions: [
+        fakeRevision({
+          id: 'rev-1',
+          version: 1,
+          blocks: [
+            {
+              id: PARAGRAPH_ID,
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'both marks', marks: [{ type: 'bold' }, { type: 'italic' }] },
+              ],
+            },
+          ],
+        }),
+      ],
+    })
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+
+    // First mark outermost — packages/blocks/render.ts wraps over the
+    // reversed list, so [bold, italic] is <strong><em>…</em></strong>.
+    const text = await within(dialog).findByText('both marks')
+    expect(text.tagName).toBe('EM')
+    expect(text.parentElement?.tagName).toBe('STRONG')
+  })
+
+  it('names missing media on an ordinary save with the same validated details', async () => {
+    serverSays({
+      documents: [{ ...liveDocument(permitted()), blocks: [oldImage] }],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    routesAnswering((method, path) =>
+      method === 'PATCH' && path.startsWith('/content/')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [{ source: 'block', mediaId: MEDIA_ID, at: IMAGE_BLOCK_ID }],
+            },
+            422,
+          )
+        : null,
+    )
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    expect(
+      await screen.findByText('Block 1 (Image) names an image that no longer exists.'),
+    ).toBeDefined()
+  })
+
+  it('drops a malformed media-missing body instead of trusting it', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [{ source: 'block', mediaId: 'raw-id-9', at: 'not-a-uuid' }],
+            },
+            422,
+          )
+        : null,
+    )
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+    // The named message alone: a body the contract refuses attaches nothing,
+    // and nothing raw reaches the screen.
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert.textContent).toMatch(/names an image that no longer exists/i)
+    expect(within(alert).queryAllByRole('listitem')).toHaveLength(0)
+    expect(dialog.textContent).not.toContain('not-a-uuid')
+    expect(dialog.textContent).not.toContain('raw-id-9')
+  })
+
+  /**
+   * Suspends chosen routes until released; everything else reaches the fake.
+   * With an `answer`, the released route resolves to it instead of the fake —
+   * a request that hangs and then fails, deterministically.
+   */
+  function gatedRoutes(match: (method: string, path: string) => boolean, answer?: () => Response) {
+    const inner = api.fetchMock
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        const url = new URL(String(input))
+        if (match(init.method ?? 'GET', url.pathname)) {
+          return gate.then(() => (answer ? answer() : inner(input, init)))
+        }
+        return inner(input, init)
+      }),
+    )
+    return release
+  }
+
+  const editorFieldset = () => {
+    const fieldset = document.querySelector('fieldset.editor')
+    if (!(fieldset instanceof HTMLFieldSetElement)) throw new Error('no editor fieldset')
+    return fieldset
+  }
+
+  it('cannot be dismissed while a restore is in flight', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore') ? new Promise<Response>(() => {}) : null,
+    )
+    const dialog = await openHistory()
+    // Dismissible while nothing runs: the native boundary is not declared.
+    expect(dialog.getAttribute('closedby')).toBeNull()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+    await within(dialog).findByRole('button', { name: /restoring/i })
+
+    /*
+     * The platform boundary is declared for the whole flight — where closedby
+     * is known, no user action closes the dialog at all — and the prevented
+     * cancel below is the fallback for engines that do not know it yet.
+     * Cancel is closed, and the editor behind stays frozen: there is no way
+     * back to the draft while the write that will replace it is running.
+     */
+    expect(dialog.getAttribute('closedby')).toBe('none')
+    expect(within(dialog).getByRole('button', { name: /keep the current state/i })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    const cancel = new Event('cancel', { cancelable: true })
+    ;(dialog as HTMLDialogElement).dispatchEvent(cancel)
+    expect(cancel.defaultPrevented).toBe(true)
+    expect((dialog as HTMLDialogElement).open).toBe(true)
+    expect(editorFieldset().disabled).toBe(true)
+  })
+
+  it('freezes the document while a restore runs, and loses nothing on success', async () => {
+    serverSays({
+      documents: [liveDocument(permitted())],
+      revisions: [
+        fakeRevision({ id: 'rev-1', version: 1, title: 'The first wording', status: 'draft' }),
+      ],
+    })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    const release = gatedRoutes((method, path) => method === 'POST' && path.endsWith('/restore'))
+    const dialog = await openHistory()
+    await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+    await within(dialog).findByRole('button', { name: /restoring/i })
+
+    // Nothing can be typed while the write runs, so nothing can be lost by it.
+    expect(editorFieldset().disabled).toBe(true)
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), 'X')
+    expect((screen.getByPlaceholderText(/^title$/i) as HTMLTextAreaElement).value).toBe(
+      'A live document',
+    )
+
+    release()
+    await within(dialog).findByText(/version 1 restored/i)
+    // Settled: the native boundary is withdrawn and closing works again.
+    expect(dialog.getAttribute('closedby')).toBeNull()
+    expect((screen.getByPlaceholderText(/^title$/i) as HTMLTextAreaElement).value).toBe(
+      'The first wording',
+    )
+    expect(screen.queryByText(/not saved yet/i)).toBeNull()
+  })
+
+  it('freezes the fields while a save runs and locates its refusal in the submitted blocks', async () => {
+    serverSays({ documents: [{ ...liveDocument(permitted()), blocks: [oldImage] }] })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    const release = gatedRoutes(
+      (method, path) => method === 'PATCH' && path.startsWith('/content/'),
+      () =>
+        jsonResponse(
+          {
+            error: 'unprocessable',
+            reason: 'media-missing',
+            references: [{ source: 'block', mediaId: MEDIA_ID, at: IMAGE_BLOCK_ID }],
+          },
+          422,
+        ),
+    )
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(editorFieldset().disabled).toBe(true))
+
+    // The fields hold still for the duration of the request…
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), 'MORE')
+    expect((screen.getByPlaceholderText(/^title$/i) as HTMLTextAreaElement).value).toBe(
+      'A live document touched',
+    )
+
+    release()
+    // …and the refusal is located in the snapshot that was actually sent.
+    const alert = await screen.findByRole('alert')
+    expect(
+      within(alert).getByText('Block 1 (Image) names an image that no longer exists.'),
+    ).toBeDefined()
+    // A refused save leaves the work unsaved, and the indicator says so.
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+  })
+
+  it('keeps the unsaved indicator truthful across a write', async () => {
+    await openDocument()
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' one')
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('Saved')
+    expect(screen.queryByText(/not saved yet/i)).toBeNull()
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' two')
+    expect(screen.getByText(/not saved yet/i)).toBeDefined()
+    expect(screen.queryByText('Saved')).toBeNull()
+  })
+
+  it('announces the general message and the located references as one region', async () => {
+    serverSays({ documents: [{ ...liveDocument(permitted()), blocks: [oldImage] }] })
+    await open('/content/post/doc-1')
+    await screen.findByDisplayValue('A live document')
+    routesAnswering((method, path) =>
+      method === 'PATCH' && path.startsWith('/content/')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [{ source: 'block', mediaId: MEDIA_ID, at: IMAGE_BLOCK_ID }],
+            },
+            422,
+          )
+        : null,
+    )
+
+    await userEvent.type(screen.getByPlaceholderText(/^title$/i), ' touched')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    // One announced region: a list outside the alert is a list a screen
+    // reader never mentions.
+    const alert = await screen.findByRole('alert')
+    expect(
+      within(alert).getByText('This document names an image that no longer exists'),
+    ).toBeDefined()
+    expect(
+      within(alert).getByText('Block 1 (Image) names an image that no longer exists.'),
+    ).toBeDefined()
+  })
+
+  it('keeps reference lines apart when two media share one place', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    routesAnswering((method, path) =>
+      method === 'POST' && path.endsWith('/restore')
+        ? jsonResponse(
+            {
+              error: 'unprocessable',
+              reason: 'media-missing',
+              references: [
+                { source: 'meta', mediaId: 'medium-one', at: 'gallery' },
+                { source: 'meta', mediaId: 'medium-two', at: 'gallery' },
+              ],
+            },
+            422,
+          )
+        : null,
+    )
+    // Spied without a replacement implementation, so unexpected diagnostics
+    // still reach the console — and restored in finally, so a failing
+    // assertion cannot leave the spy behind for the tests after this one.
+    const consoleError = vi.spyOn(console, 'error')
+    try {
+      const dialog = await openHistory()
+      await userEvent.click(within(dialog).getByRole('button', { name: /version 1/i }))
+      await userEvent.click(await within(dialog).findByRole('button', { name: /^restore$/i }))
+      await userEvent.click(within(dialog).getByRole('button', { name: /^restore$/i }))
+
+      const alert = await within(dialog).findByRole('alert')
+      expect(within(alert).getAllByRole('listitem')).toHaveLength(2)
+      // Distinct keys, so React never warns — and the ids stay out of the text.
+      expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/i)
+      expect(alert.textContent).not.toContain('medium-one')
+      expect(alert.textContent).not.toContain('medium-two')
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it('holds the focus contract: in on open, back to the opener on close', async () => {
+    await openDocument({ revisions: [fakeRevision({ id: 'rev-1', version: 1 })] })
+    const dialog = await openHistory()
+
+    // The declared initial target, focused by the opening effect.
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: /^close$/i }))
+
+    /*
+     * Escape reaches jsdom as nothing — the platform's cancel-then-close is
+     * native behaviour it does not implement — so the test drives the same
+     * close the platform would, and the browser walk in e2e presses the real
+     * key. What is pinned here is ours: the close handler returns focus to
+     * the control that opened the panel.
+     */
+    act(() => {
+      ;(dialog as HTMLDialogElement).close()
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^history$/i }))
   })
 })
