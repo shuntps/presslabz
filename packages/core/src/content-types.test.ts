@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
 import { type Capability, capabilitiesFor } from './capabilities.ts'
 import { BUILTIN_CONTENT_TYPES, pageType, postType } from './content-types.builtin.ts'
@@ -129,8 +129,187 @@ describe('defineContentType', () => {
     expect(postType.updateSchema.safeParse({ status: 'scheduled' }).success).toBe(true)
   })
 
-  it('lets an update carry one field alone', () => {
-    expect(postType.updateSchema.safeParse({ title: 'Un titre' }).success).toBe(true)
+  /*
+   * The defect this replaced: the test below asserted `.success` and never
+   * looked at what came out, so nobody noticed that `updateSchema` was
+   * `z.object(stateShape).partial()` — an optional wrapped *around* each
+   * fallback rather than instead of it. A patch carrying only a title parsed
+   * to a title plus `status: 'draft'`, `blocks: []` and `meta: {}`, which
+   * unpublished the document, emptied it and replaced its metadata.
+   */
+  it('lets an update carry one field alone, and only that field', () => {
+    const parsed = postType.updateSchema.parse({ title: 'Un titre' })
+
+    expect(parsed).toEqual({ title: 'Un titre' })
+    expect(Object.keys(parsed)).toEqual(['title'])
+  })
+
+  it.for(BUILTIN_CONTENT_TYPES)(
+    'keeps a patch sparse for every type PressLabz ships: $name',
+    (type) => {
+      /*
+       * The built-in types, which is what this package can enumerate — a type
+       * an installation declares later is covered by the derivation itself
+       * rather than by this list. Structural all the same: a field added to
+       * the shared source cannot quietly bring a fallback into the patch path
+       * with it.
+       */
+      expect(type.updateSchema.parse({ title: 'Un titre' })).toEqual({ title: 'Un titre' })
+    },
+  )
+
+  it('never materialises the status, the blocks or the metadata', () => {
+    const parsed = postType.updateSchema.parse({ slug: 'un-slug' }) as Record<string, unknown>
+
+    expect('status' in parsed).toBe(false)
+    expect('blocks' in parsed).toBe(false)
+    expect('meta' in parsed).toBe(false)
+  })
+
+  it('carries a field that was actually sent, exactly as sent', () => {
+    const blocks = [{ id: blockId, type: 'divider' as const }]
+    const parsed = postType.updateSchema.parse({ status: 'archived', blocks })
+
+    expect(parsed).toEqual({ status: 'archived', blocks })
+  })
+
+  /*
+   * Absence and an explicit empty object are two different requests, and the
+   * patch schema is where they stop being indistinguishable: one leaves the
+   * stored metadata alone, the other asks for it to become `{}` — and is
+   * still judged by the type, which may refuse it.
+   */
+  it('runs the whole metadata schema when meta is sent, and not at all when it is absent', () => {
+    const strict = defineContentType({
+      name: 'release',
+      meta: z.object({
+        version: z.string(),
+        channel: z.string().default('stable'),
+        tag: z.string().transform((value) => value.toUpperCase()),
+      }),
+      mediaIn: () => [],
+    })
+
+    // Sent: validated, nested default applied, transformation run.
+    expect(strict.updateSchema.parse({ meta: { version: '1.0', tag: 'lts' } })).toEqual({
+      meta: { version: '1.0', channel: 'stable', tag: 'LTS' },
+    })
+
+    // Sent and invalid: refused, naming the field rather than passing.
+    const refused = strict.updateSchema.safeParse({ meta: {} })
+    expect(refused.success).toBe(false)
+    expect(refused.success ? '' : refused.error.issues[0]?.path.join('.')).toContain('version')
+
+    // Absent: no key appears — and the schema is proven not to have run below.
+    expect(strict.updateSchema.parse({ title: 'Un titre' })).toEqual({ title: 'Un titre' })
+  })
+
+  /*
+   * An absent key produces no output, which is most of the promise but not
+   * all of it: a schema that ran and then had its result discarded would look
+   * identical from the outside while still executing whatever its author put
+   * in it. This one counts its own executions, so "did not run" is observed
+   * rather than inferred from an absence.
+   */
+  it('does not run the metadata schema at all when the key is absent', () => {
+    let executions = 0
+    const counted = defineContentType({
+      name: 'counted',
+      meta: z.object({ note: z.string().optional() }).check(() => {
+        executions += 1
+      }),
+      mediaIn: () => [],
+    })
+
+    // Defining the type must not have run it either — the registry probes
+    // absence, which is precisely the case that must stay silent.
+    expect(executions).toBe(0)
+
+    counted.updateSchema.parse({ title: 'Un titre' })
+    expect(executions).toBe(0)
+
+    counted.updateSchema.parse({ meta: { note: 'Sent on purpose' } })
+    expect(executions).toBe(1)
+  })
+
+  /*
+   * A root fallback on a type's own metadata schema would put the defect back
+   * exactly where it was, so the registry refuses it rather than giving it an
+   * implicit meaning. Judged by what the schema does when the key is absent,
+   * not by the wrappers it is made of: `catch`, `optional`, a transform and
+   * even a `default` followed by a transform do not fill themselves in, and a
+   * rule about shapes would have refused those for no reason.
+   */
+  it.for([
+    { label: 'default', meta: z.object({ note: z.string().optional() }).default({}) },
+    { label: 'prefault', meta: z.object({ note: z.string().optional() }).prefault({}) },
+  ])('refuses metadata whose root fills itself in: $label', ({ meta }) => {
+    expect(() => defineContentType({ name: 'filled', meta, mediaIn: () => [] })).toThrow(
+      /fills itself in when the key is absent/,
+    )
+  })
+
+  it.for([
+    { label: 'optional', meta: z.object({ note: z.string().optional() }).optional() },
+    { label: 'catch', meta: z.object({ note: z.string().optional() }).catch({}) },
+    { label: 'transform', meta: z.object({ note: z.string().optional() }).transform((v) => v) },
+    {
+      label: 'default then transform',
+      meta: z
+        .object({ note: z.string().optional() })
+        .default({})
+        .transform((value) => value),
+    },
+  ])('accepts a root wrapper that leaves an absent key absent: $label', ({ meta }) => {
+    const type = defineContentType({ name: 'wrapped', meta, mediaIn: () => [] })
+
+    expect(type.updateSchema.parse({ title: 'Un titre' })).toEqual({ title: 'Un titre' })
+  })
+
+  /**
+   * Static, and checked by `pnpm typecheck` rather than at runtime: the
+   * package's tsconfig covers this file, so these assertions fail the build
+   * if the patch shape ever stops inferring. Reading fields off the parsed
+   * value would not be enough — it compiles just as happily against `any`,
+   * which is exactly what a mapped record of `z.ZodType` would produce.
+   */
+  it('hands the caller precise types for a patch too', () => {
+    const parsed = postType.updateSchema.parse({
+      title: 'Un titre',
+      meta: { seo: { title: 'SEO' } },
+    })
+
+    expectTypeOf(parsed).not.toBeAny()
+    expectTypeOf(parsed).not.toBeUnknown()
+    // The field's own optional type, neither widened to `string` nor lost.
+    expectTypeOf(parsed.title).toEqualTypeOf<string | undefined>()
+    // The content type's metadata, not a record of unknown.
+    expectTypeOf(parsed.meta).toEqualTypeOf<z.infer<typeof postType.meta> | undefined>()
+    expectTypeOf(parsed.meta).not.toBeAny()
+
+    // And an incompatible type is refused where it is written. This line is
+    // also the sharpest `any` detector in the file: against `any` the error
+    // would not occur, and the directive itself would fail the build.
+    // @ts-expect-error a patch's title is optional, so it is not a string
+    const _refused: string = parsed.title
+    expect(parsed.title).toBe('Un titre')
+  })
+
+  /**
+   * The same proof for the source both shapes come from: the patch shape is
+   * derived from `fields` with `.partial()`, so a field added there reaches
+   * the patch on its own — a parity the structural test above cannot see,
+   * because it only looks at the keys a patch happens to produce.
+   */
+  it('derives the patch shape from the same source as the state', () => {
+    // `.shape` is the published way to read an object schema's fields;
+    // `.def` is how Zod happens to store them today.
+    const stateKeys = Object.keys(postType.createSchema.shape).filter(
+      (key) => key !== 'locale' && key !== 'translationGroupId',
+    )
+    const patchKeys = Object.keys(postType.updateSchema.shape).filter((key) => key !== 'locale')
+
+    expect(patchKeys.toSorted()).toEqual(stateKeys.toSorted())
   })
 
   /**
