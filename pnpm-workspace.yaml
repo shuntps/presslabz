@@ -79,7 +79,7 @@ catalog:
   '@tanstack/react-query': 5.101.4
   '@axe-core/playwright': 4.13.0
   '@playwright/test': 1.62.1
-  '@tanstack/react-router': 1.170.29
+  '@tanstack/react-router': 1.170.32
 
   # Admin tests. jsdom rather than a real browser in CI: it catches the state
   # and rendering faults, and a browser download on every build does not pay
