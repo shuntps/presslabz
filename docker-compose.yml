@@ -53,7 +53,7 @@ services:
   # Published on 9000 — the port MinIO used — so that an existing .env keeps
   # working; SeaweedFS speaks S3 on 8333 inside the container.
   storage:
-    image: chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
+    image: chrislusf/seaweedfs:4.45@sha256:fc9f76fa993ad69966ffeb2f65d0318fcae39c6f8e20cf68ef7b3a5cb97769e5
     restart: unless-stopped
     command:
       - server
